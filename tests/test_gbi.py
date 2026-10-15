@@ -317,11 +317,14 @@ def test_shape_types_a_table_base_summed_with_its_word_and_hoists_a_float_read_t
     assert "{\n    f32 temp_f = g;\n" in out
 
 
-def test_recover_sets_the_v1_microcode_ahead_of_the_headers_only_when_every_command_fits_it(commands):
+def test_recover_sets_a_microcode_ahead_of_the_headers_only_when_the_shared_default_does_not_fit(commands):
+    # real case: BT-HOUR-0730 held 16 exact functions on a file-local `#define F3D_GBI`, the shared header's default
     text = _pair("0xE7000000", "0") + _pair("0xB9000000", "0x2000")
     _, count, prelude = gbi.recover(text)
-    assert count and prelude == "#undef F3DEX_GBI_2\n#undef F3DEX_GBI\n#define F3D_GBI\n"
+    assert count and prelude == ""
     assert gbi.recover(_pair("0xE7000000", "0"))[2] == ""
+    _, count, prelude = gbi.recover(_pair("0xE7000000", "0") + _pair("0xDF000000", "0"))
+    assert count and prelude == "#undef F3DEX_GBI\n#undef F3D_GBI\n#define F3DEX_GBI_2\n"
 
 
 def test_every_run_becomes_macros_when_m2c_numbers_sibling_copies_of_the_pointer(basic):
@@ -345,3 +348,10 @@ def test_a_run_with_an_undecoded_slot_stays_while_its_sibling_runs_become_macros
 def test_a_macro_on_an_element_of_a_gfx_pointer_takes_its_address(basic):
     text = "void f(Gfx *p) {\n    Gfx *q;\n\n    q[1].words.w0 = 0xE7000000;\n    q[1].words.w1 = 0;\n}\n"
     assert "gDPPipeSync(&q[1]);" in gbi.rewrite(text)[0]
+
+
+def test_a_display_list_cursor_kept_in_a_record_member_becomes_macros(basic):
+    # real case: BT D_auto_801257D0->unkD8/unkDC/unkE0 cursors (`t = D->unkD8; D->unkD8 = t + 8;`), 9 exact fns held
+    text = M2C_RUN.replace("temp = list;", "temp = ctx->unkD8;").replace("list = temp", "ctx->unkD8 = temp")
+    out, count, _ = gbi.recover(text)
+    assert count == 2 and "gDPPipeSync(ctx->unkD8++);" in out and "temp" not in out.split("{", 1)[1]

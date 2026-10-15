@@ -180,6 +180,9 @@ def _decode(row: Json, literal: int, terms: list[tuple[str, int, int]], word1: s
     return [values[name] for name in row.get("args", values)]
 
 
+DEFAULT = "f3d"  # the microcode the shared GBI header (include/shared/gbi.h) selects when a source defines none
+
+
 def _rewrite(text: str) -> tuple[str, int, str]:
     """The rewritten text, its count, and the microcode lines it needs ahead of the headers."""
     encodings: dict[int, list[tuple[Json, str | None]]] = {}
@@ -272,8 +275,8 @@ def _rewrite(text: str) -> tuple[str, int, str]:
     for start, end, replacement in sorted(edits, reverse=True):
         text = text[:start] + replacement + text[end:]
     prelude, fit = "", set.intersection(*(f for f in fits if f)) if any(fits) else set()
-    if count and derived and fit and "f3dex2" not in fit:  # the project default microcode is not this code's
-        chosen = variant or ("f3d" if "f3d" in fit else sorted(fit)[0])
+    if count and derived and fit and DEFAULT not in fit:  # the shared GBI header's microcode is not this code's
+        chosen = variant or sorted(fit)[0]
         prelude = "".join(f"#undef {m}\n" for n, m in macros if n != chosen) + f"#define {dict(macros)[chosen]}\n"
     return text, count, prelude
 
@@ -311,11 +314,13 @@ def _runs(text: str, skip: frozenset[tuple[str, str]] = frozenset()) -> tuple[st
     """m2c's word stores through one copy of a display-list pointer as w0/w1 pairs on `ptr[i]`, and that pointer.
 
     The run is the whole of slots 0..n-1 each stored once as a pair and the pointer advanced to the end of it."""
-    for load in re.finditer(r"^[ \t]*(\w+) = (\w+);[ \t]*\n", text, re.M):
+    for load in re.finditer(r"^[ \t]*(\w+) = (\w+(?:->\w+)*);[ \t]*\n", text, re.M):  # a member cursor too
         base, pointer = load.groups()
         if (base, pointer) in skip:
             continue
-        advances = list(re.finditer(rf"^[ \t]*{pointer} = {base} \+ (0[xX][0-9a-fA-F]+|\d+);[ \t]*\n", text, re.M))
+        advances = list(
+            re.finditer(rf"^[ \t]*{re.escape(pointer)} = {base} \+ (0[xX][0-9a-fA-F]+|\d+);[ \t]*\n", text, re.M)
+        )
         slots = _slots(text, base)
         if not advances or not slots:
             continue
