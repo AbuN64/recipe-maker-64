@@ -825,6 +825,7 @@ def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.L
     padding there, an untyped base whose callers show no type or a type that misses an access."""
     params = [m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))]
     local = ledger.declared_types(text)
+    addresses = index.get(snapshot).addresses
     out = []
     for row in left:
         name = row.base.replace(" ", "").removeprefix("&")
@@ -841,7 +842,7 @@ def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.L
             got = global_evidence(snapshot, text, root[0], root[1], [row.base], member)
             how = f"local fed by {'&' if root[1] else ''}{root[0]}"
             why = f"{how}, {got}" if isinstance(got, str) else f"{how}, record {got[0].name} measured worse"
-        elif row.base not in params and (root := fed(text, member, row.base, True)):
+        elif row.base not in params and (root := fed(text, member, row.base, True)) and root[0] in addresses:
             how = f"local fed by {'&' if root[1] else ''}{root[0]}"
             why = f"{how}, pointer arithmetic on it (a record pointer would scale)"
         elif row.type:
