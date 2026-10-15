@@ -9,6 +9,7 @@ from recipemaker import table
 _NUMBER = r"(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]*|[1-9][0-9]*)(?:[uU](?:[lL]{1,2})?|[lL]{1,2}[uU]?)?"
 _OPAQUE = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
 _POINTER = r"[A-Za-z_]\w*(?:\s*\[[^;{}]+?\]|\s*(?:->|\.)\s*[A-Za-z_]\w*)*?"
+DEFAULT = "f3d"  # the microcode the shared GBI header (include/shared/gbi.h) selects when a source defines none
 _ASSIGN = re.compile(rf"\s*({_POINTER})\s*(?:->|\.)\s*words\s*\.\s*w([01])\s*=\s*(.+);\s*", re.S)
 
 
@@ -180,9 +181,6 @@ def _decode(row: Json, literal: int, terms: list[tuple[str, int, int]], word1: s
     return [values[name] for name in row.get("args", values)]
 
 
-DEFAULT = "f3d"  # the microcode the shared GBI header (include/shared/gbi.h) selects when a source defines none
-
-
 def _rewrite(text: str) -> tuple[str, int, str]:
     """The rewritten text, its count, and the microcode lines it needs ahead of the headers."""
     encodings: dict[int, list[tuple[Json, str | None]]] = {}
@@ -318,9 +316,7 @@ def _runs(text: str, skip: frozenset[tuple[str, str]] = frozenset()) -> tuple[st
         base, pointer = load.groups()
         if (base, pointer) in skip:
             continue
-        advances = list(
-            re.finditer(rf"^[ \t]*{re.escape(pointer)} = {base} \+ (0[xX][0-9a-fA-F]+|\d+);[ \t]*\n", text, re.M)
-        )
+        advances = list(re.finditer(rf"^[ \t]*{pointer} = {base} \+ (0[xX][0-9a-fA-F]+|\d+);[ \t]*\n", text, re.M))
         slots = _slots(text, base)
         if not advances or not slots:
             continue
