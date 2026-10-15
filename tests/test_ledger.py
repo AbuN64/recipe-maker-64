@@ -186,6 +186,11 @@ def scope(**names):
             {},
             "return arg0->words[1];",
         ),
+        (  # past the record's end: a later element of what the pointer points at (BT Gfx writes, temp_v0[1])
+            "void f(Reply *arg0) {\n    M2C_FIELD(arg0, s32 *, 0xC) = 1;\n}\n",
+            {},
+            "arg0[1].second = 1;",
+        ),
         (  # a nested M2C_FIELD: the inner member's pointer type types the outer base (BT func_800E7448 shape)
             "s32 f(Screen *arg0) {\n    M2C_FIELD(M2C_FIELD(arg0, void **, 0x28C), s32 *, 0x360) = 0;\n}\n",
             {},

@@ -164,7 +164,8 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 # Raised to 10400 for owner-local records (TOOL-RECIPE-OWNREC, owner 2026-10-15): a data symbol with no type evidence
 # gets one record named from it in its owner unit's header, shared by every user (locals it feeds too), extended when
 # another user shows more members, on trial: it stays only if held no-C drafts land with it (RESULT counts).
-HARD_CAP = 10400  # raw lines of recipe maker Python
+# Then to 10420 for later elements of a record pointer (p[1].f) when an offset passes the record's end.
+HARD_CAP = 10420  # raw lines of recipe maker Python
 
 
 def test_line_budget():

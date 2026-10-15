@@ -401,6 +401,11 @@ def _place(use: Use, types: Mapping[str, str], scope: Scope, owner: Mapping[str,
             path = member(identity, use.offset, use, owner) if identity else None
             if path:
                 return (f"{whole}{path}" if address else f"{whole}->{path[1:]}"), "", kind
+            if identity and not address and identity.size and use.offset >= identity.size:  # a later element
+                at, rest = divmod(use.offset, identity.size)
+                path = member(identity, rest, use, owner)
+                if path and re.fullmatch(r"\w+", whole):
+                    return f"{whole}[{at}]{path}", "", kind
         if identity is None and _element(element, use) and (stars, array) == ((0, True) if address else (1, False)):
             return f"{whole}[{use.offset // use.size}]", "", kind  # type: ignore[operator]
         if stars == 0 and array and identity and identity.size and use.offset >= 0:  # an array of records
