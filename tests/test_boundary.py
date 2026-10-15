@@ -161,7 +161,10 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 # passed on), built from every group function's accesses, on trial: it stays only if held exact drafts land with it.
 # Raised to 10250 for one record per global object or pointer global, and pointee records one hop from a dispatch group
 # record (TOOL-T-DISPATCHREC), on trial: it stays only if held exact drafts land with them.
-HARD_CAP = 10250  # raw lines of recipe maker Python
+# Raised to 10400 for owner-local records (TOOL-RECIPE-OWNREC, owner 2026-10-15): a data symbol with no type evidence
+# gets one record named from it in its owner unit's header, shared by every user (locals it feeds too), extended when
+# another user shows more members, on trial: it stays only if held no-C drafts land with it (RESULT counts).
+HARD_CAP = 10400  # raw lines of recipe maker Python
 
 
 def test_line_budget():

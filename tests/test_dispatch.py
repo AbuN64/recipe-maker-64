@@ -347,7 +347,17 @@ POINTEE = (
 )
 
 
-def globals_world(monkeypatch, declared, sources=None, uses=None):
+def globals_world(monkeypatch, declared, sources=None, uses=None, owner="include/g.h"):
+    group = SimpleNamespace(header=owner)
+    placed = SimpleNamespace(version="us", vram=0x80100000, size=8)
+    layout = SimpleNamespace(
+        members={"D_1": SimpleNamespace(group="m", placements=(placed,))},
+        groups={"m": group},
+    )
+    texts = {
+        "include/g.h": declared,
+        **({owner: "#ifndef OWN_H\n#define OWN_H\n#endif\n"} if owner != "include/g.h" else {}),
+    }
     get = SimpleNamespace(
         identities=(),
         extents={},
@@ -361,8 +371,9 @@ def globals_world(monkeypatch, declared, sources=None, uses=None):
     monkeypatch.setattr(index, "asm", lambda snap, name: POINTEE)
     monkeypatch.setattr(index, "source", lambda snap, path: (sources or {}).get(path, ""))
     monkeypatch.setattr(rungs.cparse, "landed_sources", lambda snap: sorted(sources or {}))
-    monkeypatch.setattr(rungs.draft, "header_texts", lambda snap: {"include/g.h": declared})
-    return SimpleNamespace(digest=str(id(get)))
+    monkeypatch.setattr(rungs.draft, "header_texts", lambda snap: texts)
+    config = SimpleNamespace(project=SimpleNamespace(names_from="us"))
+    return SimpleNamespace(digest=str(id(get)), layout=layout, config=config)
 
 
 def test_a_void_pointer_global_points_at_one_record_built_from_every_function_reading_through_it(monkeypatch):
@@ -391,7 +402,6 @@ def test_a_scalar_global_read_by_offset_becomes_one_record_and_its_declaration_n
     [
         (GLOBAL_H, {"src/a.c": "s32 f(void) {\n    return D_1;\n}\n"}, "global, landed code reads it as the s32"),
         ('#include "types.h"\nextern f32 D_1;\n', {}, "global, declared f32, not a scalar"),
-        ('#include "types.h"\n', {}, "global, no header declares it"),
     ],
 )
 def test_a_global_landed_code_reads_as_its_scalar_or_no_header_declares_is_left_and_named(
@@ -411,3 +421,73 @@ def test_a_pointer_global_landed_code_adds_to_is_left_and_named(monkeypatch):
     left = [ledger.Left("D_auto_80135834", 0x20, "", (), False)]
     (row,) = rungs.classify(snap, "func_800E097C", GLOBAL_DRAFT, left)
     assert row.why.startswith("global, landed code does arithmetic on it")
+
+
+def test_a_global_no_header_declares_gets_its_record_and_declaration_in_the_owner_units_header(monkeypatch):
+    snap = globals_world(monkeypatch, '#include "types.h"\n', uses={"D_1": (("f", "lw", 0),)}, owner="include/own.h")
+    text = '#include "g.h"\nextern s32 D_1;\nvoid h(void) {\n    M2C_FIELD(&D_1, s16 *, 6) = 0;\n}\n'
+    (proposal,) = rungs.global_record(snap, "h", text)
+    assert "    D_1.unk6 = 0;" in proposal.text and '#include "own.h"' in proposal.text
+    assert "extern s32 D_1;" not in proposal.text
+    assert proposal.extras["include/own.h"].endswith("} Data80100000;\nextern Data80100000 D_1;\n#endif\n")
+    assert proposal.evidence[0].startswith("declared D_1 as Data80100000, a record of 2 members")
+
+
+FED = (
+    '#include "g.h"\nvoid func_800E097C(s32 arg0) {\n    void *temp_v0;\n\n    temp_v0 = D_auto_80135834;\n'
+    "    M2C_FIELD(temp_v0, s32 *, 0x20) = arg0;\n}\n"
+)
+
+
+def test_a_local_holding_a_symbols_value_shares_the_symbols_record(monkeypatch):
+    snap = globals_world(monkeypatch, GLOBAL_H)
+    (proposal,) = rungs.global_record(snap, "func_800E097C", FED)
+    assert "    Data80135834Ptr *temp_v0;" in proposal.text
+    assert "    temp_v0->unk20 = arg0;" in proposal.text
+    assert "extern Data80135834Ptr *D_auto_80135834;\n" in proposal.extras["include/g.h"]
+    assert proposal.evidence[0].endswith("; typed temp_v0 as Data80135834Ptr *")
+
+
+def test_another_user_extends_the_symbols_own_record_with_the_members_it_shows(monkeypatch):
+    declared = (
+        '#include "types.h"\ntypedef struct Data80135834Ptr {\n    u8 unk_0[0x8];\n    u16 unk8;\n} Data80135834Ptr;\n'
+        "extern Data80135834Ptr *D_auto_80135834;\n"
+    )
+    snap = globals_world(monkeypatch, declared)
+    (proposal,) = rungs.global_record(snap, "func_800E097C", GLOBAL_DRAFT)
+    assert "    D_auto_80135834->unk20 = arg0;" in proposal.text
+    header = proposal.extras["include/g.h"]
+    assert header.count("typedef struct Data80135834Ptr {") == 1 and "    s32 unk20;\n} Data80135834Ptr;" in header
+    assert proposal.evidence[0].startswith("extended D_auto_80135834")
+
+
+def test_users_disagreeing_at_an_offset_refuse_the_record_never_a_union(monkeypatch):
+    snap = globals_world(monkeypatch, GLOBAL_H)
+    text = GLOBAL_DRAFT.replace("s32 *, 0x20", "s32 *, 8")  # f loads 8 as a halfword
+    assert rungs.global_record(snap, "func_800E097C", text) == []
+    (row,) = rungs.classify(snap, "func_800E097C", text, [ledger.Left("D_auto_80135834", 8, "", (), False)])
+    assert row.why == "global, f and the draft access 0x8 as 2 and 4 bytes"
+    fed = FED.replace("s32 *, 0x20", "s32 *, 8")
+    (row,) = rungs.classify(snap, "func_800E097C", fed, [ledger.Left("temp_v0", 8, "", (), False)])
+    assert row.why == "local fed by D_auto_80135834, f and the draft access 0x8 as 2 and 4 bytes"
+
+
+def test_a_local_fed_by_no_symbol_stays_a_placeholder_and_is_named(monkeypatch):
+    snap = globals_world(monkeypatch, GLOBAL_H)
+    text = FED.replace("temp_v0 = D_auto_80135834;", "temp_v0 = func_1();")
+    assert rungs.global_record(snap, "func_800E097C", text) == []
+    (row,) = rungs.classify(snap, "func_800E097C", text, [ledger.Left("temp_v0", 0x20, "", (), False)])
+    assert row.why == "untyped local, not fed by one data symbol"
+
+
+@pytest.mark.parametrize(
+    ("symbol", "pointee", "name"),
+    [
+        ("D_auto_80135834", False, "Data80135834"),
+        ("D_80135834", True, "Data80135834Ptr"),
+        ("g_menuState", False, "DataMenuState"),
+        ("s_cursor_pos", True, "DataCursorPosPtr"),
+    ],
+)
+def test_a_symbols_record_is_named_from_the_symbol(symbol, pointee, name):
+    assert dispatch.data_name(symbol, 0x80135834, pointee) == name

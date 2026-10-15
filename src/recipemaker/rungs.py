@@ -581,84 +581,210 @@ def _scaled_uses(snapshot: Snapshot, name: str) -> list[str]:
     return [p for p in cparse.landed_sources(snapshot) if pattern.search(index.source(snapshot, p))]
 
 
-def global_evidence(snapshot: Snapshot, text: str, name: str, address: bool) -> tuple[dispatch.Record, str] | str:
-    """The record of the global `name` (`address`: the object itself; else what its pointer value points at) built
-    from every function accessing it and the draft, with the header declaring it; or why none is."""
-    found = index.get(snapshot)
+def _declared(snapshot: Snapshot, text: str, name: str) -> ledger.Global | None:
+    """The declaration of the global `name`: the one the draft's headers show, else any project header's, else the
+    draft's own `extern` line (path "")."""
     seen = index.scope(snapshot, text).globals.get(name)
-    if seen is None or not seen.path or name not in found.addresses:
-        return "no header declares it"
+    if seen is not None and seen.path:
+        return seen
+    for path, (rows, _) in sorted(index.get(snapshot).globals.items()):
+        if name in rows and not path.startswith("include/sdk/"):
+            return rows[name]
+    return ledger.globals_in(text).get(name)
+
+
+def owner_header(snapshot: Snapshot, name: str) -> str:
+    """The module header of the unit owning the data symbol `name` in the layout: its own member, else the member of
+    the names version whose placement holds its address; "" when none does or the project has no such header."""
+    members = snapshot.layout.members
+    member = members.get(name)
+    address = index.get(snapshot).addresses.get(name)
+    if member is None and address is not None:
+        version = snapshot.config.project.names_from
+        member = next(
+            (
+                m
+                for m in members.values()
+                for p in m.placements
+                if p.version == version and p.vram <= address < p.vram + max(p.size, 1)
+            ),
+            None,
+        )
+    group = snapshot.layout.groups.get(member.group) if member else None
+    header = group.header if group else ""
+    return header if header and header in draft.header_texts(snapshot) else ""
+
+
+def _plain(seen: ledger.Global | None) -> bool:
     integers = {*cparse.SCALARS, "unsigned int", "long"} - cparse.FLOATS
-    plain = seen.stars == 0 and not seen.array and seen.type in integers
-    if address and not plain:
-        return f"declared {seen.type}{'*' * seen.stars}{'[]' * seen.array}, not a scalar"
-    if not address and not (seen.stars == 1 and seen.type == "void") and not (plain and seen.type in _SCALAR_WORD):
+    return seen is None or (seen.stars == 0 and not seen.array and seen.type in integers)
+
+
+def global_evidence(
+    snapshot: Snapshot, text: str, name: str, address: bool, aliases: Sequence[str] = ()
+) -> tuple[dispatch.Record, str, str] | str:
+    """The record of the global `name` (`address`: the object itself; else what its pointer value points at) built
+    from every function accessing it and the draft (through the base itself and each local in `aliases` it feeds),
+    with the header that gets it and how: "retype" a declaration, "declare" it in the owner unit's header when no
+    header declares it, "extend" the symbol's own record with the members another user shows; or why none is."""
+    found = index.get(snapshot)
+    if name not in found.addresses:
+        return "no address in the names version"
+    seen = _declared(snapshot, text, name)
+    plain = _plain(seen)
+    own = dispatch.data_name(name, found.addresses[name], not address)
+    if fake_name(own):
+        return f"its record name {own} would carry a function symbol"
+    if seen is not None and seen.type == own and seen.path and seen.stars == (0 if address else 1) and not seen.array:
+        mode = "extend"
+    elif address and not plain:
+        return f"declared {seen.type}{'*' * seen.stars}{'[]' * seen.array}, not a scalar"  # type: ignore[union-attr]
+    elif (
+        not address
+        and seen is not None
+        and not (seen.stars == 1 and seen.type == "void")
+        and not (plain and seen.type in _SCALAR_WORD)
+    ):
         return f"declared {seen.type}{'*' * seen.stars}{'[]' * seen.array}, not an untyped pointer"
-    if (plain or address) and (users := _scalar_uses(snapshot, name)):
-        return f"landed code reads it as the {seen.type} it is declared ({users[0]})"
-    if not plain and (users := _scaled_uses(snapshot, name)):
+    else:
+        mode = "retype" if seen is not None and seen.path else "declare"
+    if mode != "extend" and (plain or address) and (users := _scalar_uses(snapshot, name)):
+        return f"landed code reads it as the {seen.type if seen else 'scalar'} it is declared ({users[0]})"
+    if mode != "extend" and not plain and (users := _scaled_uses(snapshot, name)):
         return f"landed code does arithmetic on it, which a record pointer would scale ({users[0]})"
+    path = seen.path if mode != "declare" else owner_header(snapshot, name)  # type: ignore[union-attr]
+    if not path:
+        return "no header declares it and no owner unit header holds it"
     rows = dispatch.global_object(snapshot, name) if address else dispatch.global_pointee(snapshot, name)
-    base = f"&{name}" if address else name
-    rows += [
-        dispatch.Access(u.offset, u.size or 0, u.kind, "", "the draft")
-        for u in ledger.uses(text)
-        if u.base.replace(" ", "") == base and u.size
-    ]
-    made = dispatch.record(dispatch.data_name(found.addresses[name], not address), rows, _spelled(text, base))
-    return made if isinstance(made, str) else (made, seen.path)
+    spelled: dict[int, str] = {}
+    for base in (f"&{name}" if address else name, *aliases):
+        rows += _draft_accesses(text, base, "the draft")
+        spelled = {**_spelled(text, base), **spelled}
+    made = dispatch.record(own, rows, spelled)
+    return made if isinstance(made, str) else (made, path, mode)
+
+
+_ASSIGNED = re.compile(r"^[ \t]*(\w+) = (&?)([A-Za-z_]\w*);", re.M)
+
+
+def fed(text: str, member: str, base: str) -> tuple[str, bool] | None:
+    """(symbol, address) when the draft's local `base` only ever holds one data symbol's value (`x = D;`) or address
+    (`x = &D;`), is declared an untyped pointer or word, and takes no pointer arithmetic; else None."""
+    params = {m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))}
+    if base in params or not re.fullmatch(r"\w+", base):
+        return None
+    if not re.search(rf"^[ \t]*(?:void \*|s32 |u32 |int )\s*{re.escape(base)};", text, re.M):
+        return None
+    writes = re.findall(rf"(?<![\w.>]){re.escape(base)}\s*(?:[-+*/|&^]?=(?!=)|\+\+|--)", text)
+    sources = {(m[3], bool(m[2])) for m in _ASSIGNED.finditer(text) if m[1] == base}
+    if len(sources) != 1 or len(writes) != sum(1 for m in _ASSIGNED.finditer(text) if m[1] == base):
+        return None
+    if re.search(rf"\b{re.escape(base)}\s*[-+\[]|[-+]\s*{re.escape(base)}\b", text):
+        return None
+    ((symbol, address),) = sources
+    return (symbol, address) if re.fullmatch(r"[A-Za-z_]\w*", symbol) else None
+
+
+def _roots(
+    snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.Left]
+) -> dict[tuple[str, bool], list[str]]:
+    """Per data symbol root (name, address) the locals of the draft it feeds; a base naming the symbol itself adds the
+    root with no local."""
+    params = {m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))}
+    local = {*ledger.declared_types(text), *params}
+    addresses = index.get(snapshot).addresses
+    out: dict[tuple[str, bool], list[str]] = {}
+    for row in left:
+        base = row.base.replace(" ", "")
+        got = re.fullmatch(r"(&?)([A-Za-z_]\w*)", base)
+        if got is None:
+            continue
+        if got[2] in addresses and (bool(got[1]) or got[2] not in local):
+            out.setdefault((got[2], bool(got[1])), [])
+        elif not got[1] and (root := fed(text, member, got[2])) and root[0] in addresses:
+            names = out.setdefault(root, [])
+            if got[2] not in names:
+                names.append(got[2])
+    return out
+
+
+def _define(header: str, one: dispatch.Record, name: str, address: bool, mode: str) -> str | None:
+    """The header with the symbol's record defined (or its definition replaced, `extend`) and `name` declared as it
+    or as a pointer to it; None when the declaration to retype is not there."""
+    spelled = f"extern {one.name} {'' if address else '*'}{name};\n"
+    if mode == "extend":
+        old = re.search(rf"^typedef struct {one.name} \{{\n(?:[^}}]*\n)*?\}} {one.name};\n", header, re.M)
+        return None if old is None else header[: old.start()] + one.text() + header[old.end() :]
+    if mode == "declare":
+        return _declare(header, one, spelled)
+    extern = re.search(rf"^[ \t]*extern\b[^;\n]*\b{re.escape(name)}\b[^;\n]*;[^\n]*\n?", header, re.M)
+    if extern is None:
+        return None
+    return header[: extern.start()] + one.text() + spelled + header[extern.end() :]
+
+
+def _declare(header: str, one: dispatch.Record, spelled: str) -> str:
+    """The owner header with the record and the symbol's declaration before its include guard's end."""
+    guard = re.search(r"^[ \t]*#[ \t]*endif\b[^\n]*\n?\s*\Z", header, re.M)
+    at = guard.start() if guard else len(header)
+    lead = "" if not at or header[at - 1] == "\n" else "\n"
+    return header[:at] + lead + one.text() + spelled + header[at:]
 
 
 def global_record(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
-    """Each global the draft reads by offset as a record while declared a scalar (or an untyped pointer): one record
-    per global from every function accessing it (or what it points at), defined before its declaration, which is
-    retyped; the accesses then name members. A global landed code reads as its scalar, or functions disagreeing about,
-    is left as it is (the census names why)."""
+    """The last rung, owner-local records: each data symbol the draft reads by offset (itself, its address, or a local
+    holding either) gets the one record of that symbol, named from it (never a function), its members the offsets and
+    widths every function accessing it shows and placeholder bytes between. The record is defined where the symbol
+    is declared (the declaration retyped), else in the header of the unit owning the symbol in the layout (declared
+    there); a record the symbol already has is extended with the members another user shows. Two users disagreeing
+    at an offset, landed code reading it as its scalar or adding to it, leave it as it is (the census names why)."""
     found = index.get(snapshot)
-    local = {
-        *ledger.declared_types(text),
-        *(m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))),
-    }
     texts = draft.header_texts(snapshot)
     edits: dict[str, str] = {}
     made: list[dispatch.Record] = []
     lines: list[str] = []
     retyped: dict[str, ledger.Global] = {}
-    for row in index.resolve(snapshot, text).left:
-        got = re.fullmatch(r"(&?)([A-Za-z_]\w*)", row.base.replace(" ", ""))
-        if got is None or got[2] in local or got[2] in retyped:
+    locals_: dict[str, str] = {}
+    left = index.resolve(snapshot, text).left
+    for (name, address), aliases in _roots(snapshot, member, text, left).items():
+        if name in retyped:
             continue
-        name, address = got[2], bool(got[1])
-        evidence = global_evidence(snapshot, text, name, address)
+        evidence = global_evidence(snapshot, text, name, address, aliases)
         if isinstance(evidence, str):
             continue
-        one, path = evidence
-        header = edits.get(path, texts.get(path, ""))
-        extern = re.search(rf"^[ \t]*extern\b[^;\n]*\b{re.escape(name)}\b[^;\n]*;[^\n]*\n?", header, re.M)
-        if extern is None:
+        one, path, mode = evidence
+        header = _define(edits.get(path, texts.get(path, "")), one, name, address, mode)
+        if header is None:
             continue
-        spelled = f"extern {one.name} {'' if address else '*'}{name};\n"
-        header = header[: extern.start()] + one.text() + spelled + header[extern.end() :]
         edits[path] = header
         made.append(one)
         retyped[name] = ledger.Global(one.name, 0 if address else 1, False, path)
+        locals_.update({alias: one.name for alias in aliases})
+        what = "it" if address else "what it points at"
+        verb = {"retype": "retyped", "declare": "declared", "extend": "extended"}[mode]
         lines.append(
-            f"retyped {name} as {one.name}{'' if address else ' *'}, a record of {len(one.fields)} members"
-            f" from every function accessing {'it' if address else 'what it points at'} ({path})"
+            f"{verb} {name} as {one.name}{'' if address else ' *'}, a record of {len(one.fields)} members"
+            f" from every function accessing {what} ({path})"
+            + (f"; typed {', '.join(aliases)} as {one.name} *" if aliases else "")
         )
     if not made:
         return []
     for name in retyped:  # the header's declaration is the one the draft sees
         text = re.sub(rf"^[ \t]*extern\b[^;\n]*\b{re.escape(name)}\b[^;\n]*;\n", "", text, flags=re.M)
+    for alias, kind in locals_.items():
+        text = re.sub(
+            rf"^([ \t]*)(?:void \*|s32 |u32 |int )\s*{re.escape(alias)};", rf"\g<1>{kind} *{alias};", text, flags=re.M
+        )
     scope = index.scope(snapshot, text)
     scope = ledger.Scope({**scope.globals, **retyped}, scope.addresses, scope.elsewhere)
     mine = tuple(i for path in edits for i in _identities(path, [r for r in made if r.name in edits[path]]))
-    after = ledger.resolve(text, (*found.identities, *mine), found.extents, scope)
-    if any(re.fullmatch(rf"&?{re.escape(n)}", row.base.replace(" ", "")) for n in retyped for row in after.left):
-        return []
     for path in edits:
-        after = dataclasses.replace(after, text=ledger.including(after.text, path))
-    return [Proposal("global records", after.text, edits, tuple(lines))]
+        text = ledger.including(text, path)
+    after = ledger.resolve(text, (*found.identities, *mine), found.extents, scope)
+    gone = {*retyped, *locals_}
+    if any(re.fullmatch(r"&?(\w+)", row.base.replace(" ", "")) and row.base.lstrip("&") in gone for row in after.left):
+        return []
+    return [Proposal("owner records", after.text, edits, tuple(lines))]
 
 
 def group_evidence(
@@ -703,6 +829,14 @@ def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.L
         elif name not in params and name not in local and name in index.get(snapshot).addresses:
             got = global_evidence(snapshot, text, name, row.base.startswith("&"))
             why = f"global, {got}" if isinstance(got, str) else f"global, record {got[0].name} measured worse"
+        elif (
+            row.base not in params
+            and (root := fed(text, member, row.base))
+            and root[0] in index.get(snapshot).addresses
+        ):
+            got = global_evidence(snapshot, text, root[0], root[1], [row.base])
+            how = f"local fed by {'&' if root[1] else ''}{root[0]}"
+            why = f"{how}, {got}" if isinstance(got, str) else f"{how}, record {got[0].name} measured worse"
         elif row.type:
             why = "typed base, field in another view" if row.elsewhere else "typed base, no field or padding there"
         elif row.base in params:
@@ -714,6 +848,8 @@ def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.L
                 if seen
                 else _grouped(snapshot, member, text, row.base, params.index(row.base))
             )
+        elif re.search(rf"^[ \t]+\w[\w ]*[ *]{re.escape(row.base)};", text, re.M) and row.base not in params:
+            why = "untyped local, not fed by one data symbol"
         else:
             why = "untyped local or global, no evidence"
         out.append(dataclasses.replace(row, why=why))

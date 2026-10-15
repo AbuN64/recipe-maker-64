@@ -338,9 +338,18 @@ def global_pointee(snapshot: Snapshot, name: str) -> list[Access]:
     return out
 
 
-def data_name(address: int, pointee: bool) -> str:
-    """The neutral record name of a global object (`Data800D4360`) or of what a pointer global points at."""
-    return f"Data{address:08X}" + ("Ptr" if pointee else "")
+def data_name(symbol: str, address: int, pointee: bool) -> str:
+    """The record of a data symbol (`Data800D4360`), or of what a pointer symbol points at (`Data800D4360Ptr`), named
+    from the symbol so every user shares it: a neutral `D_[auto_]<hex>` symbol by its address, a named one by its
+    words in PascalCase (`g_menuState` -> `DataMenuState`). The `Data` prefix keeps it a type name that no function or
+    variable carries, and a rename of the symbol renames its record the same way."""
+    neutral = re.fullmatch(r"D_(?:auto_)?[0-9A-Fa-f]+", symbol)
+    if neutral or not symbol:
+        stem = f"{address:08X}"
+    else:
+        words = [w for w in re.split(r"_+", re.sub(r"^(?:g|s|D)_", "", symbol)) if w]
+        stem = "".join(w[:1].upper() + w[1:] for w in words if w.isalnum()) or f"{address:08X}"
+    return f"Data{stem}" + ("Ptr" if pointee else "")
 
 
 def _name(first: int, position: int) -> str:
