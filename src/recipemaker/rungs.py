@@ -593,15 +593,16 @@ def _declared(snapshot: Snapshot, text: str, name: str) -> ledger.Global | None:
     return ledger.globals_in(text).get(name)
 
 
-def owner_header(snapshot: Snapshot, name: str) -> str:
+def owner_header(snapshot: Snapshot, name: str, member: str = "") -> str:
     """The module header of the unit owning the data symbol `name` in the layout: its own member, else the member of
-    the names version whose placement holds its address; "" when none does or the project has no such header."""
-    members = snapshot.layout.members
-    member = members.get(name)
+    the names version whose placement holds its address. A symbol no unit owns (unsplit .bss) is owned by its users:
+    the header every function using it (and `member`) reaches. "" when there is none."""
+    members, texts = snapshot.layout.members, draft.header_texts(snapshot)
+    found = members.get(name)
     address = index.get(snapshot).addresses.get(name)
-    if member is None and address is not None:
+    if found is None and address is not None:
         version = snapshot.config.project.names_from
-        member = next(
+        found = next(
             (
                 m
                 for m in members.values()
@@ -610,9 +611,11 @@ def owner_header(snapshot: Snapshot, name: str) -> str:
             ),
             None,
         )
-    group = snapshot.layout.groups.get(member.group) if member else None
-    header = group.header if group else ""
-    return header if header and header in draft.header_texts(snapshot) else ""
+    group = snapshot.layout.groups.get(found.group) if found else None
+    if group and group.header in texts:
+        return group.header
+    users = {f for f, _, _ in index.get(snapshot).uses.get(name, ())} | ({member} if member else set())
+    return dispatch.header(snapshot, [(f, 0) for f in sorted(users)]) if users else ""
 
 
 def _plain(seen: ledger.Global | None) -> bool:
@@ -621,7 +624,7 @@ def _plain(seen: ledger.Global | None) -> bool:
 
 
 def global_evidence(
-    snapshot: Snapshot, text: str, name: str, address: bool, aliases: Sequence[str] = ()
+    snapshot: Snapshot, text: str, name: str, address: bool, aliases: Sequence[str] = (), member: str = ""
 ) -> tuple[dispatch.Record, str, str] | str:
     """The record of the global `name` (`address`: the object itself; else what its pointer value points at) built
     from every function accessing it and the draft (through the base itself and each local in `aliases` it feeds),
@@ -652,7 +655,7 @@ def global_evidence(
         return f"landed code reads it as the {seen.type if seen else 'scalar'} it is declared ({users[0]})"
     if mode != "extend" and not plain and (users := _scaled_uses(snapshot, name)):
         return f"landed code does arithmetic on it, which a record pointer would scale ({users[0]})"
-    path = seen.path if mode != "declare" else owner_header(snapshot, name)  # type: ignore[union-attr]
+    path = seen.path if mode != "declare" else owner_header(snapshot, name, member)  # type: ignore[union-attr]
     if not path:
         return "no header declares it and no owner unit header holds it"
     rows = dispatch.global_object(snapshot, name) if address else dispatch.global_pointee(snapshot, name)
@@ -667,9 +670,10 @@ def global_evidence(
 _ASSIGNED = re.compile(r"^[ \t]*(\w+) = (&?)([A-Za-z_]\w*);", re.M)
 
 
-def fed(text: str, member: str, base: str) -> tuple[str, bool] | None:
+def fed(text: str, member: str, base: str, scaled: bool = False) -> tuple[str, bool] | None:
     """(symbol, address) when the draft's local `base` only ever holds one data symbol's value (`x = D;`) or address
-    (`x = &D;`), is declared an untyped pointer or word, and takes no pointer arithmetic; else None."""
+    (`x = &D;`), is declared an untyped pointer or word, and takes no pointer arithmetic (`scaled`: arithmetic
+    allowed, for the census); else None."""
     params = {m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))}
     if base in params or not re.fullmatch(r"\w+", base):
         return None
@@ -679,7 +683,7 @@ def fed(text: str, member: str, base: str) -> tuple[str, bool] | None:
     sources = {(m[3], bool(m[2])) for m in _ASSIGNED.finditer(text) if m[1] == base}
     if len(sources) != 1 or len(writes) != sum(1 for m in _ASSIGNED.finditer(text) if m[1] == base):
         return None
-    if re.search(rf"\b{re.escape(base)}\s*[-+\[]|[-+]\s*{re.escape(base)}\b", text):
+    if not scaled and re.search(rf"\b{re.escape(base)}\s*[-+\[]|[-+]\s*{re.escape(base)}\b", text):
         return None
     ((symbol, address),) = sources
     return (symbol, address) if re.fullmatch(r"[A-Za-z_]\w*", symbol) else None
@@ -749,7 +753,7 @@ def global_record(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
     for (name, address), aliases in _roots(snapshot, member, text, left).items():
         if name in retyped:
             continue
-        evidence = global_evidence(snapshot, text, name, address, aliases)
+        evidence = global_evidence(snapshot, text, name, address, aliases, member)
         if isinstance(evidence, str):
             continue
         one, path, mode = evidence
@@ -827,16 +831,19 @@ def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.L
         if not re.fullmatch(r"&?\w+", row.base):
             why = "expression base"
         elif name not in params and name not in local and name in index.get(snapshot).addresses:
-            got = global_evidence(snapshot, text, name, row.base.startswith("&"))
+            got = global_evidence(snapshot, text, name, row.base.startswith("&"), (), member)
             why = f"global, {got}" if isinstance(got, str) else f"global, record {got[0].name} measured worse"
         elif (
             row.base not in params
             and (root := fed(text, member, row.base))
             and root[0] in index.get(snapshot).addresses
         ):
-            got = global_evidence(snapshot, text, root[0], root[1], [row.base])
+            got = global_evidence(snapshot, text, root[0], root[1], [row.base], member)
             how = f"local fed by {'&' if root[1] else ''}{root[0]}"
             why = f"{how}, {got}" if isinstance(got, str) else f"{how}, record {got[0].name} measured worse"
+        elif row.base not in params and (root := fed(text, member, row.base, True)):
+            how = f"local fed by {'&' if root[1] else ''}{root[0]}"
+            why = f"{how}, pointer arithmetic on it (a record pointer would scale)"
         elif row.type:
             why = "typed base, field in another view" if row.elsewhere else "typed base, no field or padding there"
         elif row.base in params:

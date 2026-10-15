@@ -491,3 +491,21 @@ def test_a_local_fed_by_no_symbol_stays_a_placeholder_and_is_named(monkeypatch):
 )
 def test_a_symbols_record_is_named_from_the_symbol(symbol, pointee, name):
     assert dispatch.data_name(symbol, 0x80135834, pointee) == name
+
+
+def test_a_local_fed_by_a_symbol_and_added_to_is_named_for_the_census(monkeypatch):
+    snap = globals_world(monkeypatch, GLOBAL_H)
+    text = FED.replace("M2C_FIELD(temp_v0, s32 *, 0x20)", "M2C_FIELD(arg0 * 0x18 + temp_v0, s32 *, 0x20)")
+    text = text.replace("= arg0;\n}", "= M2C_FIELD(temp_v0, s32 *, 4);\n}")
+    assert rungs.global_record(snap, "func_800E097C", text) == []
+    (row,) = rungs.classify(snap, "func_800E097C", text, [ledger.Left("temp_v0", 4, "", (), False)])
+    assert row.why == "local fed by D_auto_80135834, pointer arithmetic on it (a record pointer would scale)"
+
+
+def test_a_symbol_no_unit_owns_is_owned_by_the_header_its_users_reach(monkeypatch):
+    snap = globals_world(monkeypatch, '#include "types.h"\n', uses={"D_1": (("f", "lw", 0),)}, owner="include/none.h")
+    monkeypatch.setattr(rungs.draft, "header_texts", lambda snap: {"include/g.h": '#include "types.h"\n'})
+    monkeypatch.setattr(rungs.dispatch, "header", lambda snap, nodes: "include/g.h" if ("h", 0) in nodes else "")
+    text = '#include "g.h"\nvoid h(void) {\n    M2C_FIELD(&D_1, s16 *, 6) = 0;\n}\n'
+    (proposal,) = rungs.global_record(snap, "h", text)
+    assert "extern Data80100000 D_1;\n" in proposal.extras["include/g.h"]
