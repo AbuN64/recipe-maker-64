@@ -307,12 +307,14 @@ def _indexed(value: str) -> str:
     )
 
 
-def _runs(text: str) -> tuple[str, str] | None:
+def _runs(text: str, skip: frozenset[tuple[str, str]] = frozenset()) -> tuple[str, str, str] | None:
     """m2c's word stores through one copy of a display-list pointer as w0/w1 pairs on `ptr[i]`, and that pointer.
 
     The run is the whole of slots 0..n-1 each stored once as a pair and the pointer advanced to the end of it."""
     for load in re.finditer(r"^[ \t]*(\w+) = (\w+);[ \t]*\n", text, re.M):
         base, pointer = load.groups()
+        if (base, pointer) in skip:
+            continue
         advances = list(re.finditer(rf"^[ \t]*{pointer} = {base} \+ (0[xX][0-9a-fA-F]+|\d+);[ \t]*\n", text, re.M))
         slots = _slots(text, base)
         if not advances or not slots:
@@ -320,7 +322,7 @@ def _runs(text: str) -> tuple[str, str] | None:
         count = max(int(a[1], 0) for a in advances) // 8
         if sorted(slots) != list(range(count)) or any(sorted(w for w, _, _ in v) != [0, 1] for v in slots.values()):
             continue
-        if text.count(base) != len(advances) + sum(len(v) for v in slots.values()) + 2:
+        if len(re.findall(rf"\b{base}\b", text)) != len(advances) + sum(len(v) for v in slots.values()) + 2:
             continue  # the pointer copy is used for something else too
         first = min(start for v in slots.values() for _, start, _ in v)
         drop = [(m.start(), m.end()) for m in _STORE.finditer(text) if (m[1] or m[3] or m[5]) == base]
@@ -333,7 +335,7 @@ def _runs(text: str) -> tuple[str, str] | None:
         for start, end in sorted(drop):
             out += text[position:start] + (pairs if start == first else "")
             position = end
-        return out + text[position:], pointer
+        return out + text[position:], pointer, base
     return None
 
 
@@ -355,12 +357,41 @@ def rewrite(text: str) -> tuple[str, int]:
     return recover(text)[:2]
 
 
+def _postincrement(text: str, pointer: str) -> str:
+    return re.sub(rf"\({re.escape(pointer)}\[\d+\]([,)])", lambda m: f"({pointer}++{m[1]}", text)
+
+
+def _whole(text: str, pointer: str) -> str | None:
+    """The text decoded, when every slot of `pointer`'s runs becomes a macro; else None."""
+    shaped = _postincrement(_rewrite(text)[0], pointer)
+    return None if re.search(rf"\b{re.escape(pointer)}\[\d+\]", shaped) else shaped
+
+
 def recover(text: str) -> tuple[str, int, str]:
     """`rewrite` and the microcode lines the macros need ahead of the project headers."""
-    run = _runs(text)
-    if run is not None:
-        shaped, count, prelude = _rewrite(run[0])
-        arg = rf"\({re.escape(run[1])}\[\d+\]([,)])"
-        if count and not re.search(rf"{re.escape(run[1])}\[\d+\]", re.sub(arg, "(", shaped)):
-            return _shape(_indexed(re.sub(arg, lambda m: f"({run[1]}++{m[1]}", shaped))), count, prelude
-    return _rewrite(text)
+    pointers: list[str] = []
+    skip: set[tuple[str, str]] = set()
+    for _ in range(64):  # every run of display-list stores through a copy of a pointer, m2c's numbered siblings too
+        run = _runs(text, frozenset(skip))
+        if run is None:
+            break
+        if _whole(run[0], run[1]) is None:  # a slot no macro decodes: this run stays as it was
+            skip.add((run[2], run[1]))
+            continue
+        text = run[0]
+        pointers += [run[1]] if run[1] not in pointers else []
+    if pointers:
+        shaped, count, prelude = _rewrite(text)
+        for pointer in pointers:
+            shaped = _postincrement(shaped, pointer)
+        return _addressed(_shape(_indexed(shaped))), count, prelude
+    shaped, count, prelude = _rewrite(text)
+    return _addressed(shaped), count, prelude
+
+
+def _addressed(text: str) -> str:
+    """A macro on an element of a `Gfx *` local (`p[2]`, the resolver's name for a word 16 bytes on) takes its address:
+    the macros take the display-list pointer."""
+    for name in re.findall(r"\bGfx \*(\w+);", text):
+        text = re.sub(rf"\b(g[sS]?[DS]P\w*\()({re.escape(name)}\[[^\]]+\])([,)])", r"\1&\2\3", text)
+    return text

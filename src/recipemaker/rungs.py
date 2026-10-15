@@ -12,7 +12,7 @@ from unbake import effort, layout
 from unbake.contracts import Snapshot
 from unbake.families.typedebt import fake_name
 
-from recipemaker import cparse, dispatch, draft, index, ledger, records, twin
+from recipemaker import cparse, dispatch, draft, gbi, index, ledger, records, twin
 
 
 @dataclass(frozen=True)
@@ -868,7 +868,11 @@ def resolve(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
     """The candidate with each M2C_FIELD the resolver can name now: a file an earlier tool left, or one a rung typed."""
     found = index.resolve(snapshot, text)
     line = f"resolved {found.resolved} M2C_FIELD of the candidate"
-    return [Proposal("resolve", found.text, {}, (line,))] if found.resolved else []
+    out, count, prelude = gbi.recover(found.text)  # display-list words the resolver named become macros
+    if count and prelude and prelude not in out:
+        out = prelude + out
+    lines = (line, *([f"{count} display-list commands as GBI macros"] if count else []))
+    return [Proposal("resolve", out, {}, lines)] if found.resolved else []
 
 
 # the ordered table: the ladder runs each rung that proposes something

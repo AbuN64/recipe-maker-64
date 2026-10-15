@@ -322,3 +322,26 @@ def test_recover_sets_the_v1_microcode_ahead_of_the_headers_only_when_every_comm
     _, count, prelude = gbi.recover(text)
     assert count and prelude == "#undef F3DEX_GBI_2\n#undef F3DEX_GBI\n#define F3D_GBI\n"
     assert gbi.recover(_pair("0xE7000000", "0"))[2] == ""
+
+
+def test_every_run_becomes_macros_when_m2c_numbers_sibling_copies_of_the_pointer(basic):
+    second = (
+        "    temp_2 = list;\n    temp_2->words.w0 = 0xE7000000;\n    temp_2->words.w1 = 0;\n    list = temp_2 + 8;\n"
+    )
+    text = M2C_RUN.replace("    call(&list);\n", second).replace("Gfx *temp;\n", "Gfx *temp;\n    Gfx *temp_2;\n")
+    rewritten, count = gbi.rewrite(text)
+    assert count == 3 and rewritten.count("gDPPipeSync(list++);") == 2 and "temp" not in rewritten
+
+
+def test_a_run_with_an_undecoded_slot_stays_while_its_sibling_runs_become_macros(basic):
+    second = (
+        "    temp_2 = list;\n    temp_2->words.w0 = 0x99000000;\n    temp_2->words.w1 = 0;\n    list = temp_2 + 8;\n"
+    )
+    text = M2C_RUN.replace("    call(&list);\n", second).replace("Gfx *temp;\n", "Gfx *temp;\n    Gfx *temp_2;\n")
+    rewritten, count = gbi.rewrite(text)
+    assert count == 2 and rewritten.count("(list++") == 2 and "temp_2->words.w0 = 0x99000000;" in rewritten
+
+
+def test_a_macro_on_an_element_of_a_gfx_pointer_takes_its_address(basic):
+    text = "void f(Gfx *p) {\n    Gfx *q;\n\n    q[1].words.w0 = 0xE7000000;\n    q[1].words.w1 = 0;\n}\n"
+    assert "gDPPipeSync(&q[1]);" in gbi.rewrite(text)[0]

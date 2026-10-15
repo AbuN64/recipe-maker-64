@@ -165,7 +165,9 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 # gets one record named from it in its owner unit's header, shared by every user (locals it feeds too), extended when
 # another user shows more members, on trial: it stays only if held no-C drafts land with it (RESULT counts).
 # Then to 10420 for later elements of a record pointer (p[1].f) when an offset passes the record's end.
-HARD_CAP = 10420  # raw lines of recipe maker Python
+# Then to 10440 for every display-list run of a function (m2c numbered pointer copies, a run that does not decode
+# left as it was) and GBI macros on the words the resolver names.
+HARD_CAP = 10440  # raw lines of recipe maker Python
 
 
 def test_line_budget():
