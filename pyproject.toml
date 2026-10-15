@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recipemaker"
+version = "0.1.1"
+description = "Candidate C for N64 decompilation, proved and landed by unbake"
+readme = "README.md"
+license = { file = "LICENSE" }
+classifiers = ["License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"]
+requires-python = ">=3.13"
+dependencies = [
+  "unbake @ git+https://github.com/AbuN64/cake-unbake-64@2d832f564ce7de32df4e46cf898ece319ff72b33",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "pytest-xdist==3.8.0", "ruff==0.16.9", "mypy==2.3.1", "types-jsonschema==4.26.0.20261006"]
+
+[project.scripts]
+recipe = "recipemaker.cli:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["recipemaker", "recipemaker.*"]
+
+[tool.setuptools.package-data]
+recipemaker = ["knowledge/**/*", "tables/**/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/recipemaker/cli.py" = ["T20"]
+"src/recipemaker/tui.py" = ["T20"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["unbake", "unbake.*", "pycparser", "pycparser.*"]
+follow_untyped_imports = true

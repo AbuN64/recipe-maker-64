@@ -1,0 +1,20 @@
+id = "ido"
+label = "Silicon Graphics style compiler, optimising, one pass per phase"
+source = "original"
+toolchains = ["ido-5.3", "ido-7.1"]
+m2c_target = "mips-ido-c"
+
+tells = [
+  "functions open with a stack adjustment even for leaf code when a local is addressed",
+  "a load followed by a use leaves a nop in the delay of the load on the oldest revision",
+  "constants are materialised with lui and ori pairs, floats with lui and mtc1",
+  "loops tested at the bottom with the condition copied above them",
+  "switch statements use a jump table once the case range is dense enough, else a compare chain",
+  "unused locals still reserve frame space only when their address is taken",
+]
+notes = [
+  "-O3 enables loop unrolling and global register allocation, so a mismatch in loop shape may only need the level",
+  "frame size is rounded to eight bytes; a one-word difference means a missing or extra local",
+  "the register allocator prefers the variables with the most uses inside loops; split or merge variables to move one",
+  "data in the small-data window is reached through the global pointer; the window size is a compiler option",
+]

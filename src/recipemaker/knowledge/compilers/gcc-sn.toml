@@ -1,0 +1,17 @@
+id = "gcc-sn"
+label = "GNU C 2.8.x for the console, vendor build"
+source = "original"
+toolchains = ["gcc-2.8.1-sn64"]
+m2c_target = "mips-gcc-c"
+
+tells = [
+  "double-width float registers are used when the 64-bit float option is on, changing which registers pair up",
+  "delay slots are filled aggressively; an instruction hoisted into a slot is normal, not a mismatch",
+  "the processor-specific tuning option changes instruction choice for multiplies and loads",
+  "the assembler macro mode expands large offsets into lui and addu sequences",
+]
+notes = [
+  "compare the float register option with the target before anything else when floating point differs everywhere",
+  "this family shares most scheduling behaviour with the older revision; try its option order after the first miss",
+  "a build that mixes assembly-generated and compiled objects may need an option per file, not per project",
+]

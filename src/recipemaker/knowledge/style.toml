@@ -1,0 +1,53 @@
+# The clean-code style as data: name patterns per kind, banned words, SDK tags and limits. `{Prefix}` is the PascalCase
+# word of the subsystem folder and `{dir}` the folder itself. Generic for any project: project facts live in its config.
+schema = 1
+source = "original"
+dir_max = 32
+unprefixed = ["math"]
+banned = ["Do", "Stuff", "Thing", "Misc", "Helper", "Func", "Temp", "Unknown"]
+bare_verbs = ["Handle", "Process", "Run", "Manage"]
+allow = ["main"]
+evidence_forms = ["callee NAME", "caller NAME", "string 'TEXT'", "tag WORD"]
+
+[names]
+subsystem = '^[a-z][a-z0-9]{1,11}$'
+library = '^[a-z][a-z0-9]{1,11}$'
+module = '^{dir}_[a-z][a-z0-9_]{1,23}$'
+function = '^{Prefix}_[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)*$'
+unprefixed_function = '^(?:[A-Z][a-z0-9]+){2,5}$'
+global = '^g_[a-z][A-Za-z0-9]*$'
+static = '^s_[a-z][A-Za-z0-9]*$'
+type = '^[A-Z][A-Za-z0-9]*$'
+macro = '^[A-Z][A-Z0-9_]+$'
+# a name that is always legal, and a file or folder suffix that never is
+neutral = ['^func_[0-9A-F]{8}(_\w+)?$', '^D_[0-9A-F]{8}$', '^code_[0-9A-F]{8}(_\d+)?$', '^data_[0-9A-F]{8}(_\d+)?$', '^sys_[0-9A-F]{8}$', '^lib_[0-9A-F]{8}$', '^jtbl_\w+$']
+forbidden_suffix = '_\d{3,}$'
+
+[paths]
+# folders whose name is no subsystem word, folders and files the name rules leave alone
+no_prefix = ["src", "include", "shared", "common", "data", "game", "sdk", "fuzzy"]
+exempt = ["src/fuzzy/", "src/sdk/", "include/sdk/", "include/types.h"]
+tool_named = '(func_[0-9A-F]{8}|_[0-9a-f]{12}|draft_|_closed)'
+
+[comments]
+version_note = '^/\*\s*([a-z]{2}(?:-[a-z0-9]+)?):'
+not_versions = ["if", "so", "to", "do", "in", "on", "no", "ok", "or", "as", "at", "by", "id", "is", "it", "of", "up", "we"]
+m2c_local = '\b(?:temp_[a-z]\w*|var_[a-z]\w*|sp[0-9A-F]+|arg\d+)\b'
+guard_tool = 'UNBAKE'
+
+# An SDK callee name prefix gives the subsystem word. A prefix matches when an upper-case letter or underscore follows.
+[tags]
+osCont = "input"
+al = "audio"
+n_al = "audio"
+osEeprom = "save"
+osPfs = "save"
+osCreateThread = "sched"
+osRecvMesg = "sched"
+osSetEventMesg = "sched"
+osVi = "video"
+osPi = "dma"
+
+[gbi]
+use = '\bg[SD]P[A-Z]\w*\s*\('
+tag = "gfx"
