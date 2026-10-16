@@ -73,6 +73,9 @@ def lane(tmp_path, monkeypatch):
     versions = {v: Version(v, tmp_path / f"{v}.z64", "0" * 64, "", "", {}, ()) for v in ("a", "b")}
     snapshot = Snapshot(config, "0" * 40, mapping, versions, {}, "0" * 64)
     rows = []
+    # slots come from a private pool: a unit test never waits on the host's live one (a busy host made it wait)
+    (tmp_path / "run").mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setattr(crack.effort, "stage", Mock(side_effect=lambda name: nullcontext()))
     monkeypatch.setattr(crack.twin, "find", lambda snap, member: None)
     monkeypatch.setattr(crack.store, "rows", Mock(side_effect=lambda cfg, stream: list(rows)))

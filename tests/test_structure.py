@@ -11,7 +11,7 @@ import pytest
 from fakes import native_result
 from unbake.contracts import Finding, Refusal
 
-from recipemaker import clash, state, structure
+from recipemaker import clash, state, structure, tree
 
 DATA = Path(__file__).parent / "data" / "map.json"
 SETTINGS = state.Structure()
@@ -725,3 +725,131 @@ def test_apply_without_all_proves_each_move_and_never_passes_unproved(tmp_path, 
     config, fake, _, _ = project(tmp_path, monkeypatch, [answer()])
     structure.apply(config, {"host": None})
     assert not [a for a in fake.argv if "--unproved" in a] and [a for a in fake.argv if "--partial" in a]
+
+
+def _edges(doc, classes, default="unal"):
+    """The map's per-version edge class of each function (`unbake map` schema 2): `classes` per name, a class or a
+    {version: class} dict; every other function's edge is `default`, a version's first function a segment start."""
+    for m in doc["members"]:
+        if m["kind"] == "function":
+            held = [p["version"] for p in m["placements"] if p["section"] == ".text"]
+            given = classes.get(m["name"], default)
+            m["edge"] = {v: given.get(v, default) if isinstance(given, dict) else given for v in held}
+
+
+def test_a_map_without_edge_classes_has_no_verdicts(doc):
+    assert structure.verdicts(doc) is None
+
+
+def test_verdicts_merge_the_versions_where_the_left_function_precedes_the_right(doc):
+    _edges(doc, {"f2": {"us": "pad", "eu": "unal"}, "f9": {"us": "unal", "eu": "pad"}, "f4": "al0"})
+    got = structure.verdicts(doc)
+    assert got["f1", "f2"] == "contradiction" and got["f3", "f4"] == "open"
+    assert got["f8", "f9"] == "join" and got["f7", "f9"] == "cut"  # f8 is us only: eu pairs f7 with f9
+
+
+def test_proven_cuts_always_cut_proven_joins_never_and_no_chain_is_cut(doc):
+    _edges(doc, {"f4": "pad", "f6": "pad", "f7": "gap"})
+    got = structure.propose(doc, state.Structure(split_over=2))
+    assert names(got) == {
+        "code_80001000": ["f1", "f2", "f3"],
+        "code_800010C0": ["f4", "f5"],
+        "code_80001140": ["f6"],  # the padded edge f5|f6 is a proven cut, whatever the signals say
+        "code_80001180": ["f7", "f8"],
+        "code_80001200": ["f9"],
+        "code_80002000": ["g1", "g2", "g3", "g4", "g5"],  # unal edges throughout: one object, never chained apart
+    }
+    assert [(b["left"], b["right"], b["signals"]) for b in got["boundaries"]] == [
+        ("f3", "f4", ["cut"]),
+        ("f5", "f6", ["cut"]),
+    ]
+
+
+def test_a_proven_join_holds_where_the_signals_would_cut(doc):
+    _plain(doc)
+    calls, loads = {"f1": ["f2"], "f4": ["f5"]}, {"f3": ["D1"], "f4": ["D2"]}
+    for m in doc["members"]:
+        m.update(calls=calls.get(m["name"], []), loads=loads.get(m["name"], []), padded=True)
+    _edges(doc, {})
+    got = names(structure.propose(doc, SETTINGS))
+    assert got["code_80001000"] == ["f1", "f2", "f3", "f4", "f5", "f6"]
+    _edges(doc, {}, default="al0")  # open everywhere: the signals decide, but padding is no signal any more
+    got = structure.propose(doc, SETTINGS)
+    assert names(got)["code_80001000"] == ["f1", "f2", "f3", "f4", "f5", "f6"] and not got["boundaries"]
+    _edges(doc, {"f4": "al0"})  # the old padded+loads cut f3|f4 needs a second live signal on an open pair
+    doc["members"][[m["name"] for m in doc["members"]].index("f4")]["calls"] = ["f5", "f1"]
+    assert "f4" in names(structure.propose(doc, SETTINGS))["code_80001000"]
+
+
+def test_a_single_near_caller_joins_an_open_pair():
+    run = [{"name": n, "calls": c} for n, c in (("a", ["c"]), ("b", []), ("c", []), ("d", []), ("e", []))]
+    assert structure._near_callers(run) == {0, 1}  # c's only caller a sits two atoms back: a, b and c are one object
+    run[3]["calls"] = ["c"]
+    assert structure._near_callers(run) == set()  # two callers: no locality join
+
+
+def test_an_evidence_row_makes_its_object_one_module_in_the_file_it_names(doc):
+    _edges(doc, {"f2": "pad", "f3": "al0", "f4": "pad"})  # f2|f3 is open by the ROM alone
+    row = {"first": "f2", "last": "f3", "source": "GAME/ACTORS/PLAYER.CPP", "origin": "debug stream"}
+    got = structure.propose(doc, SETTINGS, evidence=[row])
+    module = next(m for m in got["modules"] if "f2" in m["atoms"])
+    assert module["atoms"] == ["f2", "f3"]  # the row joins what it holds, and cuts at f1|f2 and f3|f4
+    assert (module["source"], module["header"]) == ("src/game/game/actors/player.c", "include/game/game/actors.h")
+    moves = [m for _, batch in structure._batches(got) for m in batch]
+    assert {"op": "source", "subject": module["name"], "target": "src/game/game/actors/player.c"} in moves
+
+
+def test_an_evidence_path_names_a_folder_and_a_file():
+    assert structure.evidenced_path("GAME/WORLD/CAMERA.CPP") == ("game/world", "src/game/game/world/camera.c")
+    assert structure.evidenced_path("MAIN.C") == ("", "src/game/main.c")
+
+
+UPPER_83 = tree.Naming(
+    case="upper",
+    stem_max=8,
+    source_ext=".CPP",
+    stem="{vram}",
+    subsystem="{label}/{vram}",
+    shared_dir="src/DATA/{label}",
+    data_dir="src/DATA/{label}",
+    evidence="keep",
+    subsystem_source="src/{subsystem}",
+    subsystem_header="include/{subsystem}.H",
+)
+
+
+def test_one_proposal_under_two_naming_styles(doc):
+    plain = structure.propose(doc, SETTINGS)
+    styled = structure.propose(doc, SETTINGS, naming=UPPER_83)
+    assert names(plain) == names(styled)  # the style names files, never cuts objects
+    module = next(m for m in styled["modules"] if m["name"] == "code_80001000")
+    assert (module["source"], module["header"]) == ("src/MAIN/80001000/80001000.CPP", "include/MAIN/80001000.H")
+    module = next(m for m in plain["modules"] if m["name"] == "code_80001000")
+    assert module["source"] == "src/game/main/sys_80001000/code_80001000.c"
+
+
+def test_evidence_casing_survives_when_the_style_keeps_it(doc):
+    _edges(doc, {"f2": "pad", "f3": "al0", "f4": "pad"})
+    row = {"first": "f2", "last": "f3", "source": "GAME/ACTORS/PLAYER.CPP", "origin": "debug stream"}
+    got = structure.propose(doc, SETTINGS, evidence=[row], naming=UPPER_83)
+    module = next(m for m in got["modules"] if "f2" in m["atoms"])
+    assert (module["source"], module["header"]) == ("src/GAME/ACTORS/PLAYER.CPP", "include/GAME/ACTORS.H")
+    lower = tree.Naming(**{**vars(UPPER_83), "evidence": "lower"})
+    assert structure.evidenced_path("GAME/ACTORS/PLAYER.CPP", lower) == ("game/actors", "src/game/actors/player.CPP")
+
+
+def test_a_stem_over_the_styles_limit_is_refused():
+    with pytest.raises(ValueError, match="stem_max"):
+        tree.Naming(stem_max=8).file("src/game/x", {"name": "code_80001000", "vram": 0x80001000})
+
+
+def test_the_project_config_chooses_the_style(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        '[layout]\nsubsystem_source = "src/{subsystem}"\n[naming]\ncase = "upper"\nstem_max = 8\n'
+    )
+    got = tree.style(tmp_path)
+    assert (got.case, got.stem_max, got.subsystem_source, got.source_ext) == ("upper", 8, "src/{subsystem}", ".c")
+    assert tree.style(tmp_path / "missing") == tree.Naming()
+    (tmp_path / "config.toml").write_text("[naming]\nstem_limit = 8\n")
+    with pytest.raises(ValueError, match="stem_limit"):
+        tree.style(tmp_path)

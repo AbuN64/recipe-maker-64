@@ -131,8 +131,102 @@ def _apart(a: Json, b: Json, v: str, data: Json) -> bool:
     return bool(left and right and max(e for _, e in left) < min(s for s, _ in right))
 
 
-def _partition(run: list[Json], data: Json, settings: state.Structure) -> tuple[list[list[Json]], list[Json]]:
-    """Cut a run where two signals agree in every holder version, then long pieces at their weakest join."""
+_CUT = frozenset({"pad", "seg", "gap"})
+
+
+def verdicts(doc: Json) -> dict[tuple[str, str], str] | None:
+    """Per pair of functions adjacent in some version, the map's object-edge verdict (`unbake map` edge classes by the
+    16-byte .text rule): the classes of every version where the left one directly precedes the right one, a cut class
+    anywhere a cut, unal anywhere a join, both a contradiction, else open. None for a map without edge classes."""
+    if not any("edge" in m for m in doc["members"]):
+        return None
+    rows: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    edge = {m["name"]: m.get("edge", {}) for m in doc["members"]}
+    for m in doc["members"]:
+        if m["kind"] == "function":
+            for p in m["placements"]:
+                if p["section"] == ".text":
+                    rows[p["version"]].append((p["rom_start"], m["name"]))
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for v, held in rows.items():
+        for (_, a), (_, b) in pairwise(sorted(held)):
+            if v in edge[b]:
+                seen[a, b].add(edge[b][v])
+    out = {}
+    for pair, kinds in seen.items():
+        cut, join = bool(kinds & _CUT), "unal" in kinds
+        out[pair] = "contradiction" if cut and join else "cut" if cut else "join" if join else "open"
+    return out
+
+
+def evidence_rows(root: Path) -> list[Json]:
+    """The project's `[[evidence.object]]` rows (config.toml): an original object it proves, first..last function and
+    the source path the evidence names (a debug record's __FILE__)."""
+    import tomllib
+
+    try:
+        doc = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return list(doc.get("evidence", {}).get("object", ()))
+
+
+def with_evidence(
+    doc: Json, proven: dict[tuple[str, str], str] | None, rows: Sequence[Json]
+) -> dict[tuple[str, str], str] | None:
+    """The verdicts with each evidence row's object made hard: every pair inside it a join, its two edges cuts."""
+    if not rows:
+        return proven
+    out = dict(proven or {})
+    order: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for m in doc["members"]:
+        if m["kind"] == "function":
+            for p in m["placements"]:
+                if p["section"] == ".text":
+                    order[p["version"]].append((p["rom_start"], m["name"]))
+    for held in order.values():
+        names = [n for _, n in sorted(held)]
+        at = {n: i for i, n in enumerate(names)}
+        for row in rows:
+            if row["first"] in at and row["last"] in at:
+                low, high = at[row["first"]], at[row["last"]]
+                out.update({(names[i], names[i + 1]): "join" for i in range(low, high)})
+                if low:
+                    out[names[low - 1], names[low]] = "cut"
+                if high + 1 < len(names):
+                    out[names[high], names[high + 1]] = "cut"
+    return out
+
+
+def evidenced_path(source: str, naming: tree.Naming = tree.PLAIN) -> tuple[str, str]:
+    """(subsystem, source path) an evidence path names in the project's naming style: by default
+    GAME/ACTORS/PLAYER.CPP is src/game/game/actors/player.c; a style with `evidence = "keep"` keeps its spelling."""
+    return naming.evidenced(source)
+
+
+def _near_callers(run: list[Json], reach: int = 3) -> set[int]:
+    """Pair indexes a single near caller joins: a function only one atom of the run calls, at most `reach` atoms away,
+    belongs to its caller's object with every atom between (measured 90% RW, 91% BT)."""
+    pos = {a["name"]: i for i, a in enumerate(run)}
+    callers: dict[int, set[int]] = defaultdict(set)
+    for i, a in enumerate(run):
+        for c in a["calls"]:
+            if c in pos and pos[c] != i:
+                callers[pos[c]].add(i)
+    joined: set[int] = set()
+    for callee, by in callers.items():
+        if len(by) == 1 and abs(next(iter(by)) - callee) <= reach:
+            low, high = sorted((next(iter(by)), callee))
+            joined.update(range(low, high))
+    return joined
+
+
+def _partition(
+    run: list[Json], data: Json, settings: state.Structure, proven: dict[tuple[str, str], str] | None = None
+) -> tuple[list[list[Json]], list[Json]]:
+    """Cut a run where two signals agree in every holder version, then long pieces at their weakest join. With the
+    map's edge verdicts (`proven`), a function line cuts at every proven cut and never at a proven join; the signals
+    decide only open pairs, a single near caller joins them, and no long piece is chained apart."""
     pos = {a["name"]: i for i, a in enumerate(run)}
     groups: dict[tuple[str, str], set[int]] = defaultdict(set)
     entry = [len(run)] * len(run)  # position of the first caller of each atom
@@ -154,7 +248,13 @@ def _partition(run: list[Json], data: Json, settings: state.Structure) -> tuple[
     linked = [bool(a["loads"]) for a in run]
     called = [i in callers for i in range(len(run))]
     cut, why = [], []
+    soft = _near_callers(run) if proven is not None else set()
     for i, (a, b) in enumerate(pairwise(run)):
+        verdict = proven.get((a["name"], b["name"]), "open") if proven is not None else ""
+        if verdict in ("cut", "join"):
+            why.append([verdict])
+            cut.append(verdict == "cut" and not locked[i])  # a C unit across a proven cut stays: B debt in unbake
+            continue
         both = set(a["text"]) & set(b["text"])
         padded = a["padded"] and all(
             a["text"][v]["rom_end"] == b["text"][v]["rom_start"] and b["text"][v]["vram"] % 16 == 0 for v in both
@@ -165,15 +265,16 @@ def _partition(run: list[Json], data: Json, settings: state.Structure) -> tuple[
             "loads": linked[i] and linked[i + 1] and not cover["loads"][i],
             "reach": entry[i + 1] > i and entry[i + 1] < len(run),
         }
-        on |= {"holders": set(a["text"]) != set(b["text"]), "padding": bool(both and padded)}
+        if proven is None:  # without edge classes the old signals stand; with them both measured as no boundary
+            on |= {"holders": set(a["text"]) != set(b["text"]), "padding": bool(both and padded)}
         on["data"] = bool(both and all(_apart(a, b, v, data) for v in both))
         why.append(sorted(k for k, v in on.items() if v))
-        cut.append(len(why[-1]) >= 2 and not _padding(b) and not locked[i])  # a padding unit never starts a module
+        cut.append(len(why[-1]) >= 2 and not _padding(b) and not locked[i] and i not in soft)  # padding never leads
     weight = [x + y for x, y in zip(cover["calls"], cover["loads"], strict=True)]
     direct = [(low, high) for _, low, high in spans if not any(cut[low:high])]
     ends = [i for i in range(len(run)) if i == len(cut) or cut[i]]
     pending = list(zip([0, *(e + 1 for e in ends[:-1])], ends, strict=True))
-    while pending:
+    while pending and proven is None:  # proven cuts replace the cap chain: it made cuts at proven joins
         low, high = pending.pop()
         if high - low + 1 > settings.split_over and not any(a <= low and high <= b for a, b in direct):
             weakest = min(range(low, high), key=lambda i: (locked[i], weight[i], abs(2 * i + 1 - low - high), i))
@@ -184,7 +285,9 @@ def _partition(run: list[Json], data: Json, settings: state.Structure) -> tuple[
         pieces += [[]] * cut[i]
         pieces[-1].append(atom)
     names = [
-        (run[i]["name"], run[i + 1]["name"], why[i] + ["chain"] * (len(why[i]) < 2)) for i in range(len(cut)) if cut[i]
+        (run[i]["name"], run[i + 1]["name"], why[i] + ["chain"] * (len(why[i]) < 2 and proven is None))
+        for i in range(len(cut))
+        if cut[i]
     ]
     return pieces, [{"left": left, "right": right, "signals": s} for left, right, s in names]
 
@@ -377,6 +480,8 @@ def propose(
     segment: Segments = None,
     library: Sequence[str] = (),
     types: Callable[[str], clash.Types] | None = None,
+    evidence: Sequence[Json] = (),
+    naming: tree.Naming = tree.PLAIN,
 ) -> Json:
     """New modules with neutral names `code_<VRAM>` (`data_<VRAM>` for data), the boundaries behind them, header merges
     and size estimates. `segment` is one segment, a comma list or a sequence of them. The scope is the segments the
@@ -397,6 +502,7 @@ def propose(
     taken: set[str] = set()
     seg = {a["name"]: a["segment"] for a in every}
     out = {s: {seg.get(c) for k in by_segment[s].values() for a in k for c in a["calls"]} - {s, None} for s in scope}
+    proven = with_evidence(doc, verdicts(doc), evidence)
     order = sorted(scope, key=lambda s: (len(out[s]), s))  # leaf segments first
     for name in order:
         for kind in sorted(by_segment[name]):
@@ -405,8 +511,9 @@ def propose(
                 if fixed:
                     before = None
                     continue
-                chain = _anchor(run)
-                pieces, found = _partition(chain, data, settings) if len(chain) > 1 else ([chain], [])
+                edges = proven if proven is not None and not kind[0] else None  # object edges are .text facts
+                chain = run if edges is not None else _anchor(run)  # a proven edge may sit between asm atoms
+                pieces, found = _partition(chain, data, settings, edges) if len(chain) > 1 else ([chain], [])
                 pieces = [[a for x in p for a in x.get("atoms", [x])] for p in pieces]
                 family: dict[int, list[Json]] = {}  # the parts of one piece that were cut apart by a type clash
                 if types is not None:
@@ -431,7 +538,16 @@ def propose(
                         modules[-1]["group"] = (kin or [modules[-1]])[0]["name"]
                         kin.append(modules[-1])
                     before = modules[-1]
-    extra = tree.place(doc, every, modules, settings)
+    extra = tree.place(doc, every, modules, settings, naming)
+    for row in evidence:  # the module an evidence row proves takes the folder and file name the evidence gives
+        for m in modules:
+            if row["first"] in m["atoms"] and row["last"] in m["atoms"]:
+                sub, source = evidenced_path(row["source"], naming)
+                m |= {"sub": sub, "folder": source.rpartition("/")[0], "source": source, "evidence": row["source"]}
+                m["header"] = naming.header(sub) if sub else m["header"]
+                m["batch"] = m["folder"]
+                if m["batch"] not in extra["order"]:
+                    extra["order"].insert(0, m["batch"])  # its own batch, before the folders that call into it
     is_c = {a["name"]: a["c"] for a in every}
     counted = [m for m in modules if any(is_c.get(n) for n in m["atoms"])]  # asm-only modules are no C units
     touched = {a["module"] for a in every if a["segment"] in scope and not a["protected"]}
@@ -536,7 +652,9 @@ def run(config: Config, params: Json) -> Json:
     clock: list[Json] = []
     document = evidence(config, params["host"], clock)
     types = clash.reader(config.project.root)
-    proposal = dict(propose(document, state.structure(), params["segment"], library, types))
+    rows = evidence_rows(config.project.root)
+    naming = tree.style(config.project.root)
+    proposal = dict(propose(document, state.structure(), params["segment"], library, types, rows, naming))
     batches, root = _batches(proposal), config.project.root / ".unbake/recipe/structure"
     stream = _lines(m for _, group in batches for m in group)
     proposal["runs"] = [{"segment": s, "count": len(g)} for s, g in batches]

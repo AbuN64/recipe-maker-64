@@ -432,5 +432,9 @@ recipe maker also proposes module structure. Two verbs, both reaching unbake onl
   Segment edges, toolchain changes, sdk edges, authored modules and library units are hard cuts. A module longer than
   `split_over` functions is cut at its weakest join. Same-includer and identical headers merge into one, and the most
   included typedef-only header becomes `include/types.h`.
+- Paths follow the project's naming style, config.toml `[naming]` with the folder templates of its `[layout]`: case
+  of the assigned names, a stem limit, the source suffix, the stem, subsystem, shared, data and part templates, and
+  whether an evidence row's path keeps its own spelling. Without the table recipe uses its own lower-case scheme.
+  Recipe holds no project's style. Library code keeps its names.
 - Names stay neutral: `code_<VRAM>`. LLM naming of modules and files is later work and will emit `module`, `source`,
   `header` and `file` moves into the same stream.

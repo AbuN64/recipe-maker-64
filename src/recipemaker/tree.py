@@ -6,9 +6,12 @@ others in ROM order, and the layout keeps the link order. Rules S, L, Y and D ar
 from __future__ import annotations
 
 import statistics
+import tomllib
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any
 
 from unbake import config as configuration
@@ -28,6 +31,73 @@ def shared_headers() -> tuple[str, str]:
         ("recipe.shared_headers",), lambda: tuple(configuration.load_resource("repo.toml")["layout"]["shared_headers"])
     )
     return rows[0], rows[1]
+
+
+@dataclass(frozen=True)
+class Naming:
+    """The project's naming style for the paths recipe assigns (config.toml `[naming]`, the folder templates from its
+    `[layout]` over unbake's repo.toml). The defaults are the tool's own lower-case scheme. Templates take the fields
+    {name} (module), {vram} (8 hex digits), {label} (segment label), {segment}, {subsystem} and, for `subsystem`,
+    {vram} of the subsystem. `case` ("as-is", "upper", "lower") applies to every field value, never to a template's
+    own text; `stem_max` (0 = none) bounds a file stem; `evidence` ("keep", "lower", "upper") is how an evidence
+    row's path is spelled ("keep": as the evidence gives it, its own suffix included). Library code keeps its names."""
+
+    case: str = "as-is"
+    stem_max: int = 0
+    source_ext: str = ".c"
+    stem: str = "{name}"
+    subsystem: str = "{label}/sys_{vram}"
+    shared_dir: str = "src/game/{label}/shared"
+    data_dir: str = "src/data/{segment}"
+    part: str = "part_{vram}"
+    evidence: str = "lower"
+    subsystem_source: str = "src/game/{subsystem}"
+    subsystem_header: str = "include/game/{subsystem}.h"
+
+    def cased(self, text: str, case: str | None = None) -> str:
+        how = case or self.case
+        return text.upper() if how == "upper" else text.lower() if how == "lower" else text
+
+    def fill(self, template: str, **values: str) -> str:
+        """`template` with every field value cased (the template's own text stays as written)."""
+        return template.format(**{k: self.cased(v) for k, v in values.items()})
+
+    def file(self, folder: str, module: Mod) -> str:
+        """`folder`/<stem><source_ext> of an assigned game or data module."""
+        stem = self.fill(self.stem, name=module["name"], vram=f"{module['vram']:08X}", label=module.get("label", ""))
+        if self.stem_max and len(stem) > self.stem_max:
+            raise ValueError(f"recipe naming: stem {stem!r} of {module['name']} is over stem_max {self.stem_max}")
+        return f"{folder}/{stem}{self.source_ext}"
+
+    def evidenced(self, source: str) -> tuple[str, str]:
+        """(subsystem, source path) an evidence path names, spelled the way `evidence` says."""
+        parts = source.replace("\\", "/").strip("/").split("/")
+        if self.evidence != "keep":
+            parts = [self.cased(p, self.evidence) for p in parts]
+            parts[-1] = parts[-1].rsplit(".", 1)[0] + self.source_ext
+        sub = "/".join(parts[:-1])
+        where = self.subsystem_source.format(subsystem=sub) if sub else self.subsystem_source.partition("/{")[0]
+        return sub, f"{where}/{parts[-1]}"
+
+    def header(self, sub: str) -> str:
+        return self.subsystem_header.format(subsystem=sub)
+
+
+PLAIN = Naming()  # the tool's own scheme, for projects without a [naming] table
+
+
+def style(root: Path | None) -> Naming:
+    """The project's Naming: config.toml `[naming]` plus its `[layout]` subsystem templates; defaults when absent."""
+    try:
+        doc = tomllib.loads((root / "config.toml").read_text(encoding="utf-8")) if root else {}
+    except (OSError, ValueError):
+        doc = {}
+    known = {f.name for f in fields(Naming)}
+    layout = {k: v for k, v in doc.get("layout", {}).items() if k in ("subsystem_source", "subsystem_header")}
+    unknown = set(doc.get("naming", {})) - known
+    if unknown:
+        raise ValueError(f"recipe naming: unknown [naming] keys {sorted(unknown)}")
+    return Naming(**{**layout, **doc.get("naming", {})})
 
 
 def labels(doc: Json) -> dict[str, str]:
@@ -306,15 +376,15 @@ def folder(*parts: str) -> str:
     return "/".join(p for p in parts if p)
 
 
-def paths(entry: Mod) -> tuple[str, str]:
+def paths(entry: Mod, naming: Naming = PLAIN) -> tuple[str, str]:
     """`source` and `header` of a placed module entry: game code in its subsystem, library code in its library,
-    shared and unloaded data in `shared/` and `src/data/`."""
+    shared and unloaded data in `shared/` and `src/data/`. Library code keeps its own names; the rest takes `naming`."""
     stem, where = entry["name"], entry["folder"]
-    source = f"{where}/{stem}.c"
     if entry["library"]:
-        return source, f"include/sdk/{entry['library']}.h"
+        return f"{where}/{stem}.c", f"include/sdk/{entry['library']}.h"
+    source = naming.file(where, entry)
     if entry["sub"]:
-        return source, f"include/game/{entry['sub']}.h"
+        return source, naming.header(entry["sub"])
     return source, shared_headers()[1]
 
 
@@ -353,7 +423,9 @@ def _pieces(modules: list[Mod], by_atom: dict[str, Mod], taken: set[str], first:
     return out
 
 
-def place(doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.Structure) -> Json:
+def place(
+    doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.Structure, naming: Naming = PLAIN
+) -> Json:
     """Give every proposed module its library or subsystem, folder, `source` and `header`. `modules` (name, segment,
     origin, atoms) is changed in place: catalog hits split, adjacent owned data merged into its module. Returns the
     facts the proposal needs: the call graph, the symbol renames, the batch order and the fuzzy rows given a home."""
@@ -435,9 +507,10 @@ def place(doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.S
                 joined[gid[x], gid[y]] += w
         for group in subsystems(reps, dict(joined), settings):
             names_in = [n for g in group for n in kin[g]]
-            sub = folder(label_name, f"sys_{min(by_name[n]['vram'] for n in names_in):08X}")
+            low = f"{min(by_name[n]['vram'] for n in names_in):08X}"
+            sub = naming.fill(naming.subsystem, label=label_name, vram=low).strip("/")
             for n in names_in:
-                by_name[n] |= {"sub": sub, "folder": f"src/game/{sub}"}
+                by_name[n] |= {"sub": sub, "folder": naming.subsystem_source.format(subsystem=sub)}
     room: Counter[str] = Counter()
     for m in code:
         room[m["sub"]] += m["files"] * bool(m["sub"])
@@ -450,22 +523,29 @@ def place(doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.S
         if host:
             d |= {"sub": host["sub"], "library": host["library"], "folder": host.get("folder", "")}
         elif won:
-            d |= {"sub": won, "folder": f"src/game/{won}"}
+            d |= {"sub": won, "folder": naming.subsystem_source.format(subsystem=won)}
         elif d["name"] in several:
-            d["folder"] = f"src/game/{folder(d['label'], 'shared')}"
+            d["folder"] = (
+                naming.fill(naming.shared_dir, label=d["label"], segment=d["segment"]).replace("//", "/").rstrip("/")
+            )
         else:
-            d["folder"] = f"src/data/{d['segment']}"
+            d["folder"] = (
+                naming.fill(naming.data_dir, label=d["label"], segment=d["segment"]).replace("//", "/").rstrip("/")
+            )
     for m in modules:
         if m["library"]:
             m["folder"] = f"src/sdk/{m['library']}"
-    _split(modules, settings.dir_max)
+    _split(modules, settings.dir_max, naming)
     where = {m["name"]: m["sub"] for m in modules}
     leaving: Counter[str] = Counter()  # calls a subsystem makes into another one: a leaf makes none
     for (x, y), n in calls.items():
         leaving[where.get(x, "")] += n * (where.get(x) != where.get(y) and bool(where.get(y)))
     for m in modules:
-        m["source"], m["header"] = paths(m)
+        m["source"], m["header"] = paths(m, naming)
         m["batch"] = m["folder"]
+    twice = [p for p, n in Counter(m["source"].lower() for m in modules).items() if n > 1]
+    if twice:  # a style whose stems drop the module name may give two modules one file
+        raise ValueError(f"recipe naming: {len(twice)} paths name two modules, e.g. {twice[0]}")
     rank = {
         m["folder"]: (0 if m["library"] else 1 if m["sub"] else 2, leaving[m["sub"]] if m["sub"] else 0)
         for m in modules
@@ -487,7 +567,7 @@ def place(doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.S
     }
 
 
-def _split(modules: list[Mod], cap: int) -> None:
+def _split(modules: list[Mod], cap: int, naming: Naming = PLAIN) -> None:
     """Libraries, shared data and unloaded data folders over `cap` files split in `part_<VRAM>` folders by ROM order."""
     by: dict[str, list[Mod]] = defaultdict(list)
     for m in modules:
@@ -499,4 +579,6 @@ def _split(modules: list[Mod], cap: int) -> None:
             for part in chunks([m["name"] for m in line], cap):
                 head = next(m for m in line if m["name"] == part[0])
                 for m in line:
-                    m["folder"] = f"{where}/part_{head['vram']:08X}" if m["name"] in part else m["folder"]
+                    piece = naming.fill(naming.part, vram=f"{head['vram']:08X}") if not m["library"] else ""
+                    piece = piece or f"part_{head['vram']:08X}"
+                    m["folder"] = f"{where}/{piece}" if m["name"] in part else m["folder"]

@@ -167,7 +167,10 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 # Then to 10420 for later elements of a record pointer (p[1].f) when an offset passes the record's end.
 # Then to 10440 for every display-list run of a function (m2c numbered pointer copies, a run that does not decode
 # left as it was) and GBI macros on the words the resolver names.
-HARD_CAP = 10440  # raw lines of recipe maker Python
+# Raised to 10840 for perfect-decomp (owner 2026-10-15): structure on the map's object-edge verdicts and
+# evidence rows, and flags.py (one flag set per object: the lattice through one score --variants, options, splits).
+# Then to 10920 for the project naming style (config.toml [naming]): the folders and file names recipe assigns.
+HARD_CAP = 10920  # raw lines of recipe maker Python
 
 
 def test_line_budget():
