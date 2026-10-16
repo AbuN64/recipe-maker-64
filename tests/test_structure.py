@@ -867,3 +867,21 @@ def test_tied_origin_votes_choose_the_same_module_by_name(doc):
     proposal = structure.propose(doc, SETTINGS)
     module = next(m for m in proposal["modules"] if "f1" in m["atoms"])
     assert module["origin"] == "code_old1"
+
+
+@pytest.mark.parametrize("root", ["src/sdk/libgultra", "src/sdk/libgultra/"])
+@pytest.mark.parametrize(
+    "path, protected",
+    [
+        ("src/sdk/libgultra/a.c", True),
+        ("src/sdk/libgultra/nested/a.c", True),
+        ("src/sdk/libgultra_inferred/a.CPP", False),
+        ("src/sdk/libgultra2/a.CPP", False),
+    ],
+)
+def test_library_protection_is_a_directory_not_a_name_prefix(doc, root, path, protected):
+    member = next(m for m in doc["members"] if m["name"] == "f1")
+    unit = next(u for u in doc["units"] if u["path"] == member["unit"])
+    unit["path"] = member["unit"] = path
+    got = next(m for m in structure.atoms(doc, "span_1000", (root,)) if m["name"] == "f1")
+    assert got["protected"] is protected

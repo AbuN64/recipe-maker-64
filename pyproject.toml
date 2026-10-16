@@ -11,7 +11,7 @@ license = { file = "LICENSE" }
 classifiers = ["License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"]
 requires-python = ">=3.13"
 dependencies = [
-  "unbake @ git+https://github.com/AbuN64/cake-unbake-64@d3e32864e12a675af9b219a832fc3af2737eb0d0",
+  "unbake @ git+https://github.com/AbuN64/cake-unbake-64@5dd4b619f2b4675d6f495c110d7c46543dbef50e",
 ]
 
 [project.optional-dependencies]

@@ -245,11 +245,12 @@ def test_a_fuzzy_row_without_a_module_goes_to_its_rom_predecessors_module(doc):
 
 
 def test_library_dirs_units_enter_the_atoms(doc):
-    for m in doc["members"]:
-        if m["name"] == "f9":
-            m["module"] = "gone"
+    member = next(m for m in doc["members"] if m["name"] == "f9")
+    unit = next(u for u in doc["units"] if u["path"] == member["unit"])
+    member["module"] = "gone"
+    unit["path"] = member["unit"] = "src/libgcc/f9.c"
     assert "f9" not in {a["name"] for a in structure.atoms(doc)}
-    assert "f9" in {a["name"] for a in structure.atoms(doc, None, ("src/code_old1_3",))}
+    assert "f9" in {a["name"] for a in structure.atoms(doc, None, ("src/libgcc",))}
 
 
 def test_estimate_gates_are_printed_with_the_tree_numbers(doc):

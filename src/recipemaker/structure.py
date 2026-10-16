@@ -69,10 +69,10 @@ def atoms(doc: Json, segment: Segments = None, library: Sequence[str] = ()) -> l
     for m in doc["members"]:
         t = _sections(m)
         unit = m["unit"] or ""
-        in_library = bool(library) and unit.startswith(tuple(library))  # libgcc and friends are atoms too (gap 4)
+        in_library = any(unit.startswith(p.rstrip("/") + "/") for p in library)  # directory membership
         if t and (m["module"] in modules or in_library or (unit and _padding(m))) and (m["kind"] == "function" or unit):
             mod = modules.get(m["module"], {})
-            held = (mod.get("evidence") == "authored" and segment is None) or unit.startswith(tuple(library))
+            held = (mod.get("evidence") == "authored" and segment is None) or in_library
             segment_name = mod["segment"] if mod else _within(doc["segments"], t.values())
             if not segment_name:
                 continue
