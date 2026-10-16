@@ -320,3 +320,66 @@ def test_a_catalog_name_two_members_claim_or_a_member_already_has_renames_none_o
         m.update(sdk_library="libx", sdk_module="mod", sdk_name=hit) if hit else None
     got = structure.propose(doc, SETTINGS)
     assert got["symbols"] == {"f3": "os_f3"}  # f1 and f2 claim one name; f4 would take f5's name
+
+
+@pytest.mark.parametrize(
+    "naming", [tree.PLAIN, tree.Naming(case="upper", stem="{vram}", stem_max=8, source_ext=".CPP")]
+)
+def test_module_paths_use_the_first_atom_address_not_the_minimum_across_versions(doc, naming):
+    every = [a for a in structure.atoms(doc) if a["name"] in {"f1", "f2", "f4"}]
+    for a in every:
+        version, address = {"f1": ("eu", 0x80001040), "f2": ("de", 0x80001000), "f4": ("us", 0x80001000)}[a["name"]]
+        place = {**next(iter(a["text"].values())), "version": version, "vram": address}
+        a.update(text={version: place}, placements=[place], calls=[], loads=[])
+    modules = [
+        {"name": "code_80001040", "segment": "span_1000", "origin": "code_old1", "atoms": ["f1", "f2"]},
+        {"name": "code_80001000", "segment": "span_1000", "origin": "code_old2", "atoms": ["f4"]},
+    ]
+    tree.place(doc, every, modules, SETTINGS, naming)
+    assert [m["vram"] for m in modules] == [0x80001040, 0x80001000]
+    assert len({m["source"] for m in modules}) == 2
+    if naming.stem == "{vram}":
+        assert [Path(m["source"]).name for m in modules] == ["80001040.CPP", "80001000.CPP"]
+
+
+@pytest.mark.parametrize(
+    "naming", [tree.PLAIN, tree.Naming(case="upper", stem="{vram}", stem_max=8, source_ext=".CPP")]
+)
+def test_address_style_keeps_the_existing_identity_collision_choice(doc, naming):
+    every = [a for a in structure.atoms(doc) if a["name"] in {"f1", "f2", "f4"}]
+    by_name = {a["name"]: a for a in every}
+    for a in every:
+        version, address = {"f1": ("eu", 0x80001000), "f2": ("us", 0x80001040), "f4": ("us", 0x80001000)}[a["name"]]
+        place = {**next(iter(a["text"].values())), "version": version, "vram": address}
+        a.update(text={version: place}, placements=[place], calls=[], loads=[])
+    taken, modules = set(), []
+    for members in (["f4"], ["f1", "f2"]):
+        name, address = tree.identity("code_80001000", taken, [by_name[n] for n in members], "us")
+        taken.add(name)
+        modules.append(
+            {"name": name, "address": address, "segment": "span_1000", "origin": "code_old1", "atoms": members}
+        )
+    tree.place(doc, every, modules, SETTINGS, naming)
+    assert [m["vram"] for m in modules] == [0x80001000, 0x80001000]
+    assert [m["address"] for m in modules] == [0x80001000, 0x80001040]
+    assert len({m["source"] for m in modules}) == 2
+    if naming.stem == "{vram}":
+        assert [Path(m["source"]).name for m in modules] == ["80001000.CPP", "80001040.CPP"]
+
+
+def test_project_layout_shared_headers_are_used_for_data_and_header_moves(doc, tmp_path):
+    (tmp_path / "config.toml").write_text('[layout]\nshared_headers = ["include/TYPES.H", "include/COMMON.H"]\n')
+    naming = tree.style(tmp_path)
+    assert naming.shared_headers == ("include/TYPES.H", "include/COMMON.H")
+    data = {"name": "data_80001000", "vram": 0x80001000, "folder": "src/data", "library": "", "sub": ""}
+    assert tree.paths(data, naming)[1] == "include/COMMON.H"
+    doc["headers"].append(
+        {"path": "include/types.h", "modules": [], "declares": ["f1"], "includes": [], "included_by": []}
+    )
+    moves = structure.headers(doc, 0.8, naming=naming)
+    assert {"op": "file", "subject": "include/types.h", "target": "include/TYPES.H"} in moves
+    assert not any(m["target"] in tree.shared_headers() for m in moves)
+    assert (
+        structure._cluster_header(["include/game/A.H", "include/game/B.H"], naming.shared_headers[1])
+        == "include/game/COMMON.H"
+    )

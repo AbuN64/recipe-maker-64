@@ -10,7 +10,7 @@ import tomllib
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +35,7 @@ def shared_headers() -> tuple[str, str]:
 
 @dataclass(frozen=True)
 class Naming:
-    """The project's naming style for the paths recipe assigns (config.toml `[naming]`, the folder templates from its
-    `[layout]` over unbake's repo.toml). The defaults are the tool's own lower-case scheme. Templates take the fields
-    {name} (module), {vram} (8 hex digits), {label} (segment label), {segment}, {subsystem} and, for `subsystem`,
-    {vram} of the subsystem. `case` ("as-is", "upper", "lower") applies to every field value, never to a template's
-    own text; `stem_max` (0 = none) bounds a file stem; `evidence` ("keep", "lower", "upper") is how an evidence
-    row's path is spelled ("keep": as the evidence gives it, its own suffix included). Library code keeps its names."""
+    """Project naming/layout style: case substituted fields, preserving evidence and library rules."""
 
     case: str = "as-is"
     stem_max: int = 0
@@ -53,6 +48,7 @@ class Naming:
     evidence: str = "lower"
     subsystem_source: str = "src/game/{subsystem}"
     subsystem_header: str = "include/game/{subsystem}.h"
+    shared_headers: tuple[str, str] = field(default_factory=shared_headers)
 
     def cased(self, text: str, case: str | None = None) -> str:
         how = case or self.case
@@ -64,7 +60,8 @@ class Naming:
 
     def file(self, folder: str, module: Mod) -> str:
         """`folder`/<stem><source_ext> of an assigned game or data module."""
-        stem = self.fill(self.stem, name=module["name"], vram=f"{module['vram']:08X}", label=module.get("label", ""))
+        address = module.get("address", module["vram"])
+        stem = self.fill(self.stem, name=module["name"], vram=f"{address:08X}", label=module.get("label", ""))
         if self.stem_max and len(stem) > self.stem_max:
             raise ValueError(f"recipe naming: stem {stem!r} of {module['name']} is over stem_max {self.stem_max}")
         return f"{folder}/{stem}{self.source_ext}"
@@ -93,18 +90,25 @@ def style(root: Path | None) -> Naming:
     except (OSError, ValueError):
         doc = {}
     known = {f.name for f in fields(Naming)}
-    layout = {k: v for k, v in doc.get("layout", {}).items() if k in ("subsystem_source", "subsystem_header")}
+    layout = {
+        k: v
+        for k, v in doc.get("layout", {}).items()
+        if k in ("subsystem_source", "subsystem_header", "shared_headers")
+    }
     unknown = set(doc.get("naming", {})) - known
     if unknown:
         raise ValueError(f"recipe naming: unknown [naming] keys {sorted(unknown)}")
-    return Naming(**{**layout, **doc.get("naming", {})})
+    values = {**layout, **doc.get("naming", {})}
+    if "shared_headers" in values:
+        values["shared_headers"] = tuple(values["shared_headers"])
+        if len(values["shared_headers"]) != 2:
+            raise ValueError("recipe naming: layout shared_headers needs a types and a declarations path")
+    return Naming(**values)
 
 
 def labels(doc: Json) -> dict[str, str]:
-    """Rule S: the label of every map segment. Segments that start at one VRAM are one (the same overlay at other ROM
-    offsets in other versions). The one holding the lowest function VRAM is `main`, the others `ovl_<VRAM>`, and a game
-    with a single code segment has no level (empty label). A segment the map does not list is labelled by its own
-    name, and it is another level."""
+    """Group segments with the same starting VRAM; label the lowest main and the others overlays.
+    Single-segment projects have an empty label; unlisted segments keep their own name."""
     start = {s["name"]: min((v[2] for v in s["versions"].values()), default=0) for s in doc["segments"]}
     code = {m["name"] for m in doc["members"] if m["kind"] == "function"}
     held = {m["segment"] for m in doc["modules"] if code & set(m["members"])}
@@ -135,14 +139,20 @@ def _suffix(atoms: Sequence[Json], first: str) -> str:
     return f"{int((text.get(first) or text[min(text)])['rom_start']):X}"
 
 
-def unique(base: str, taken: Collection[str], atoms: Sequence[Json], first: str) -> str:
-    """`base`, or `base_<VRAM of the second atom>` when it is taken, then more atom VRAMs while it still is."""
+def identity(base: str, taken: Collection[str], atoms: Sequence[Json], first: str) -> tuple[str, int]:
+    """Unique module identity and assigned address, keeping the existing address suffix sequence through naming."""
+    address = vram(atoms[0], first)
     name, more = base, iter([_suffix(atoms, first), *(f"{vram(a, first):08X}" for a in atoms)])
     for extra in more:
         if name not in taken:
-            return name
-        name = f"{base}_{extra}"
-    return name
+            return name, address
+        name, address = f"{base}_{extra}", int(extra, 16)
+    return name, address
+
+
+def unique(base: str, taken: Collection[str], atoms: Sequence[Json], first: str) -> str:
+    """Unique module name, disambiguated by the existing ordered atom-address suffixes."""
+    return identity(base, taken, atoms, first)[0]
 
 
 def libraries(modules: Sequence[Mod], calls: dict[Pair, int], settings: state.Structure) -> dict[str, str]:
@@ -377,15 +387,14 @@ def folder(*parts: str) -> str:
 
 
 def paths(entry: Mod, naming: Naming = PLAIN) -> tuple[str, str]:
-    """`source` and `header` of a placed module entry: game code in its subsystem, library code in its library,
-    shared and unloaded data in `shared/` and `src/data/`. Library code keeps its own names; the rest takes `naming`."""
+    """Placed source/header paths: library names stay intact; assigned modules follow the project naming style."""
     stem, where = entry["name"], entry["folder"]
     if entry["library"]:
         return f"{where}/{stem}.c", f"include/sdk/{entry['library']}.h"
     source = naming.file(where, entry)
     if entry["sub"]:
         return source, naming.header(entry["sub"])
-    return source, shared_headers()[1]
+    return source, naming.shared_headers[1]
 
 
 def stats(folders: Iterable[str], depth_of: Iterable[str]) -> dict[str, Any]:
@@ -426,9 +435,8 @@ def _pieces(modules: list[Mod], by_atom: dict[str, Mod], taken: set[str], first:
 def place(
     doc: Json, every: Sequence[Mod], modules: list[Mod], settings: state.Structure, naming: Naming = PLAIN
 ) -> Json:
-    """Give every proposed module its library or subsystem, folder, `source` and `header`. `modules` (name, segment,
-    origin, atoms) is changed in place: catalog hits split, adjacent owned data merged into its module. Returns the
-    facts the proposal needs: the call graph, the symbol renames, the batch order and the fuzzy rows given a home."""
+    """Place modules in libraries/subsystems and assign paths, merging adjacent owned data in place.
+    Return the call graph, symbol renames, batch order and newly placed fuzzy rows."""
     first = doc["names_from"]
     by_atom = {a["name"]: a for a in every}
     label = labels(doc)
@@ -436,7 +444,7 @@ def place(
     modules[:] = _pieces(modules, by_atom, taken, first)
     for m in modules:
         atoms = [by_atom[n] for n in m["atoms"]]
-        m |= {"label": label.get(m["segment"], m["segment"]), "vram": min(vram(a, first) for a in atoms)}
+        m |= {"label": label.get(m["segment"], m["segment"]), "vram": vram(atoms[0], first)}
         m |= {"data": all(a["kind"] != "function" for a in atoms), "sub": "", "files": 1}
         m.setdefault("library", "")
     home = {n: m["name"] for m in modules for n in m["atoms"]}

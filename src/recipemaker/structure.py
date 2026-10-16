@@ -46,7 +46,7 @@ def _unbake(
 
 
 def evidence(config: Config, host: Path | None = None, clock: list[Json] | None = None) -> Json:
-    """Run `unbake map` and load `.unbake/map.json`, the only evidence channel."""
+    """Read the public map evidence."""
     document, _ = _unbake(config, host, "map", clock=clock)
     if not document["ok"]:
         raise _refusal(document)
@@ -60,8 +60,7 @@ def _sections(m: Json) -> dict[str, dict[str, Any]]:
 
 
 def atoms(doc: Json, segment: Segments = None, library: Sequence[str] = ()) -> list[dict[str, Any]]:
-    """The functions as atoms, and the data units' members: the member plus its placements in one section, segment,
-    toolchain and protection. A data member without a unit stays with whatever holds it."""
+    """Read function and data atoms with placement, toolchain, options and library protection from the map."""
     modules = {m["name"]: m for m in doc["modules"]}
     tool = {u["path"]: u["toolchain"] for u in doc["units"]}
     opts = {u["path"]: json.dumps(u.get("options"), sort_keys=True) for u in doc["units"]}
@@ -160,8 +159,7 @@ def verdicts(doc: Json) -> dict[tuple[str, str], str] | None:
 
 
 def evidence_rows(root: Path) -> list[Json]:
-    """The project's `[[evidence.object]]` rows (config.toml): an original object it proves, first..last function and
-    the source path the evidence names (a debug record's __FILE__)."""
+    """Read configured original-object evidence: its first/last function, path and provenance."""
     import tomllib
 
     try:
@@ -224,9 +222,7 @@ def _near_callers(run: list[Json], reach: int = 3) -> set[int]:
 def _partition(
     run: list[Json], data: Json, settings: state.Structure, proven: dict[tuple[str, str], str] | None = None
 ) -> tuple[list[list[Json]], list[Json]]:
-    """Cut a run where two signals agree in every holder version, then long pieces at their weakest join. With the
-    map's edge verdicts (`proven`), a function line cuts at every proven cut and never at a proven join; the signals
-    decide only open pairs, a single near caller joins them, and no long piece is chained apart."""
+    """Partition at proven cuts/joins when available; otherwise use shared signals and bounded chains."""
     pos = {a["name"]: i for i, a in enumerate(run)}
     groups: dict[tuple[str, str], set[int]] = defaultdict(set)
     entry = [len(run)] * len(run)  # position of the first caller of each atom
@@ -293,8 +289,7 @@ def _partition(
 
 
 def _by_types(piece: list[Json], types: Callable[[str], clash.Types]) -> list[list[Json]]:
-    """A module cut where the next whole C unit defines a type differently from the units before it: those units stay
-    separate files (one subsystem, one header). A unit is never cut, so the parts keep ROM order."""
+    """Split pieces at incompatible type definitions between whole C units, retaining ROM order."""
     chunks: list[list[Json]] = [[]]
     held: clash.Types = {}
     last = ""
@@ -317,9 +312,7 @@ def _near(native: list[int], at: int) -> int:
 
 
 def _runs(line: list[Json]) -> list[tuple[bool, list[Json]]]:
-    """Hard cuts: protected atoms and any change of (toolchain, compile options) or sdk end a run. An atom without a C
-    unit takes the partition of the nearest C atom in the line, so asm joins its neighbours instead of forming runs.
-    Each run comes with whether it is protected. A C unit's sdk is its first function's: one file is never cut."""
+    """Group runs by source protection, toolchain, options and SDK; asm inherits its nearest C partition."""
     native = [i for i, a in enumerate(line) if a["c"]]
     lead = {a["unit"]: a["sdk"] for a in reversed(line) if a["c"]}
 
@@ -331,8 +324,7 @@ def _runs(line: list[Json]) -> list[tuple[bool, list[Json]]]:
 
 
 def _anchor(run: list[Json]) -> list[Json]:
-    """The run as one atom per C atom: asm atoms join the nearest C atom (the earlier one on a tie), so an asm-only
-    stretch never becomes a module and the cuts are judged between C atoms. A run without C stays as it is."""
+    """Anchor asm to its nearest C atom (earlier on ties); leave wholly asm runs unchanged."""
     native = [i for i, a in enumerate(run) if a["c"]]
     if not native:
         return run
@@ -365,9 +357,8 @@ def _anchor(run: list[Json]) -> list[Json]:
     return out
 
 
-def _users(doc: Json, home: dict[str, str]) -> Callable[[str], frozenset[str]]:
-    """For a shared header, the subsystems (headers of the modules) that include it. A consumer is a unit source, a
-    module header or another shared header, transitively. The shared headers themselves are no subsystem."""
+def _users(doc: Json, home: dict[str, str], naming: tree.Naming = tree.PLAIN) -> Callable[[str], frozenset[str]]:
+    """Find each shared header's consuming subsystem headers through sources and transitive header includes."""
     by_path = {h["path"]: h for h in doc["headers"]}
     members: dict[str, list[str]] = defaultdict(list)
     for u in doc["units"]:
@@ -375,7 +366,7 @@ def _users(doc: Json, home: dict[str, str]) -> Callable[[str], frozenset[str]]:
     for m in doc["modules"]:
         members[m["header"]] += m["members"]
     seen: dict[str, frozenset[str]] = {}
-    base = set(tree.shared_headers())
+    base = set(naming.shared_headers)
 
     def users(path: str, trail: tuple[str, ...] = ()) -> frozenset[str]:
         if path not in seen:
@@ -392,26 +383,30 @@ def _users(doc: Json, home: dict[str, str]) -> Callable[[str], frozenset[str]]:
 
 
 def _cluster_header(users: Collection[str], base: str) -> str:
-    """`common.h` in the lowest folder holding every using subsystem's header, "" at the include root or where it is the
-    base declarations header (the base split of records and declarations applies there)."""
+    """The configured common basename below the users' common folder, or empty when a base header serves them."""
     folder = posixpath.commonpath([posixpath.dirname(u) for u in users])
-    path = "" if folder in ("", "include") else f"{folder}/common.h"
+    path = "" if folder in ("", "include") else f"{folder}/{posixpath.basename(base)}"
     return "" if path == base else path
 
 
-def headers(doc: Json, share: float, home: dict[str, str] | None = None) -> list[Json]:
-    """`file` moves: a header with one using subsystem goes to its header. The others merge (same declarations or same
-    users), then by co-usage: used by `shared_threshold` of the subsystems, the base headers (records to types.h,
-    declarations to game/common.h), else `common.h` in the lowest folder holding the users, one per cluster."""
+def headers(
+    doc: Json, share: float, home: dict[str, str] | None = None, naming: tree.Naming = tree.PLAIN
+) -> list[Json]:
+    """Merge shared headers by declarations and consuming subsystems; preserve the configured base header roles."""
     home = home or {}
     dead = set(dead_headers(doc))
-    types, common = tree.shared_headers()  # the base headers the others build on: they move into no other header
+    types, common = naming.shared_headers  # the base headers the others build on: they move into no other header
+    base_moves = {
+        old: new
+        for old, new in zip(tree.shared_headers(), naming.shared_headers, strict=True)
+        if old != new and any(h["path"] == old for h in doc["headers"])
+    }
     shared = sorted(
-        (h for h in doc["headers"] if not h["modules"] and h["path"] not in {*dead, types, common}),
+        (h for h in doc["headers"] if not h["modules"] and h["path"] not in {*dead, types, common, *base_moves}),
         key=lambda h: (-len(h["included_by"]), h["path"]),
     )
     functions = {m["name"] for m in doc["members"] if m["kind"] == "function"}
-    users = _users(doc, home)
+    users = _users(doc, home, naming)
     own = {h["path"]: next(iter(users(h["path"]))) for h in shared if len(users(h["path"])) == 1}
     shared = [h for h in shared if h["path"] not in own]
 
@@ -450,6 +445,7 @@ def headers(doc: Json, share: float, home: dict[str, str] | None = None) -> list
         return below[path]
 
     target = {p: t for p, t in target.items() if not (t.startswith("include/sdk/") and reaches(p))}
+    target |= base_moves  # preserve the tool defaults' types/declarations roles when the project relocates them
     final = {p: _final(target, t) for p, t in target.items()}
     return [{"op": "file", "subject": p, "target": t} for p, t in sorted(final.items()) if p != t]
 
@@ -483,10 +479,8 @@ def propose(
     evidence: Sequence[Json] = (),
     naming: tree.Naming = tree.PLAIN,
 ) -> Json:
-    """New modules with neutral names `code_<VRAM>` (`data_<VRAM>` for data), the boundaries behind them, header merges
-    and size estimates. `segment` is one segment, a comma list or a sequence of them. The scope is the segments the
-    modules sit in, whatever the map's own segment list holds. `types` gives a source unit's type definitions: units
-    that define one type differently never share a module, they stay apart as files of one subsystem."""
+    """Propose modules, boundaries, paths and header merges from the map's evidence.
+    Scope is all segments or the requested segment names; `types` detects source definition clashes."""
     wanted = None if segment is None else frozenset(segment.split(",") if isinstance(segment, str) else segment)
     every = atoms(doc, wanted, library)
     scope = {a["segment"] for a in every if wanted is None or a["segment"] in wanted}
@@ -526,11 +520,11 @@ def propose(
                     if before is not None and all(_padding(a) for a in piece):  # padding folds into the unit before it
                         before["atoms"] += [a["name"] for a in piece]
                         continue
-                    origin = max({a["module"] for a in piece}, key=[a["module"] for a in piece].count)
+                    origin = max(sorted({a["module"] for a in piece}), key=[a["module"] for a in piece].count)
                     vram = piece[0]["text"].get(doc["names_from"]) or piece[0]["text"][min(piece[0]["text"])]
                     base = f"{'data' if kind[0] else 'code'}_{vram['vram']:08X}"
-                    unique = tree.unique(base, taken | (set(existing) - {origin}), piece, doc["names_from"])
-                    modules.append({"name": unique, "segment": name, "origin": origin})
+                    unique, address = tree.identity(base, taken | (set(existing) - {origin}), piece, doc["names_from"])
+                    modules.append({"name": unique, "segment": name, "origin": origin, "address": address})
                     taken.add(unique)
                     modules[-1]["atoms"] = [a["name"] for a in piece]
                     if id(piece) in family:  # every part of one piece carries the name of the first
@@ -555,7 +549,7 @@ def propose(
     home = {m["name"]: header[m["module"]] for m in doc["members"] if m["module"] in header}
     home |= {n: m["header"] for m in modules for n in m["atoms"]}  # ... or its new module's
     dead = dead_headers(doc)
-    kept, merges = len(doc["modules"]) - len(touched), headers(doc, settings.share_jaccard, home)
+    kept, merges = len(doc["modules"]) - len(touched), headers(doc, settings.share_jaccard, home, naming)
     rest = len([u for u in doc["units"] if u["module"] not in touched and u.get("kind", "c") == "c"])
     shared = len([h for h in doc["headers"] if not h["modules"]]) - len(merges) - len(dead)
     tracked = len([h for h in doc["headers"] if h["modules"] and not touched & set(h["modules"])])
@@ -695,7 +689,7 @@ def _dirty(root: Path) -> set[str]:
 
 
 def _files(move: Json, proposal: Json) -> set[str]:
-    """The tracked files a move writes: its path subject or target, else the source of the module it names."""
+    """Tracked paths affected by a move: explicit paths and the sources of named modules."""
     existing, current = proposal["existing"], proposal["current"]
     out = {x for x in (move["subject"], move["target"]) if "/" in x}
     named = {current.get(move["subject"], move["subject"]), move["target"]}
@@ -737,9 +731,8 @@ def apply(config: Config, params: Json) -> Json:
 
 
 def _batch(config: Config, params: Json, everything: bool) -> Json:
-    """`recipe apply`: pipe the next batch (with `everything` the whole rest) to `unbake move --partial -`: unbake
-    proves each move, drops the refused ones and applies the rest itself, so one call is the pass. A busy lock or a
-    changed journal is retried after 5, 15 and 45 s. A move on a file with uncommitted changes waits."""
+    """Prove the selected moves with one public partial move call, retaining every refusal.
+    Defer dirty paths unless applying all; retry only transient lock or journal changes."""
     root = config.project.root / ".unbake/recipe/structure"
     try:
         proposal = json.loads((root / "proposal.json").read_text(encoding="utf-8"))

@@ -853,3 +853,17 @@ def test_the_project_config_chooses_the_style(tmp_path):
     (tmp_path / "config.toml").write_text("[naming]\nstem_limit = 8\n")
     with pytest.raises(ValueError, match="stem_limit"):
         tree.style(tmp_path)
+
+
+def test_tied_origin_votes_choose_the_same_module_by_name(doc):
+    next(m for m in doc["modules"] if m["name"] == "code_old2")["segment"] = "span_1000"
+    _plain(doc)
+    _edges(doc, {})
+    members = {m["name"]: m for m in doc["members"]}
+    for name in ("f1", "f2", "f3"):
+        members[name]["module"] = "code_old2"
+    for name in ("f4", "f5", "f6"):
+        members[name]["module"] = "code_old1"
+    proposal = structure.propose(doc, SETTINGS)
+    module = next(m for m in proposal["modules"] if "f1" in m["atoms"])
+    assert module["origin"] == "code_old1"
