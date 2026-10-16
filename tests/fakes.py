@@ -316,6 +316,7 @@ class Fakes:
             "invocation": "test",
             "proofs": tuple(proofs),
             "extras": {},
+            "extra_bases": {},
             "withheld": (),
             "id": f"id-{request['function']}",
         }
