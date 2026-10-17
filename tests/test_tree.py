@@ -384,3 +384,12 @@ def test_project_layout_shared_headers_are_used_for_data_and_header_moves(doc, t
         structure._cluster_header(["include/game/A.H", "include/game/B.H"], naming.shared_headers[1])
         == "include/game/COMMON.H"
     )
+
+
+def test_project_named_subsystems_replace_the_templated_name(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        '[naming]\nsubsystem = "{label}/{vram}"\n[naming.subsystems]\n"MAIN/80208000" = "AUDIO"\n', encoding="utf-8"
+    )
+    naming = tree.style(tmp_path)
+    assert naming.named("MAIN/80208000") == "AUDIO"
+    assert naming.named("MAIN/80255C40") == "MAIN/80255C40"

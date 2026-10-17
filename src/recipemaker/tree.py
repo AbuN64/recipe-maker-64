@@ -49,6 +49,11 @@ class Naming:
     subsystem_source: str = "src/game/{subsystem}"
     subsystem_header: str = "include/game/{subsystem}.h"
     shared_headers: tuple[str, str] = field(default_factory=shared_headers)
+    subsystems: tuple[tuple[str, str], ...] = ()  # project-named subsystems: (templated name, name) pairs
+
+    def named(self, sub: str) -> str:
+        """The project's name for a templated subsystem, or the templated name when the project names none."""
+        return dict(self.subsystems).get(sub, sub)
 
     def cased(self, text: str, case: str | None = None) -> str:
         how = case or self.case
@@ -103,6 +108,8 @@ def style(root: Path | None) -> Naming:
         values["shared_headers"] = tuple(values["shared_headers"])
         if len(values["shared_headers"]) != 2:
             raise ValueError("recipe naming: layout shared_headers needs a types and a declarations path")
+    if "subsystems" in values:
+        values["subsystems"] = tuple(sorted(values["subsystems"].items()))
     return Naming(**values)
 
 
@@ -516,7 +523,7 @@ def place(
         for group in subsystems(reps, dict(joined), settings):
             names_in = [n for g in group for n in kin[g]]
             low = f"{min(by_name[n]['vram'] for n in names_in):08X}"
-            sub = naming.fill(naming.subsystem, label=label_name, vram=low).strip("/")
+            sub = naming.named(naming.fill(naming.subsystem, label=label_name, vram=low).strip("/"))
             for n in names_in:
                 by_name[n] |= {"sub": sub, "folder": naming.subsystem_source.format(subsystem=sub)}
     room: Counter[str] = Counter()
