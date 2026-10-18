@@ -1,4 +1,4 @@
-"""`recipe tui`: curses views over the verbs. Lane B owns this file."""
+"""`recipe tui`: curses views over the verbs."""
 
 from __future__ import annotations
 

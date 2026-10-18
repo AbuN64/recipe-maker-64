@@ -1,4 +1,4 @@
-"""The brief an agent reads: asm, candidate, worst diff and what was auto-fixed."""
+"""The brief a reader gets: asm, candidate, worst diff and what was auto-fixed."""
 
 from __future__ import annotations
 

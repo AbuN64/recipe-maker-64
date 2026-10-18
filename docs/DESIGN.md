@@ -369,7 +369,7 @@ The index is one value per HEAD, stored with `store.cached(config, "recipe-index
 
 ## 14. Phases
 
-The build order, lanes, branches and perf checks live in the maintainer's execution plan (not in the repo). In short:
+Build order and performance checks:
 
 | Phase | Work | Done when |
 |---|---|---|
@@ -413,7 +413,6 @@ Round 2 (2026-10-09, owner said yes to all):
 - **Q2** Moved machine tables (`gbi.toml`) do not count against the 3,000-line knowledge cap.
 - **Q3** The supervisor runs the two migrations when the strip ships: the 239 `subsystem =` lines of `layout.toml` as one approved supervisor commit, and the `m2c`/`permuter` lines of the host config.
 - **E1** The grinder pauses for the step 8 gate (about 2 hours).
-- **E2** Lane B does the unbake strip, then the knowledge half.
 
 ## Structure
 

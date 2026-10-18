@@ -1,4 +1,4 @@
-"""`recipe name`: evidence packs for an outside naming lane, then rows validated against the style and the map, turned
+"""`recipe name`: evidence packs for an outside naming pass, then rows validated against the style and the map, turned
 into one file patch (symbol, module, source and header renames) that `recipe apply` applies. Catalog names (N0) and
 tag-named subsystems (N2) need no model. No name is accepted without evidence a reader can check in map.json."""
 
