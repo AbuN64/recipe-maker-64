@@ -152,8 +152,9 @@ def _render_status(result: Json) -> list[str]:
 def _render_structure(result: Json) -> list[str]:
     sizes = [f"{k} {v['before']} -> {v['after']}" for k, v in result.items() if isinstance(v, dict) and "before" in v]
     return [
-        f"proposed {result['moves']} moves in {result['path']}, {len(result['boundaries'])} boundaries",
+        f"proposed {result['moves']} moves in {result['path'] or 'no patch'}, {len(result['boundaries'])} boundaries",
         ", ".join(sizes),
+        *result.get("findings", []),
     ]
 
 
@@ -187,10 +188,6 @@ def _render_flags(result: Json) -> list[str]:
     lines = [f"lattice {result['lattice']} sets over {result['fuzzy']} fuzzy functions in {result['wall_s']} s"]
     lines += [f"options {r['module']} {' '.join(r['flags'])} (for {r['for']})" for r in result["options"]]
     lines += [f"split {r['function']} into {r['module']} with {' '.join(r['flags'])}" for r in result["splits"]]
-    lines += [
-        f"conflict {r['function']} {' '.join(r['flags'])}: a neighbour across a proven join loses bytes"
-        for r in result["conflicts"]
-    ]
     lines += [f"cut {r['left']}|{r['right']} decided by {' '.join(r['by'])}" for r in result["decided_cuts"]]
     return lines
 
@@ -259,10 +256,9 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--reason", required=True, choices=state.SKIP_REASONS)
     one.add_argument("--note", default="")
     one = verb("structure", "propose module structure: one JSON object {patch, files, moves} on stdout")
-    one.add_argument("--segment", help="only these segments (comma list), authored modules included")
-    one = verb(
-        "flags", "one flag set per object: score the flag lattice, propose options moves, flag splits, conflicts"
-    )
+    one.add_argument("--segment", help="only these segments (comma list)")
+    one.add_argument("--paths", nargs="+", metavar="FILE", help="only the modules holding these files and linked moves")
+    one = verb("flags", "one flag set per object: score the flag lattice, propose options moves and flag splits")
     one.add_argument("--segment", help="only fuzzy functions and option units of these segments (comma list)")
     one = verb("name", "name things from evidence: next (pack or catalog moves), submit FILE, banners")
     one.add_argument("action", choices=("next", "submit", "banners"))

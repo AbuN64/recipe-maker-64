@@ -4,8 +4,8 @@ pairs inside one option family); `unbake score --variants` scores every candidat
 - Fuzzy functions are scored under default and each single option, then under the pairs that hold an option that
   helped. A set that makes one exact nominates its module.
 - A nominated set, and the set of every unit that carries options today, is tried on the landed neighbours across
-  the edges of its functions. A neighbour that loses bytes under it is another object: at a proven join that is a
-  conflict (one object cannot have two sets, so this C is not the original), at an open edge the flags decide a cut.
+  the edges of its functions. A neighbour that loses bytes under it is another object: the flags decide a cut there.
+  (unbake 0.5.5 maps no object-edge classes, so no edge is a proven join and no set is a conflict.)
 - A set every landed member of the module keeps exact under becomes an `options` move; otherwise the function is
   split into a module of its own with the set, where its edges allow it.
 
@@ -71,10 +71,10 @@ def _order(doc: Json) -> dict[str, list[str]]:
 
 def neighbours(doc: Json, names: Sequence[str], reach: int = 2) -> list[tuple[str, str, str]]:
     """(neighbour, the function beside it, side) for up to `reach` landed C functions on each side of a run of
-    functions in the names_from version (else the first holder), stopping at a proven cut."""
-    order, verdicts = _order(doc), structure.verdicts(doc) or {}
+    functions in the names_from version (else the first holder)."""
+    order = _order(doc)
     by = {m["name"]: m for m in doc["members"]}
-    c = {u["path"] for u in doc["units"] if u.get("kind", "c") == "c"}
+    c = {u["path"] for u in doc["units"]}
     ref = (
         doc["names_from"]
         if names[0] in order.get(doc["names_from"], ())
@@ -86,9 +86,6 @@ def neighbours(doc: Json, names: Sequence[str], reach: int = 2) -> list[tuple[st
     for side, step, start in (("left", -1, at[0]), ("right", 1, at[-1])):
         i, found = start, 0
         while found < reach and 0 <= i + step < len(row):
-            left, right = (row[i + step], row[i]) if step < 0 else (row[i], row[i + step])
-            if verdicts.get((left, right)) == "cut":
-                break
             i += step
             other = row[i]
             if by[other]["unit"] in c and not by[other]["fuzzy"]:
@@ -162,29 +159,22 @@ def best(values: dict[Flags, float]) -> Flags | None:
 
 def judge(doc: Json, found: dict[str, Flags], neighbour_values: dict[tuple[str, Flags], float]) -> Json:
     """From each function's set (`found`: fuzzy finds and today's option units) and the values of its neighbours under
-    that set: conflicts, cuts the flags decide, `options` moves and splits."""
-    verdicts = structure.verdicts(doc) or {}
+    that set: cuts the flags decide, `options` moves and splits."""
     module = {m["name"]: m["module"] for m in doc["members"]}
     members = {m["name"]: m["members"] for m in doc["modules"]}
-    out: Json = {"options": [], "splits": [], "conflicts": [], "decided_cuts": []}
+    out: Json = {"options": [], "splits": [], "decided_cuts": []}
     for name, flags in sorted(found.items()):
         if not flags:
             continue
-        drops, joins = [], []
+        drops = []
         for other, beside, side in neighbours(doc, [name]):
             if neighbour_values.get((other, flags), 1.0) >= 1.0:
                 continue
             edge = (other, beside) if side == "left" else (beside, other)
-            kind = verdicts.get(edge, "open")
-            drops.append({"neighbour": other, "edge": list(edge), "verdict": kind})
-            if kind == "join":
-                joins.append(other)
-            elif kind == "open":
-                out["decided_cuts"].append({"left": edge[0], "right": edge[1], "by": list(flags), "start": "flags"})
+            drops.append({"neighbour": other, "edge": list(edge)})
+            out["decided_cuts"].append({"left": edge[0], "right": edge[1], "by": list(flags), "start": "flags"})
         landed = [n for n in members.get(module[name], []) if n != name]
-        if joins:
-            out["conflicts"].append({"function": name, "flags": list(flags), "drops": drops})
-        elif not drops and all(neighbour_values.get((n, flags), 1.0) >= 1.0 for n in landed):
+        if not drops and all(neighbour_values.get((n, flags), 1.0) >= 1.0 for n in landed):
             out["options"].append({"module": module[name], "flags": list(flags), "for": name})
         else:
             out["splits"].append({"function": name, "module": f"obj_{name}", "flags": list(flags), "drops": drops})

@@ -1,5 +1,10 @@
-"""Module structure as a file patch: evidence from `unbake map`, a proposal from it, one unified diff that moves
-functions between files, renames symbols and files and edits includes. `recipe apply` applies it, then runs sync."""
+"""Module structure as a file patch: evidence from unbake's public surface, a proposal from it, one unified diff that
+moves functions between files, renames files and edits includes. `recipe apply` applies it, then runs sync.
+
+The evidence is the slim `unbake map` (module paths, segment ownership, stand-ins, fuzzy names) with the placements of
+the captured tree's symbol tables. It carries no call, load or object-edge facts and no header graph, so nothing here
+proposes from them: a module is cut only where an evidence row or the size cap says, keeps its origin's folder, and no
+header is merged or deleted."""
 
 from __future__ import annotations
 
@@ -10,17 +15,18 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from itertools import groupby, pairwise
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from unbake import api
-from unbake.contracts import Config, Finding, Json, Refusal
+from unbake.contracts import Config, Finding, Json, Refusal, file_facts
 
-from recipemaker import clash, state, table, tree
+from recipemaker import clash, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
+LITERALS = "literals_"  # compiler-emitted read-only data a fact gives the file of its function: it moves with that file
 
 
 def _refusal(document: Json) -> Refusal:
@@ -42,11 +48,77 @@ def _unbake(config: Config, host: Path | None, *args: str) -> tuple[Json, str]:
 
 
 def evidence(config: Config, host: Path | None = None) -> Json:
-    """Read the public map evidence."""
+    """The structure evidence: `unbake map` for the modules and their segments, the captured tree of the same digest
+    for sections and `api.symbols` for placements."""
     document, _ = _unbake(config, host, "map")
     if not document["ok"]:
         raise _refusal(document)
-    return dict(json.loads((config.project.root / document["result"]["path"]).read_text(encoding="utf-8")))
+    slim = json.loads((config.project.root / document["result"]["path"]).read_text(encoding="utf-8"))
+    captured = api.capture(config)
+    if captured.digest != slim["digest"]:
+        raise Refusal(Finding("recipe.evidence", "the tree changed between unbake map and its capture"))
+    return document_of(config, slim, captured, {v: api.symbols(config, v) for v in slim["versions"]})
+
+
+def document_of(config: Config, slim: Json, captured: api.Tree, tables: Mapping[str, Mapping[str, Any]]) -> Json:
+    """The evidence document: per module (one source file) its segment, header and members in names_from file order;
+    per module with C definitions its unit (toolchain and options of its [file] row); per member its kind, module,
+    unit (the module when it is C, None behind a stand-in or NON_MATCHING) and placements per version."""
+    project, first = config.project, slim["names_from"]
+    sections = {m.path: m.sections for m in captured.modules}
+    ends = {v: world.extents(t) for v, t in tables.items()}
+    modules: list[Json] = []
+    units: list[Json] = []
+    members: list[Json] = []
+    for row in slim["modules"]:
+        path, owns = row["path"], row["owns"]
+        order: list[str] = []
+        for v in sorted(owns, key=lambda v: (v != first, v)):
+            order += [n for n in owns[v] if n not in order and not n.startswith(LITERALS)]
+        stand = {v: set(row["stand_ins"].get(v, ())) for v in owns}
+        held, landed = [], []
+        for name in order:
+            places = []
+            for v in sorted(owns):
+                if name not in owns[v] or name not in tables.get(v, {}):
+                    continue
+                vram, rom, size, kind = tables[v][name]
+                section = sections.get(path, {}).get(v, {}).get(name) or (".text" if kind == "func" else ".data")
+                start, extent = rom or 0, size or ends[v].get(name, 0)
+                end = start if section == ".bss" else start + extent
+                places.append({"version": v, "section": section, "rom_start": start, "rom_end": end, "vram": vram})
+            if not places:
+                continue
+            c = name not in row["fuzzy"] and not any(name in stand[p["version"]] for p in places)
+            held.append(name)
+            landed += [name] * c
+            members.append(
+                {
+                    "name": name,
+                    "kind": "function" if tables[places[0]["version"]][name][3] == "func" else "data",
+                    "module": path,
+                    "unit": path if c else None,
+                    "fuzzy": path if name in row["fuzzy"] else "",
+                    "segment": row["segment"],
+                    "placements": places,
+                }
+            )
+        if not held:
+            continue
+        file = project.root / path
+        header = world.header_of(path, file.read_bytes() if file.is_file() else b"")
+        modules.append({"name": path, "source": path, "header": header, "segment": row["segment"], "members": held})
+        if landed:
+            facts = file_facts(project, path)
+            options = {"add": list(facts.cflags), "omit": list(facts.omit)}
+            tool = facts.toolchain or project.toolchain
+            units.append({"path": path, "module": path, "members": landed, "toolchain": tool, "options": options})
+    versions = list(slim["versions"])
+    return {"digest": slim["digest"], "names_from": first, "versions": versions, **_rows(modules, units, members)}
+
+
+def _rows(modules: list[Json], units: list[Json], members: list[Json]) -> Json:
+    return {"modules": modules, "units": units, "members": members}
 
 
 def _sections(m: Json) -> dict[str, dict[str, Any]]:
@@ -55,46 +127,30 @@ def _sections(m: Json) -> dict[str, dict[str, Any]]:
     return {p["version"]: p for p in m["placements"] if p["section"] == section}
 
 
-def atoms(doc: Json, segment: Segments = None, library: Sequence[str] = ()) -> list[dict[str, Any]]:
-    """Read function and data atoms with placement, toolchain, options and library protection from the map."""
-    modules = {m["name"]: m for m in doc["modules"]}
-    tool = {u["path"]: u["toolchain"] for u in doc["units"]}
-    opts = {u["path"]: json.dumps(u.get("options"), sort_keys=True) for u in doc["units"]}
-    native = {u["path"] for u in doc["units"] if u.get("kind", "c") == "c"}
+def _inside(path: str, folders: Sequence[str]) -> bool:
+    return any(path.startswith(p.rstrip("/") + "/") for p in folders)  # directory membership, not a name prefix
+
+
+def atoms(doc: Json, library: Sequence[str] = ()) -> list[dict[str, Any]]:
+    """The function atoms and the C data atoms with placement, toolchain, options and library protection."""
+    unit = {u["path"]: u for u in doc["units"]}
     found: list[dict[str, Any]] = []
     for m in doc["members"]:
         t = _sections(m)
-        unit = m["unit"] or ""
-        in_library = any(unit.startswith(p.rstrip("/") + "/") for p in library)  # directory membership
-        if t and (m["module"] in modules or in_library or (unit and _padding(m))) and (m["kind"] == "function" or unit):
-            mod = modules.get(m["module"], {})
-            held = (mod.get("evidence") == "authored" and segment is None) or in_library
-            segment_name = mod["segment"] if mod else _within(doc["segments"], t.values())
-            if not segment_name:
-                continue
+        if t and (m["kind"] == "function" or m["unit"]):
+            u = unit.get(m["unit"] or "", {})
             found.append(
                 {
                     **m,
                     "text": t,
                     "section": next(iter(t.values()))["section"],
-                    "segment": segment_name,
-                    "tool": tool.get(unit),
-                    "opts": opts.get(unit),
-                    "c": unit in native,
-                    "protected": held,
+                    "tool": u.get("toolchain"),
+                    "opts": json.dumps(u.get("options"), sort_keys=True) if u else None,
+                    "c": bool(m["unit"]),
+                    "protected": _inside(m["module"], library),
                 }
             )
     return found
-
-
-def _within(segments: Sequence[Json], places: Collection[Json]) -> str:
-    """The segment whose ROM range holds a placement: where a unit that no module holds belongs."""
-    for s in segments:
-        for p in places:
-            low, high, _ = s["versions"].get(p["version"], (0, 0, 0))
-            if low <= p["rom_start"] < high:
-                return str(s["name"])
-    return ""
 
 
 def _padding(a: Json) -> bool:
@@ -102,83 +158,10 @@ def _padding(a: Json) -> bool:
     return a["kind"] != "function" and "_padding_" in a["name"]
 
 
-def _line(members: list[Json], doc: Json) -> list[Json]:
-    """One segment section in names_from ROM order, atoms of other versions inserted after their predecessor."""
-    first = doc["names_from"]
-    line = [
-        a for _, _, a in sorted((a["text"][first]["rom_start"], a["name"], a) for a in members if first in a["text"])
-    ]
-    index = {id(a): i for i, a in enumerate(line)}
-    for v in (v for v in doc["versions"] if v != first):
-        at = 0
-        for _, _, a in sorted((a["text"][v]["rom_start"], a["name"], a) for a in members if v in a["text"]):
-            if id(a) not in index:
-                line.insert(at, a)
-                index = {id(x): i for i, x in enumerate(line)}
-            at = index[id(a)] + 1
-    return line
-
-
-def _apart(a: Json, b: Json, v: str, data: Json) -> bool:
-    """Whether the data the two atoms load is not adjacent in version v: both load, and a gap lies between."""
-    left = [data[n][v] for n in a["loads"] if v in data.get(n, {})]
-    right = [data[n][v] for n in b["loads"] if v in data.get(n, {})]
-    return bool(left and right and max(e for _, e in left) < min(s for s, _ in right))
-
-
-_CUT = frozenset({"pad", "seg", "gap"})
-
-
-def verdicts(doc: Json) -> dict[tuple[str, str], str] | None:
-    """Per pair of functions adjacent in some version, the map's object-edge verdict (`unbake map` edge classes by the
-    16-byte .text rule): the classes of every version where the left one directly precedes the right one, a cut class
-    anywhere a cut, unal anywhere a join, both a contradiction, else open. None for a map without edge classes."""
-    if not any("edge" in m for m in doc["members"]):
-        return None
-    rows: dict[str, list[tuple[int, str]]] = defaultdict(list)
-    edge = {m["name"]: m.get("edge", {}) for m in doc["members"]}
-    for m in doc["members"]:
-        if m["kind"] == "function":
-            for p in m["placements"]:
-                if p["section"] == ".text":
-                    rows[p["version"]].append((p["rom_start"], m["name"]))
-    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for v, held in rows.items():
-        for (_, a), (_, b) in pairwise(sorted(held)):
-            if v in edge[b]:
-                seen[a, b].add(edge[b][v])
-    out = {}
-    for pair, kinds in seen.items():
-        cut, join = bool(kinds & _CUT), "unal" in kinds
-        out[pair] = "contradiction" if cut and join else "cut" if cut else "join" if join else "open"
-    return out
-
-
-def with_evidence(
-    doc: Json, proven: dict[tuple[str, str], str] | None, rows: Sequence[Json]
-) -> dict[tuple[str, str], str] | None:
-    """The verdicts with each evidence row's object made hard: every pair inside it a join, its two edges cuts."""
-    if not rows:
-        return proven
-    out = dict(proven or {})
-    order: dict[str, list[tuple[int, str]]] = defaultdict(list)
-    for m in doc["members"]:
-        if m["kind"] == "function":
-            for p in m["placements"]:
-                if p["section"] == ".text":
-                    order[p["version"]].append((p["rom_start"], m["name"]))
-    for held in order.values():
-        names = [n for _, n in sorted(held)]
-        at = {n: i for i, n in enumerate(names)}
-        for row in rows:
-            if row["first"] in at and row["last"] in at:
-                low, high = at[row["first"]], at[row["last"]]
-                out.update({(names[i], names[i + 1]): "join" for i in range(low, high)})
-                if low:
-                    out[names[low - 1], names[low]] = "cut"
-                if high + 1 < len(names):
-                    out[names[high], names[high + 1]] = "cut"
-    return out
+def _place(a: Json, first: str) -> tuple[str, int]:
+    """Where an atom sits: (version, ROM start) in names_from, else in the lowest version that holds it."""
+    v = first if first in a["text"] else min(a["text"])
+    return v, int(a["text"][v]["rom_start"])
 
 
 def evidenced_path(source: str, naming: tree.Naming = tree.PLAIN) -> tuple[str, str]:
@@ -187,90 +170,31 @@ def evidenced_path(source: str, naming: tree.Naming = tree.PLAIN) -> tuple[str, 
     return naming.evidenced(source)
 
 
-def _near_callers(run: list[Json], reach: int = 3) -> set[int]:
-    """Pair indexes a single near caller joins: a function only one atom of the run calls, at most `reach` atoms away,
-    belongs to its caller's object with every atom between (measured 90% RW, 91% BT)."""
-    pos = {a["name"]: i for i, a in enumerate(run)}
-    callers: dict[int, set[int]] = defaultdict(set)
-    for i, a in enumerate(run):
-        for c in a["calls"]:
-            if c in pos and pos[c] != i:
-                callers[pos[c]].add(i)
-    joined: set[int] = set()
-    for callee, by in callers.items():
-        if len(by) == 1 and abs(next(iter(by)) - callee) <= reach:
-            low, high = sorted((next(iter(by)), callee))
-            joined.update(range(low, high))
-    return joined
-
-
-def _partition(
-    run: list[Json], data: Json, settings: state.Structure, proven: dict[tuple[str, str], str] | None = None
-) -> tuple[list[list[Json]], list[Json]]:
-    """Partition at proven cuts/joins when available; otherwise use shared signals and bounded chains."""
-    pos = {a["name"]: i for i, a in enumerate(run)}
-    groups: dict[tuple[str, str], set[int]] = defaultdict(set)
-    entry = [len(run)] * len(run)  # position of the first caller of each atom
-    callers: set[int] = set()  # atoms with a call relation inside the run
-    for i, a in enumerate(run):
-        for c in (c for c in a["calls"] if c in pos):
-            groups["calls", c] |= {i, pos[c]}
-            entry[pos[c]] = min(entry[pos[c]], i)
-            callers |= {i, pos[c]}
-        for t in a["loads"]:
-            groups["loads", t].add(i)
-    spans = [(k, min(g), max(g)) for (k, _), g in groups.items() if len(g) > 1 and max(g) - min(g) < settings.reach]
-    cover: dict[str, list[int]] = {"calls": [0] * len(run), "loads": [0] * len(run)}
-    for kind, low, high in spans:
-        cover[kind][low:high] = [c + 1 for c in cover[kind][low:high]]
-    units = [(i, x["unit"]) for i, a in enumerate(run) for x in a.get("atoms", [a]) if x.get("c")]
-    first, last = {u: i for i, u in reversed(units)}, {u: i for i, u in units}  # one compiled file is never cut (gap 8)
-    locked = [any(first[u] <= i < last[u] for u in last) for i in range(len(run) - 1)]
-    linked = [bool(a["loads"]) for a in run]
-    called = [i in callers for i in range(len(run))]
-    cut, why = [], []
-    soft = _near_callers(run) if proven is not None else set()
-    for i, (a, b) in enumerate(pairwise(run)):
-        verdict = proven.get((a["name"], b["name"]), "open") if proven is not None else ""
-        if verdict in ("cut", "join"):
-            why.append([verdict])
-            cut.append(verdict == "cut" and not locked[i])  # a C unit across a proven cut stays: B debt in unbake
-            continue
-        both = set(a["text"]) & set(b["text"])
-        padded = a["padded"] and all(
-            a["text"][v]["rom_end"] == b["text"][v]["rom_start"] and b["text"][v]["vram"] % 16 == 0 for v in both
-        )
-        # a relation that is there and does not join the two atoms is a signal; a relation that is absent is none
-        on = {
-            "calls": called[i] and called[i + 1] and not cover["calls"][i],
-            "loads": linked[i] and linked[i + 1] and not cover["loads"][i],
-            "reach": entry[i + 1] > i and entry[i + 1] < len(run),
-        }
-        if proven is None:  # without edge classes the old signals stand; with them both measured as no boundary
-            on |= {"holders": set(a["text"]) != set(b["text"]), "padding": bool(both and padded)}
-        on["data"] = bool(both and all(_apart(a, b, v, data) for v in both))
-        why.append(sorted(k for k, v in on.items() if v))
-        cut.append(len(why[-1]) >= 2 and not _padding(b) and not locked[i] and i not in soft)  # padding never leads
-    weight = [x + y for x, y in zip(cover["calls"], cover["loads"], strict=True)]
-    direct = [(low, high) for _, low, high in spans if not any(cut[low:high])]
-    ends = [i for i in range(len(run)) if i == len(cut) or cut[i]]
-    pending = list(zip([0, *(e + 1 for e in ends[:-1])], ends, strict=True))
-    while pending and proven is None:  # proven cuts replace the cap chain: it made cuts at proven joins
-        low, high = pending.pop()
-        if high - low + 1 > settings.split_over and not any(a <= low and high <= b for a, b in direct):
-            weakest = min(range(low, high), key=lambda i: (locked[i], weight[i], abs(2 * i + 1 - low - high), i))
-            cut[weakest] = not locked[weakest]
-            pending += [(low, weakest), (weakest + 1, high)]
-    pieces: list[list[Json]] = [[run[0]]]
-    for i, atom in enumerate(run[1:]):
-        pieces += [[]] * cut[i]
-        pieces[-1].append(atom)
-    names = [
-        (run[i]["name"], run[i + 1]["name"], why[i] + ["chain"] * (len(why[i]) < 2 and proven is None))
-        for i in range(len(cut))
-        if cut[i]
-    ]
-    return pieces, [{"left": left, "right": right, "signals": s} for left, right, s in names]
+def _objects(every: Sequence[Json], first: str, rows: Sequence[Json]) -> dict[str, Any]:
+    """The object of each atom. A source file is one object; an evidence row's span of functions (first to last in
+    .text order of a version holding both) is one object across files, which also cuts it from the rest of theirs;
+    a file of padding only belongs to the object of the atom before it. Nothing else joins or cuts: where one object
+    ends is a call, load or object-edge fact, and unbake's map carries none."""
+    key: dict[str, Any] = {a["name"]: a["module"] for a in every}
+    text: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for a in every:
+        if a["kind"] == "function":
+            for v, p in a["text"].items():
+                text[v].append((p["rom_start"], a["name"]))
+    for held in text.values():
+        names = [n for _, n in sorted(held)]
+        at = {n: i for i, n in enumerate(names)}
+        for i, row in enumerate(rows):
+            if row["first"] in at and row["last"] in at:
+                key |= {n: ("row", i) for n in names[at[row["first"]] : at[row["last"]] + 1]}
+    pad = {a["module"] for a in every} - {a["module"] for a in every if not _padding(a)}
+    for v in sorted({_place(a, first)[0] for a in every}):
+        line = sorted((p["rom_start"], a["name"], a) for a in every if (p := a["text"].get(v)))
+        for (_, _, a), (_, _, b) in pairwise(line):
+            if b["module"] in pad and key[b["name"]] == b["module"] and a["module"] != b["module"]:
+                key |= {n: key[a["name"]] for n, k in key.items() if k == b["module"]}
+                pad.discard(b["module"])
+    return key
 
 
 def _by_types(piece: list[Json], types: Callable[[str], clash.Types]) -> list[list[Json]]:
@@ -291,170 +215,6 @@ def _by_types(piece: list[Json], types: Callable[[str], clash.Types]) -> list[li
     return chunks
 
 
-def _near(native: list[int], at: int) -> int:
-    """The nearest index in `native` to `at`, the earlier one on a tie."""
-    return min(native, key=lambda n: (abs(n - at), n > at))
-
-
-def _runs(line: list[Json]) -> list[tuple[bool, list[Json]]]:
-    """Group runs by source protection, toolchain, options and SDK; asm inherits its nearest C partition."""
-    native = [i for i, a in enumerate(line) if a["c"]]
-    lead = {a["unit"]: a["sdk"] for a in reversed(line) if a["c"]}
-
-    def key(i: int) -> tuple[Any, ...]:
-        a = line[_near(native, i)] if native and not line[i]["c"] else line[i]
-        return line[i]["protected"], a["tool"], a["opts"], lead.get(a["unit"], a["sdk"])
-
-    return [(held, [line[i] for i in g]) for (held, *_), g in groupby(range(len(line)), key)]
-
-
-def _anchor(run: list[Json]) -> list[Json]:
-    """Anchor asm to its nearest C atom (earlier on ties); leave wholly asm runs unchanged."""
-    native = [i for i, a in enumerate(run) if a["c"]]
-    if not native:
-        return run
-    held: dict[int, list[Json]] = defaultdict(list)
-    for i, a in enumerate(run):
-        held[_near(native, i)].append(a)
-    head = {a["name"]: held[n][0]["name"] for n, atoms in held.items() for a in atoms}
-    out: list[Json] = []
-    for atoms in held.values():
-        text: dict[str, dict[str, Any]] = {}
-        for a in atoms:
-            for v, p in a["text"].items():
-                joined = text.setdefault(v, dict(p))
-                joined["vram"] = p["vram"] if p["rom_start"] < joined["rom_start"] else joined["vram"]
-                joined["rom_start"] = min(joined["rom_start"], p["rom_start"])
-                joined["rom_end"] = max(joined["rom_end"], p["rom_end"])
-        calls = sorted({head.get(c, c) for a in atoms for c in a["calls"]})
-        loads = sorted({n for a in atoms for n in a["loads"]})
-        out.append(
-            {
-                "name": atoms[0]["name"],
-                "kind": atoms[0]["kind"],
-                "text": text,
-                "calls": calls,
-                "loads": loads,
-                "padded": atoms[-1]["padded"],
-                "atoms": atoms,
-            }
-        )
-    return out
-
-
-def _users(doc: Json, home: dict[str, str], naming: tree.Naming = tree.PLAIN) -> Callable[[str], frozenset[str]]:
-    """Find each shared header's consuming subsystem headers through sources and transitive header includes."""
-    by_path = {h["path"]: h for h in doc["headers"]}
-    members: dict[str, list[str]] = defaultdict(list)
-    for u in doc["units"]:
-        members[u["path"]] += u["members"]
-    for m in doc["modules"]:
-        members[m["header"]] += m["members"]
-    seen: dict[str, frozenset[str]] = {}
-    base = set(naming.shared_headers)
-
-    def users(path: str, trail: tuple[str, ...] = ()) -> frozenset[str]:
-        if path not in seen:
-            found: set[str] = set()
-            for by in (x for x in by_path[path]["included_by"] if x not in (*trail, path)):
-                if by in by_path and not by_path[by]["modules"]:
-                    found |= users(by, (*trail, path))
-                else:
-                    found |= {home[m] for m in members[by] if m in home and home[m] not in base}
-            seen[path] = frozenset(found)
-        return seen[path]
-
-    return users
-
-
-def _cluster_header(users: Collection[str], base: str) -> str:
-    """The configured common basename below the users' common folder, or empty when a base header serves them."""
-    folder = posixpath.commonpath([posixpath.dirname(u) for u in users])
-    path = "" if folder in ("", "include") else f"{folder}/{posixpath.basename(base)}"
-    return "" if path == base else path
-
-
-def headers(
-    doc: Json, share: float, home: dict[str, str] | None = None, naming: tree.Naming = tree.PLAIN
-) -> list[Json]:
-    """Merge shared headers by declarations and consuming subsystems; preserve the configured base header roles."""
-    home = home or {}
-    dead = set(dead_headers(doc))
-    types, common = naming.shared_headers  # the base headers the others build on: they move into no other header
-    base_moves = {
-        old: new
-        for old, new in zip(tree.shared_headers(), naming.shared_headers, strict=True)
-        if old != new and any(h["path"] == old for h in doc["headers"])
-    }
-    shared = sorted(
-        (h for h in doc["headers"] if not h["modules"] and h["path"] not in {*dead, types, common, *base_moves}),
-        key=lambda h: (-len(h["included_by"]), h["path"]),
-    )
-    functions = {m["name"] for m in doc["members"] if m["kind"] == "function"}
-    users = _users(doc, home, naming)
-    own = {h["path"]: next(iter(users(h["path"]))) for h in shared if len(users(h["path"])) == 1}
-    shared = [h for h in shared if h["path"] not in own]
-
-    sign = {h["path"]: (sorted(h["declares"]), sorted(h["includes"])) for h in shared}
-
-    def like(a: Json, b: Json) -> bool:
-        both = set(a["included_by"]) | set(b["included_by"])
-        return bool(a["declares"] and sign[a["path"]] == sign[b["path"]]) or (
-            bool(both) and len(set(a["included_by"]) & set(b["included_by"])) >= share * len(both)
-        )
-
-    target: dict[str, str] = {}
-    for h in shared:
-        target[h["path"]] = next((target[x["path"]] for x in shared if x["path"] in target and like(h, x)), h["path"])
-    group: dict[str, set[str]] = defaultdict(set)  # what each merged group declares
-    cluster: dict[str, set[str]] = defaultdict(set)  # the subsystems that use each merged group
-    for h in shared:
-        group[target[h["path"]]] |= set(h["declares"])
-        cluster[target[h["path"]]] |= users(h["path"])
-    subsystems = {u for u in home.values() if u not in (types, common)}
-    need = float(table("knowledge/structure.toml")["shared_threshold"]) * len(subsystems)
-    final: dict[str, str] = {}
-    for t, used in cluster.items():
-        local = _cluster_header(used, common) if used and len(used) < need else ""
-        final[t] = local or (common if group[t] & functions else types)
-    target = {p: final[t] for p, t in target.items()}
-    target |= {h["path"]: types for h in shared if not h["included_by"]}  # no includer but a used declaration
-    target |= own
-    by_path, game = {h["path"]: h for h in doc["headers"]}, {h["path"] for h in doc["headers"] if h["modules"]}
-    below: dict[str, bool] = {}  # a game header sits below this one: an SDK header never includes one, so it stays put
-
-    def reaches(path: str) -> bool:
-        if path not in below:
-            below[path] = False  # an include cycle adds nothing
-            below[path] = any(i in game or (i in by_path and reaches(i)) for i in by_path[path]["includes"])
-        return below[path]
-
-    target = {p: t for p, t in target.items() if not (t.startswith("include/sdk/") and reaches(p))}
-    target |= base_moves  # preserve the tool defaults' types/declarations roles when the project relocates them
-    final = {p: _final(target, t) for p, t in target.items()}
-    return [{"op": "file", "subject": p, "target": t} for p, t in sorted(final.items()) if p != t]
-
-
-def _final(target: dict[str, str], at: str) -> str:
-    """Where a header moved to ends up: a target that is itself moved is followed to the end, so no chain of `file`
-    moves is proposed (a move may not read a header another move has just made a target). A cycle stops at its start."""
-    seen = {at}
-    while target.get(at, at) != at and target[at] not in seen:
-        at = target[at]
-        seen.add(at)
-    return at
-
-
-def _referenced(every: Sequence[Json], home: dict[str, str]) -> set[str]:
-    """The headers some atom of another module calls or loads through: the ones a module header is needed for."""
-    return {
-        home[t]
-        for a in every
-        for t in (*a["calls"], *a["loads"])
-        if t in home and a["name"] in home and home[t] != home[a["name"]]
-    }
-
-
 def propose(
     doc: Json,
     settings: state.Structure,
@@ -464,60 +224,40 @@ def propose(
     evidence: Sequence[Json] = (),
     naming: tree.Naming = tree.PLAIN,
 ) -> Json:
-    """Propose modules, boundaries, paths and header merges from the map's evidence.
-    Scope is all segments or the requested segment names; `types` detects source definition clashes."""
+    """Propose one module per object, named by its address, in the folder of the file it comes from.
+    Scope is all segments or the requested segment names; `types` splits an object whose C files define a type
+    differently."""
     wanted = None if segment is None else frozenset(segment.split(",") if isinstance(segment, str) else segment)
-    every = atoms(doc, wanted, library)
-    scope = {a["segment"] for a in every if wanted is None or a["segment"] in wanted}
+    first = doc["names_from"]
+    every = atoms(doc, library)
+    scope = sorted({a["segment"] for a in every if wanted is None or a["segment"] in wanted})
     existing = {m["name"]: m for m in doc["modules"]}
-    data = {m["name"]: {p["version"]: (p["rom_start"], p["rom_end"]) for p in m["placements"]} for m in doc["members"]}
     held: dict[str, list[str]] = {n: [] for n in existing}
-    by_segment: dict[str, dict[tuple[bool, str], list[Json]]] = defaultdict(lambda: defaultdict(list))
     for a in every:
         held.setdefault(a["module"], []).append(a["name"])
-        by_segment[a["segment"]][a["kind"] != "function", a["section"]].append(a)
+    free = [a for a in every if a["segment"] in scope and not a["protected"]]
+    key = _objects(free, first, evidence)
+    groups: dict[Any, list[Json]] = defaultdict(list)
+    for a in sorted(free, key=lambda a: (a["segment"], *_place(a, first), a["name"])):
+        groups[key[a["name"]]].append(a)
+    pieces: list[list[Json]] = []
+    for piece in groups.values():
+        units = {a["unit"] for a in piece if a["c"]}
+        pieces += _by_types(piece, types) if types is not None and len(units) > 1 else [piece]
     modules: list[dict[str, Any]] = []
-    boundaries: list[Json] = []
     taken: set[str] = set()
-    seg = {a["name"]: a["segment"] for a in every}
-    out = {s: {seg.get(c) for k in by_segment[s].values() for a in k for c in a["calls"]} - {s, None} for s in scope}
-    proven = with_evidence(doc, verdicts(doc), evidence)
-    order = sorted(scope, key=lambda s: (len(out[s]), s))  # leaf segments first
-    for name in order:
-        for kind in sorted(by_segment[name]):
-            before = None  # the module made from the run just before, while nothing else sits between
-            for fixed, run in _runs(_line(by_segment[name][kind], doc)):
-                if fixed:
-                    before = None
-                    continue
-                edges = proven if proven is not None and not kind[0] else None  # object edges are .text facts
-                chain = run if edges is not None else _anchor(run)  # a proven edge may sit between asm atoms
-                pieces, found = _partition(chain, data, settings, edges) if len(chain) > 1 else ([chain], [])
-                pieces = [[a for x in p for a in x.get("atoms", [x])] for p in pieces]
-                family: dict[int, list[Json]] = {}  # the parts of one piece that were cut apart by a type clash
-                if types is not None:
-                    parts = [_by_types(p, types) for p in pieces]
-                    family = {id(c): [] for chunks in parts if len(chunks) > 1 for c in chunks}
-                    clan = {id(c): chunks for chunks in parts if len(chunks) > 1 for c in chunks}
-                    pieces = [c for chunks in parts for c in chunks]
-                boundaries += found
-                for piece in pieces:
-                    if before is not None and all(_padding(a) for a in piece):  # padding folds into the unit before it
-                        before["atoms"] += [a["name"] for a in piece]
-                        continue
-                    origin = max(sorted({a["module"] for a in piece}), key=[a["module"] for a in piece].count)
-                    vram = piece[0]["text"].get(doc["names_from"]) or piece[0]["text"][min(piece[0]["text"])]
-                    base = f"{'data' if kind[0] else 'code'}_{vram['vram']:08X}"
-                    unique, address = tree.identity(base, taken | (set(existing) - {origin}), piece, doc["names_from"])
-                    modules.append({"name": unique, "segment": name, "origin": origin, "address": address})
-                    taken.add(unique)
-                    modules[-1]["atoms"] = [a["name"] for a in piece]
-                    if id(piece) in family:  # every part of one piece carries the name of the first
-                        kin = family[id(clan[id(piece)][0])]
-                        modules[-1]["group"] = (kin or [modules[-1]])[0]["name"]
-                        kin.append(modules[-1])
-                    before = modules[-1]
-    extra = tree.place(doc, every, modules, settings, naming)
+    kept: set[str] = set()  # the files a module keeps: renamed, not emptied
+    for piece in sorted(pieces, key=lambda p: (p[0]["segment"], *_place(p[0], first))):
+        origin = max(sorted({a["module"] for a in piece}), key=[a["module"] for a in piece].count)
+        data = all(a["kind"] != "function" for a in piece)
+        vram = piece[0]["text"].get(first) or piece[0]["text"][min(piece[0]["text"])]
+        base = f"{'data' if data else 'code'}_{vram['vram']:08X}"
+        unique, address = tree.identity(base, taken | (set(existing) - {origin}), piece, first)
+        modules.append({"name": unique, "segment": piece[0]["segment"], "origin": origin, "address": address})
+        modules[-1] |= {"atoms": [a["name"] for a in piece], "keeps": origin not in kept}
+        kept.add(origin)
+        taken.add(unique)
+    order = tree.place(doc, every, modules, naming)
     for row in evidence:  # the module an evidence row proves takes the folder and file name the evidence gives
         for m in modules:
             if row["first"] in m["atoms"] and row["last"] in m["atoms"]:
@@ -525,40 +265,25 @@ def propose(
                 m |= {"sub": sub, "folder": source.rpartition("/")[0], "source": source, "evidence": row["source"]}
                 m["header"] = naming.header(sub) if sub else m["header"]
                 m["batch"] = m["folder"]
-                if m["batch"] not in extra["order"]:
-                    extra["order"].insert(0, m["batch"])  # its own batch, before the folders that call into it
+                if m["batch"] not in order:
+                    order.insert(0, m["batch"])  # its own batch, before the folders the map already holds
     is_c = {a["name"]: a["c"] for a in every}
     counted = [m for m in modules if any(is_c.get(n) for n in m["atoms"])]  # asm-only modules are no C units
-    touched = {a["module"] for a in every if a["segment"] in scope and not a["protected"]}
-    header = {m["name"]: m["header"] for m in doc["modules"]}  # every member's header: its module's now ...
-    home = {m["name"]: header[m["module"]] for m in doc["members"] if m["module"] in header}
-    home |= {n: m["header"] for m in modules for n in m["atoms"]}  # ... or its new module's
-    dead = dead_headers(doc)
-    kept, merges = len(doc["modules"]) - len(touched), headers(doc, settings.share_jaccard, home, naming)
-    rest = len([u for u in doc["units"] if u["module"] not in touched and u.get("kind", "c") == "c"])
-    shared = len([h for h in doc["headers"] if not h["modules"]]) - len(merges) - len(dead)
-    tracked = len([h for h in doc["headers"] if h["modules"] and not touched & set(h["modules"])])
-    fresh = {m["header"] for m in modules if m["library"] or m["sub"]}
-    needed = len(_referenced(every, home) & fresh)  # a new module needs a header only where another module reaches in
+    touched = {a["module"] for a in free}
     pad = {m["name"] for m in doc["members"] if _padding(m)}
     folded = {a for m in modules if not set(m["atoms"]) <= pad for a in m["atoms"] if a in pad}  # rides in a module
     alone = [u for u in doc["units"] if u["members"] and set(u["members"]) <= pad]
+    padding = len([u for u in alone if not set(u["members"]) <= folded])
     sizes = [len(held[n]) for n in touched if n in held]
     func = [m["name"] for m in modules if m["name"].startswith("func_")]
-    padding = len([u for u in alone if not set(u["members"]) <= folded])
     where = tree.stats((m["folder"] for m in modules), (m["source"] for m in modules))
-    current = {a["name"]: a["module"] for a in every} | {
-        n: next(x["module"] for x in doc["members"] if x["name"] == n) for n in extra["fuzzy"]
-    }
+    rest = len([u for u in doc["units"] if u["module"] not in touched])
     return {
-        "scope": order,
+        "scope": scope,
         "modules": modules,
-        "boundaries": boundaries,
-        "merges": merges,
-        "dead_headers": dead,
-        "symbols": extra["symbols"],
-        "order": extra["order"],
-        "current": current,
+        "boundaries": [dict(row) for row in evidence],
+        "order": order,
+        "current": {a["name"]: a["module"] for a in every},
         "existing": {n: {"source": m["source"], "header": m["header"], "atoms": held[n]} for n, m in existing.items()},
         "tree": {
             "c_files": len([m for m in counted if not m["data"]]),
@@ -566,9 +291,6 @@ def propose(
             **where,
             "padding_files": padding,
             "func_files": len(func),
-            "api_headers": needed,
-            "subsystems": len({m["sub"] for m in modules if m["sub"]}),
-            "libraries": len({m["library"] for m in modules if m["library"]}),
         },
         "gates": {
             "dir_max_ok": where["dir_max"] <= settings.dir_max,
@@ -576,49 +298,33 @@ def propose(
             "func_files_zero": not func,
         },
         "estimate": {  # (before, after)
-            "modules": (len(doc["modules"]), kept + len(modules)),
-            "units_estimate": (len([u for u in doc["units"] if u.get("kind", "c") == "c"]), rest + len(counted)),
-            "headers": (len(doc["headers"]), shared + tracked + needed),
+            "modules": (len(doc["modules"]), len(doc["modules"]) - len(touched) + len(modules)),
+            "units_estimate": (len(doc["units"]), rest + len(counted)),
             "padding_units": (len(alone), padding),
             "single_atom_modules": (sizes.count(1), [len(m["atoms"]) for m in modules].count(1)),
         },
     }
 
 
-def dead_headers(doc: Json) -> list[str]:
-    """Shared headers no source includes and that declare nothing a member calls, loads or is: listed for deletion."""
-    used = {m["name"] for m in doc["members"]} | {c for m in doc["members"] for c in (*m["calls"], *m["loads"])}
-    return sorted(
-        h["path"] for h in doc["headers"] if not h["modules"] and not h["included_by"] and not set(h["declares"]) & used
-    )
-
-
-def _module_moves(entry: Json, existing: Json, current: Json, renamed: Json) -> list[dict[str, Any]]:
-    name, origin = entry["name"], entry["origin"]
-    same = origin in existing and set(entry["atoms"]) == set(existing[origin]["atoms"])
-    out = [{"op": "module", "subject": origin, "target": name}] * (same and origin != name)
-    out += [
-        {"op": "member", "subject": renamed.get(m, m), "target": name}
-        for m in entry["atoms"]
-        if current[m] != name and not same
-    ]
-    have = existing.get(origin if same else name, {})
+def _module_moves(entry: Json, existing: Json, current: Json) -> list[dict[str, Any]]:
+    """A module that keeps its origin file renames it and takes in the atoms of other files; any other module is a
+    new file every atom moves into."""
+    name, origin, keeps = entry["name"], entry["origin"], entry["keeps"] and entry["origin"] in existing
+    out = [{"op": "module", "subject": origin, "target": name}] * (keeps and origin != name)
+    home = origin if keeps else name
+    out += [{"op": "member", "subject": m, "target": name} for m in entry["atoms"] if current[m] != home]
+    have = existing[origin] if keeps else {}
     for op in ("source", "header"):
-        out += [{"op": op, "subject": name, "target": entry[op]}] * (have.get(op) != entry[op])
+        out += [{"op": op, "subject": name, "target": entry[op]}] * bool(entry[op] and have.get(op) != entry[op])
     return out
 
 
 def _batches(proposal: Json) -> list[tuple[str, list[dict[str, Any]]]]:
-    """N0 symbol renames first, then libraries, subsystems leaf-first (fewest incoming calls) one folder per batch,
-    shared and unloaded data last, then the shared header merges."""
+    """One folder per batch, in the proposal's folder order."""
     by: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    renamed = proposal["symbols"]
     for entry in proposal["modules"]:
-        by[entry["batch"]] += _module_moves(entry, proposal["existing"], proposal["current"], renamed)
-    names = [{"op": "symbol", "subject": n, "target": t} for n, t in sorted(renamed.items())]
-    head = [("symbols", names)] if names else []
-    tail = [("headers", proposal["merges"])] if proposal["merges"] else []
-    return head + [(s, by[s]) for s in proposal["order"] if by[s]] + tail
+        by[entry["batch"]] += _module_moves(entry, proposal["existing"], proposal["current"])
+    return [(s, by[s]) for s in proposal["order"] if by[s]]
 
 
 # ------------------------------------------------------------------------------------------------ the patch
@@ -862,8 +568,60 @@ def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None],
 
 
 def ops(proposal: Json) -> list[Json]:
-    """The flat move list of a proposal: renames of symbols first, then one folder after the other, then headers."""
+    """The flat move list of a proposal: one folder after the other."""
     return [m for _, group in _batches(proposal) for m in group]
+
+
+def _rel(root: Path, path: str) -> str:
+    """A scope path as the project-relative POSIX spelling the map uses."""
+    given = Path(path)
+    return posixpath.normpath((given.relative_to(root) if given.is_absolute() else given).as_posix())
+
+
+def _links(proposal: Json, entry: Json) -> set[str]:
+    """The modules one proposed module ties together: its origin, its name and the holder of each of its atoms."""
+    return {entry["origin"], entry["name"], *(proposal["current"].get(a, entry["origin"]) for a in entry["atoms"])}
+
+
+def scope_modules(doc: Json, proposal: Json, files: Collection[str]) -> frozenset[str]:
+    """The closure of a file scope: the modules holding the files (as source, header or compiled unit), plus every
+    module the proposal links to them. Applied until nothing more joins, so a contiguous block is whole."""
+    held = set(files)
+    seed = {m["name"] for m in doc["modules"] if held & {m["source"], m["header"]}}
+    seed |= {u["module"] for u in doc["units"] if u["path"] in held and u.get("module")}
+    if not seed:
+        raise Refusal(Finding("recipe.scope", f"no module holds {', '.join(sorted(held))}"))
+    links = [_links(proposal, e) for e in proposal["modules"]]
+    closure = set(seed)
+    while grown := [x for x in links if x & closure and not x <= closure]:
+        for x in grown:
+            closure |= x
+    return frozenset(closure)
+
+
+def scoped(proposal: Json, closure: Collection[str]) -> Json:
+    """The proposal limited to the closure: only the proposed modules linked to it."""
+    return {**proposal, "modules": [e for e in proposal["modules"] if _links(proposal, e) & set(closure)]}
+
+
+def confine(proposal: Json, closure: Collection[str]) -> None:
+    """Refuse a move that touches a file outside the closure, naming the move and the file."""
+    inside = set(closure)
+    current, existing = proposal["current"], proposal["existing"]
+    made = {e["name"]: e for e in proposal["modules"]}
+
+    def file_of(module: str) -> str:
+        have = existing.get(module) or made.get(module) or {}
+        return str(have.get("source") or module)
+
+    for move in ops(proposal):
+        op, subject, target = move["op"], move["subject"], move["target"]
+        touched = [current.get(subject, ""), target] if op == "member" else [subject]
+        for module in touched:
+            if module not in inside:
+                raise Refusal(
+                    Finding("recipe.scope", f"{op} {subject} -> {target} touches {file_of(module)}, outside the scope")
+                )
 
 
 def modules_of(doc: Json) -> dict[str, Json]:
@@ -888,28 +646,31 @@ def run(config: Config, params: Json) -> Json:
     """`recipe structure`: write the proposal as a patch under `.unbake/recipe/patches/` and print it as JSON."""
     root = config.project.root
     document = evidence(config, params["host"])
-    proposal = dict(
-        propose(
-            document,
-            state.structure(),
-            params["segment"],
-            getattr(config, "libraries", ()),
-            clash.reader(root),
-            (),
-            tree.style(root),
-        )
-    )
+    paths = [_rel(root, p) for p in params.get("paths") or ()]
+    library = getattr(config.project, "libraries", ())
+    settings, types, naming = state.structure(), clash.reader(root), tree.style(root)
+    proposal = dict(propose(document, settings, params["segment"], library, types, (), naming))
+    found: list[str] = []
+    if paths:  # a scope is a suggestion that never blocks: a refusal is a finding and the proposal is empty
+        try:
+            closure = scope_modules(document, proposal, paths)
+            proposal = dict(scoped(proposal, closure))
+            confine(proposal, closure)
+        except Refusal as refusal:
+            found = [f.reason for f in refusal.findings]
+            proposal = {**proposal, "modules": []}
     captured = api.capture(config)
     built = build(root, ops(proposal), lambda n: captured.owner(document["names_from"], n), modules_of(document))
+    kept = bool(built["moves"]) or not paths  # a scoped proposal with nothing to move saves no patch
     return {
         **{k: dict(zip(("before", "after"), v, strict=True)) for k, v in proposal["estimate"].items()},
         "tree": proposal["tree"],
         "gates": proposal["gates"],
-        "dead_headers": proposal["dead_headers"],
         "boundaries": proposal["boundaries"],
         **{k: built[k] for k in ("patch", "files", "moves")},
-        "path": save(config, built),
+        "path": save(config, built) if kept else "",
         "stream": stream(built),
+        **({"suggestions": ops(proposal), "findings": found} if paths else {}),
         "next": "recipe apply" if built["moves"] else "recipe status",
     }
 

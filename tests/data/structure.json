@@ -1,0 +1,3684 @@
+{
+ "digest": "f85886db2357e284c20129ba177e296edbeb0af5b26c91c7aa18a9cb3130a993",
+ "members": [
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/ANIM/8023CFB0.CPP",
+   "name": "func_8023CFB0_us",
+   "placements": [
+    {
+     "rom_end": 252856,
+     "rom_start": 252848,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149830576
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/ANIM/8023CFB0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/ANIM/8023CFB0.CPP",
+   "name": "rodata_unresolved_8023CFB8",
+   "placements": [
+    {
+     "rom_end": 252864,
+     "rom_start": 252856,
+     "section": ".data",
+     "version": "us",
+     "vram": 2149830584
+    }
+   ],
+   "segment": "span_1000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/ANIM/8023CFB0_2.CPP",
+   "name": "func_8023D010_eu_x",
+   "placements": [
+    {
+     "rom_end": 252952,
+     "rom_start": 252944,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149830672
+    },
+    {
+     "rom_end": 252872,
+     "rom_start": 252864,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149830592
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/ANIM/8023CFB0_2.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/ANIM/8023CFB0_3.CPP",
+   "name": "func_8023CFD0_de",
+   "placements": [
+    {
+     "rom_end": 252888,
+     "rom_start": 252880,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149830608
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/ANIM/8023CFB0_3.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/ANIM/8023CFB0_4.CPP",
+   "name": "func_8023CFE0_eu",
+   "placements": [
+    {
+     "rom_end": 252904,
+     "rom_start": 252896,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149830624
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/ANIM/8023CFB0_4.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_8044524C_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782408,
+     "rom_start": 1782348,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961164
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_80445288_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782468,
+     "rom_start": 1782408,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961224
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_804452C4_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782532,
+     "rom_start": 1782468,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961284
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_80445304_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782596,
+     "rom_start": 1782532,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961348
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_80445344_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782660,
+     "rom_start": 1782596,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961412
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "name": "func_80445384_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782724,
+     "rom_start": 1782660,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961476
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_10.CPP",
+   "name": "func_80445160_de",
+   "placements": [
+    {
+     "rom_end": 1749456,
+     "rom_start": 1749344,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960928
+    },
+    {
+     "rom_end": 1819584,
+     "rom_start": 1819472,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965520
+    },
+    {
+     "rom_end": 1271024,
+     "rom_start": 1270912,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965824
+    },
+    {
+     "rom_end": 1784840,
+     "rom_start": 1784728,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963544
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_10.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_11.CPP",
+   "name": "func_804451D0_de",
+   "placements": [
+    {
+     "rom_end": 1749680,
+     "rom_start": 1749456,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961040
+    },
+    {
+     "rom_end": 1819844,
+     "rom_start": 1819584,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965632
+    },
+    {
+     "rom_end": 1271284,
+     "rom_start": 1271024,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965936
+    },
+    {
+     "rom_end": 1785064,
+     "rom_start": 1784840,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963656
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_12.CPP",
+   "name": "func_804452B0_de",
+   "placements": [
+    {
+     "rom_end": 1749776,
+     "rom_start": 1749680,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961264
+    },
+    {
+     "rom_end": 1819940,
+     "rom_start": 1819844,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965892
+    },
+    {
+     "rom_end": 1271380,
+     "rom_start": 1271284,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151966196
+    },
+    {
+     "rom_end": 1785160,
+     "rom_start": 1785064,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963880
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_12.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_13.CPP",
+   "name": "func_80445310_de",
+   "placements": [
+    {
+     "rom_end": 1750000,
+     "rom_start": 1749776,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961360
+    },
+    {
+     "rom_end": 1820200,
+     "rom_start": 1819940,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965988
+    },
+    {
+     "rom_end": 1271640,
+     "rom_start": 1271380,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151966292
+    },
+    {
+     "rom_end": 1785384,
+     "rom_start": 1785160,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963976
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_14.CPP",
+   "name": "func_804453F0_de",
+   "placements": [
+    {
+     "rom_end": 1750164,
+     "rom_start": 1750000,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961584
+    },
+    {
+     "rom_end": 1820364,
+     "rom_start": 1820200,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151966248
+    },
+    {
+     "rom_end": 1271804,
+     "rom_start": 1271640,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151966552
+    },
+    {
+     "rom_end": 1785548,
+     "rom_start": 1785384,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964200
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_15.CPP",
+   "name": "func_80445ECC",
+   "placements": [
+    {
+     "rom_end": 1750276,
+     "rom_start": 1750164,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961748
+    },
+    {
+     "rom_end": 1820492,
+     "rom_start": 1820364,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151966412
+    },
+    {
+     "rom_end": 1271932,
+     "rom_start": 1271804,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151966716
+    },
+    {
+     "rom_end": 1785660,
+     "rom_start": 1785548,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964364
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_16.CPP",
+   "name": "func_80445504_de",
+   "placements": [
+    {
+     "rom_end": 1750416,
+     "rom_start": 1750276,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151961860
+    },
+    {
+     "rom_end": 1820632,
+     "rom_start": 1820492,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151966540
+    },
+    {
+     "rom_end": 1272072,
+     "rom_start": 1271932,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151966844
+    },
+    {
+     "rom_end": 1785800,
+     "rom_start": 1785660,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964476
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_17.CPP",
+   "name": "func_80445FC8_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1785856,
+     "rom_start": 1785800,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964616
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_17.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_17.CPP",
+   "name": "func_80446000_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1785928,
+     "rom_start": 1785856,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964672
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_17.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_17.CPP",
+   "name": "func_80446048_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1786000,
+     "rom_start": 1785928,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151964744
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_17.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_2.CPP",
+   "name": "func_80444D50_de",
+   "placements": [
+    {
+     "rom_end": 1748380,
+     "rom_start": 1748304,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151959888
+    },
+    {
+     "rom_end": 1818300,
+     "rom_start": 1818224,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964272
+    },
+    {
+     "rom_end": 1269740,
+     "rom_start": 1269664,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151964576
+    },
+    {
+     "rom_end": 1740556,
+     "rom_start": 1740480,
+     "section": ".text",
+     "version": "us",
+     "vram": 2151960256
+    },
+    {
+     "rom_end": 1781516,
+     "rom_start": 1781440,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151960256
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_2.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_3.CPP",
+   "name": "func_80444D9C_de",
+   "placements": [
+    {
+     "rom_end": 1748520,
+     "rom_start": 1748380,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151959964
+    },
+    {
+     "rom_end": 1818464,
+     "rom_start": 1818300,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964348
+    },
+    {
+     "rom_end": 1269904,
+     "rom_start": 1269740,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151964652
+    },
+    {
+     "rom_end": 1740696,
+     "rom_start": 1740556,
+     "section": ".text",
+     "version": "us",
+     "vram": 2151960332
+    },
+    {
+     "rom_end": 1781656,
+     "rom_start": 1781516,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151960332
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_4.CPP",
+   "name": "func_80444FA0_us_rev1",
+   "placements": [
+    {
+     "rom_end": 1782272,
+     "rom_start": 1781664,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151960480
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_4.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_5.CPP",
+   "name": "func_80444E30_de",
+   "placements": [
+    {
+     "rom_end": 1748592,
+     "rom_start": 1748528,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960112
+    },
+    {
+     "rom_end": 1818640,
+     "rom_start": 1818576,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964624
+    },
+    {
+     "rom_end": 1270080,
+     "rom_start": 1270016,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151964928
+    },
+    {
+     "rom_end": 1782336,
+     "rom_start": 1782272,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961088
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_5.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_5.CPP",
+   "name": "func_80444E70_de",
+   "placements": [
+    {
+     "rom_end": 1748604,
+     "rom_start": 1748592,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960176
+    },
+    {
+     "rom_end": 1818652,
+     "rom_start": 1818640,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964688
+    },
+    {
+     "rom_end": 1270092,
+     "rom_start": 1270080,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151964992
+    },
+    {
+     "rom_end": 1782348,
+     "rom_start": 1782336,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151961152
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_5.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_6.CPP",
+   "name": "func_80444E7C_de",
+   "placements": [
+    {
+     "rom_end": 1748660,
+     "rom_start": 1748604,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960188
+    },
+    {
+     "rom_end": 1818708,
+     "rom_start": 1818652,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964700
+    },
+    {
+     "rom_end": 1270148,
+     "rom_start": 1270092,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965004
+    },
+    {
+     "rom_end": 1784044,
+     "rom_start": 1783988,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151962804
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_6.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_6.CPP",
+   "name": "func_80444EB4_de",
+   "placements": [
+    {
+     "rom_end": 1748668,
+     "rom_start": 1748660,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960244
+    },
+    {
+     "rom_end": 1818716,
+     "rom_start": 1818708,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151964756
+    },
+    {
+     "rom_end": 1270156,
+     "rom_start": 1270148,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965060
+    },
+    {
+     "rom_end": 1784052,
+     "rom_start": 1784044,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151962860
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_6.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "name": "func_80444EBC_de",
+   "placements": [
+    {
+     "rom_end": 1748712,
+     "rom_start": 1748668,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960252
+    },
+    {
+     "rom_end": 1784096,
+     "rom_start": 1784052,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151962868
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "name": "func_80444EE8_de",
+   "placements": [
+    {
+     "rom_end": 1748756,
+     "rom_start": 1748712,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960296
+    },
+    {
+     "rom_end": 1784140,
+     "rom_start": 1784096,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151962912
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "name": "func_80444F14_de",
+   "placements": [
+    {
+     "rom_end": 1748800,
+     "rom_start": 1748756,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960340
+    },
+    {
+     "rom_end": 1784184,
+     "rom_start": 1784140,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151962956
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "name": "func_80444F40_de",
+   "placements": [
+    {
+     "rom_end": 1748844,
+     "rom_start": 1748800,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960384
+    },
+    {
+     "rom_end": 1784228,
+     "rom_start": 1784184,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963000
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "name": "func_80444F6C_de",
+   "placements": [
+    {
+     "rom_end": 1748888,
+     "rom_start": 1748844,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960428
+    },
+    {
+     "rom_end": 1784272,
+     "rom_start": 1784228,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963044
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_8.CPP",
+   "name": "func_80444F98_de",
+   "placements": [
+    {
+     "rom_end": 1749024,
+     "rom_start": 1748888,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960472
+    },
+    {
+     "rom_end": 1819116,
+     "rom_start": 1818980,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965028
+    },
+    {
+     "rom_end": 1270556,
+     "rom_start": 1270420,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965332
+    },
+    {
+     "rom_end": 1784408,
+     "rom_start": 1784272,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963088
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_8.CPP",
+   "name": "func_80445020_de",
+   "placements": [
+    {
+     "rom_end": 1749120,
+     "rom_start": 1749024,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960608
+    },
+    {
+     "rom_end": 1819212,
+     "rom_start": 1819116,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965164
+    },
+    {
+     "rom_end": 1270652,
+     "rom_start": 1270556,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965468
+    },
+    {
+     "rom_end": 1784504,
+     "rom_start": 1784408,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963224
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": "src/MENU/PAK/80444EC0_8.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/MENU/PAK/80444EC0_9.CPP",
+   "name": "func_80445AB8",
+   "placements": [
+    {
+     "rom_end": 1749344,
+     "rom_start": 1749120,
+     "section": ".text",
+     "version": "de",
+     "vram": 2151960704
+    },
+    {
+     "rom_end": 1819472,
+     "rom_start": 1819212,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2151965260
+    },
+    {
+     "rom_end": 1270912,
+     "rom_start": 1270652,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2151965564
+    },
+    {
+     "rom_end": 1784728,
+     "rom_start": 1784504,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2151963320
+    }
+   ],
+   "segment": "ovl_80400000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4.CPP",
+   "name": "func_80213ED4_de",
+   "placements": [
+    {
+     "rom_end": 85368,
+     "rom_start": 84692,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149662420
+    },
+    {
+     "rom_end": 85400,
+     "rom_start": 84724,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149662452
+    },
+    {
+     "rom_end": 85400,
+     "rom_start": 84724,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149662452
+    },
+    {
+     "rom_end": 85368,
+     "rom_start": 84692,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149662420
+    },
+    {
+     "rom_end": 85368,
+     "rom_start": 84692,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149662420
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4.CPP",
+   "name": "func_80214178_de",
+   "placements": [
+    {
+     "rom_end": 85776,
+     "rom_start": 85368,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149663096
+    },
+    {
+     "rom_end": 85808,
+     "rom_start": 85400,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149663128
+    },
+    {
+     "rom_end": 85808,
+     "rom_start": 85400,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149663128
+    },
+    {
+     "rom_end": 85776,
+     "rom_start": 85368,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149663096
+    },
+    {
+     "rom_end": 85776,
+     "rom_start": 85368,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149663096
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_10.CPP",
+   "name": "func_802166F4_de",
+   "placements": [
+    {
+     "rom_end": 95240,
+     "rom_start": 94964,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149672692
+    },
+    {
+     "rom_end": 95272,
+     "rom_start": 94996,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149672724
+    },
+    {
+     "rom_end": 95272,
+     "rom_start": 94996,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149672724
+    },
+    {
+     "rom_end": 95240,
+     "rom_start": 94964,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149672692
+    },
+    {
+     "rom_end": 95240,
+     "rom_start": 94964,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149672692
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_10.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_11.CPP",
+   "name": "func_80216808_de",
+   "placements": [
+    {
+     "rom_end": 95416,
+     "rom_start": 95240,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149672968
+    },
+    {
+     "rom_end": 95448,
+     "rom_start": 95272,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149673000
+    },
+    {
+     "rom_end": 95448,
+     "rom_start": 95272,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149673000
+    },
+    {
+     "rom_end": 95416,
+     "rom_start": 95240,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149672968
+    },
+    {
+     "rom_end": 95416,
+     "rom_start": 95240,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149672968
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_11.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_12.CPP",
+   "name": "func_802168B8_de",
+   "placements": [
+    {
+     "rom_end": 95660,
+     "rom_start": 95416,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149673144
+    },
+    {
+     "rom_end": 95692,
+     "rom_start": 95448,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149673176
+    },
+    {
+     "rom_end": 95692,
+     "rom_start": 95448,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149673176
+    },
+    {
+     "rom_end": 95660,
+     "rom_start": 95416,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149673144
+    },
+    {
+     "rom_end": 95660,
+     "rom_start": 95416,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149673144
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_12.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_13.CPP",
+   "name": "func_802169AC_de",
+   "placements": [
+    {
+     "rom_end": 95852,
+     "rom_start": 95660,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149673388
+    },
+    {
+     "rom_end": 95884,
+     "rom_start": 95692,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149673420
+    },
+    {
+     "rom_end": 95884,
+     "rom_start": 95692,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149673420
+    },
+    {
+     "rom_end": 95852,
+     "rom_start": 95660,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149673388
+    },
+    {
+     "rom_end": 95852,
+     "rom_start": 95660,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149673388
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_13.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_14.CPP",
+   "name": "func_80216A6C_de",
+   "placements": [
+    {
+     "rom_end": 96244,
+     "rom_start": 95852,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149673580
+    },
+    {
+     "rom_end": 96276,
+     "rom_start": 95884,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149673612
+    },
+    {
+     "rom_end": 96276,
+     "rom_start": 95884,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149673612
+    },
+    {
+     "rom_end": 96244,
+     "rom_start": 95852,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149673580
+    },
+    {
+     "rom_end": 96244,
+     "rom_start": 95852,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149673580
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_14.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_15.CPP",
+   "name": "func_80216BF4_de",
+   "placements": [
+    {
+     "rom_end": 96560,
+     "rom_start": 96244,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149673972
+    },
+    {
+     "rom_end": 96592,
+     "rom_start": 96276,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149674004
+    },
+    {
+     "rom_end": 96592,
+     "rom_start": 96276,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149674004
+    },
+    {
+     "rom_end": 96560,
+     "rom_start": 96244,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149673972
+    },
+    {
+     "rom_end": 96560,
+     "rom_start": 96244,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149673972
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_15.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_16.CPP",
+   "name": "func_80216D30_de",
+   "placements": [
+    {
+     "rom_end": 96572,
+     "rom_start": 96560,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149674288
+    },
+    {
+     "rom_end": 96604,
+     "rom_start": 96592,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149674320
+    },
+    {
+     "rom_end": 96604,
+     "rom_start": 96592,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149674320
+    },
+    {
+     "rom_end": 96572,
+     "rom_start": 96560,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149674288
+    },
+    {
+     "rom_end": 96572,
+     "rom_start": 96560,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149674288
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_16.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_17.CPP",
+   "name": "func_80216D3C_de",
+   "placements": [
+    {
+     "rom_end": 97092,
+     "rom_start": 96572,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149674300
+    },
+    {
+     "rom_end": 97124,
+     "rom_start": 96604,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149674332
+    },
+    {
+     "rom_end": 97124,
+     "rom_start": 96604,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149674332
+    },
+    {
+     "rom_end": 97092,
+     "rom_start": 96572,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149674300
+    },
+    {
+     "rom_end": 97092,
+     "rom_start": 96572,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149674300
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_17.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_18.CPP",
+   "name": "func_80216F44_de",
+   "placements": [
+    {
+     "rom_end": 97396,
+     "rom_start": 97092,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149674820
+    },
+    {
+     "rom_end": 97428,
+     "rom_start": 97124,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149674852
+    },
+    {
+     "rom_end": 97428,
+     "rom_start": 97124,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149674852
+    },
+    {
+     "rom_end": 97396,
+     "rom_start": 97092,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149674820
+    },
+    {
+     "rom_end": 97396,
+     "rom_start": 97092,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149674820
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_18.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_19.CPP",
+   "name": "func_80217074_de",
+   "placements": [
+    {
+     "rom_end": 97440,
+     "rom_start": 97396,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675124
+    },
+    {
+     "rom_end": 97472,
+     "rom_start": 97428,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675156
+    },
+    {
+     "rom_end": 97472,
+     "rom_start": 97428,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675156
+    },
+    {
+     "rom_end": 97440,
+     "rom_start": 97396,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675124
+    },
+    {
+     "rom_end": 97440,
+     "rom_start": 97396,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675124
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_19.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_2.CPP",
+   "name": "func_80214310_de",
+   "placements": [
+    {
+     "rom_end": 86564,
+     "rom_start": 85776,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149663504
+    },
+    {
+     "rom_end": 86596,
+     "rom_start": 85808,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149663536
+    },
+    {
+     "rom_end": 86596,
+     "rom_start": 85808,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149663536
+    },
+    {
+     "rom_end": 86564,
+     "rom_start": 85776,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149663504
+    },
+    {
+     "rom_end": 86564,
+     "rom_start": 85776,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149663504
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_2.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_2.CPP",
+   "name": "func_80214624_de",
+   "placements": [
+    {
+     "rom_end": 87488,
+     "rom_start": 86564,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149664292
+    },
+    {
+     "rom_end": 87520,
+     "rom_start": 86596,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149664324
+    },
+    {
+     "rom_end": 87520,
+     "rom_start": 86596,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149664324
+    },
+    {
+     "rom_end": 87488,
+     "rom_start": 86564,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149664292
+    },
+    {
+     "rom_end": 87488,
+     "rom_start": 86564,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149664292
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_2.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_2.CPP",
+   "name": "func_802149C0_de",
+   "placements": [
+    {
+     "rom_end": 88532,
+     "rom_start": 87488,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149665216
+    },
+    {
+     "rom_end": 88564,
+     "rom_start": 87520,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149665248
+    },
+    {
+     "rom_end": 88564,
+     "rom_start": 87520,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149665248
+    },
+    {
+     "rom_end": 88532,
+     "rom_start": 87488,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149665216
+    },
+    {
+     "rom_end": 88532,
+     "rom_start": 87488,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149665216
+    }
+   ],
+   "segment": "span_1000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_20.CPP",
+   "name": "func_802170A0_de",
+   "placements": [
+    {
+     "rom_end": 97724,
+     "rom_start": 97440,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675168
+    },
+    {
+     "rom_end": 97756,
+     "rom_start": 97472,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675200
+    },
+    {
+     "rom_end": 97756,
+     "rom_start": 97472,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675200
+    },
+    {
+     "rom_end": 97724,
+     "rom_start": 97440,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675168
+    },
+    {
+     "rom_end": 97724,
+     "rom_start": 97440,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675168
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_20.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_21.CPP",
+   "name": "func_802171BC_de",
+   "placements": [
+    {
+     "rom_end": 97736,
+     "rom_start": 97724,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675452
+    },
+    {
+     "rom_end": 97768,
+     "rom_start": 97756,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675484
+    },
+    {
+     "rom_end": 97768,
+     "rom_start": 97756,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675484
+    },
+    {
+     "rom_end": 97736,
+     "rom_start": 97724,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675452
+    },
+    {
+     "rom_end": 97736,
+     "rom_start": 97724,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675452
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_21.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_802171C8_de",
+   "placements": [
+    {
+     "rom_end": 97788,
+     "rom_start": 97736,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675464
+    },
+    {
+     "rom_end": 97820,
+     "rom_start": 97768,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675496
+    },
+    {
+     "rom_end": 97820,
+     "rom_start": 97768,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675496
+    },
+    {
+     "rom_end": 97788,
+     "rom_start": 97736,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675464
+    },
+    {
+     "rom_end": 97788,
+     "rom_start": 97736,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675464
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_802171FC_de",
+   "placements": [
+    {
+     "rom_end": 97828,
+     "rom_start": 97788,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675516
+    },
+    {
+     "rom_end": 97860,
+     "rom_start": 97820,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675548
+    },
+    {
+     "rom_end": 97860,
+     "rom_start": 97820,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675548
+    },
+    {
+     "rom_end": 97828,
+     "rom_start": 97788,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675516
+    },
+    {
+     "rom_end": 97828,
+     "rom_start": 97788,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675516
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_80217224_de",
+   "placements": [
+    {
+     "rom_end": 97936,
+     "rom_start": 97828,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675556
+    },
+    {
+     "rom_end": 97968,
+     "rom_start": 97860,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675588
+    },
+    {
+     "rom_end": 97968,
+     "rom_start": 97860,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675588
+    },
+    {
+     "rom_end": 97936,
+     "rom_start": 97828,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675556
+    },
+    {
+     "rom_end": 97936,
+     "rom_start": 97828,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675556
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_80217290_de",
+   "placements": [
+    {
+     "rom_end": 97988,
+     "rom_start": 97936,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675664
+    },
+    {
+     "rom_end": 98020,
+     "rom_start": 97968,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675696
+    },
+    {
+     "rom_end": 98020,
+     "rom_start": 97968,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675696
+    },
+    {
+     "rom_end": 97988,
+     "rom_start": 97936,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675664
+    },
+    {
+     "rom_end": 97988,
+     "rom_start": 97936,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675664
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_802172C4_de",
+   "placements": [
+    {
+     "rom_end": 98000,
+     "rom_start": 97988,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675716
+    },
+    {
+     "rom_end": 98032,
+     "rom_start": 98020,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675748
+    },
+    {
+     "rom_end": 98032,
+     "rom_start": 98020,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675748
+    },
+    {
+     "rom_end": 98000,
+     "rom_start": 97988,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675716
+    },
+    {
+     "rom_end": 98000,
+     "rom_start": 97988,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675716
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "name": "func_802172D0_de",
+   "placements": [
+    {
+     "rom_end": 98184,
+     "rom_start": 98000,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149675728
+    },
+    {
+     "rom_end": 98216,
+     "rom_start": 98032,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149675760
+    },
+    {
+     "rom_end": 98216,
+     "rom_start": 98032,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149675760
+    },
+    {
+     "rom_end": 98184,
+     "rom_start": 98000,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149675728
+    },
+    {
+     "rom_end": 98184,
+     "rom_start": 98000,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149675728
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_23.CPP",
+   "name": "D_800C21D8_de",
+   "placements": [
+    {
+     "rom_end": 797964,
+     "rom_start": 797960,
+     "section": ".rodata",
+     "version": "us",
+     "vram": 2148278536
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_23.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_24.CPP",
+   "name": "D_auto_rodata_func_802170A0_de_800C21D8",
+   "placements": [
+    {
+     "rom_end": 798172,
+     "rom_start": 798168,
+     "section": ".rodata",
+     "version": "de",
+     "vram": 2148278744
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_24.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_25.CPP",
+   "name": "D_auto_rodata_func_802170A0_de_800C2478",
+   "placements": [
+    {
+     "rom_end": 798844,
+     "rom_start": 798840,
+     "section": ".rodata",
+     "version": "eu",
+     "vram": 2148279416
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_25.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_26.CPP",
+   "name": "D_auto_rodata_func_802170A0_de_800C24B8",
+   "placements": [
+    {
+     "rom_end": 798908,
+     "rom_start": 798904,
+     "section": ".rodata",
+     "version": "eu-x",
+     "vram": 2148279480
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_26.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_27.CPP",
+   "name": "D_800C216C_de",
+   "placements": [
+    {
+     "rom_end": 798064,
+     "rom_start": 798060,
+     "section": ".rodata",
+     "version": "de",
+     "vram": 2148278636
+    },
+    {
+     "rom_end": 798736,
+     "rom_start": 798732,
+     "section": ".rodata",
+     "version": "eu",
+     "vram": 2148279308
+    },
+    {
+     "rom_end": 798800,
+     "rom_start": 798796,
+     "section": ".rodata",
+     "version": "eu-x",
+     "vram": 2148279372
+    },
+    {
+     "rom_end": 797856,
+     "rom_start": 797852,
+     "section": ".rodata",
+     "version": "us",
+     "vram": 2148278428
+    },
+    {
+     "rom_end": 818784,
+     "rom_start": 818780,
+     "section": ".rodata",
+     "version": "us-rev1",
+     "vram": 2148299356
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_27.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_27.CPP",
+   "name": "D_800C2170_de",
+   "placements": [
+    {
+     "rom_end": 798068,
+     "rom_start": 798064,
+     "section": ".rodata",
+     "version": "de",
+     "vram": 2148278640
+    },
+    {
+     "rom_end": 798740,
+     "rom_start": 798736,
+     "section": ".rodata",
+     "version": "eu",
+     "vram": 2148279312
+    },
+    {
+     "rom_end": 798804,
+     "rom_start": 798800,
+     "section": ".rodata",
+     "version": "eu-x",
+     "vram": 2148279376
+    },
+    {
+     "rom_end": 797860,
+     "rom_start": 797856,
+     "section": ".rodata",
+     "version": "us",
+     "vram": 2148278432
+    },
+    {
+     "rom_end": 818788,
+     "rom_start": 818784,
+     "section": ".rodata",
+     "version": "us-rev1",
+     "vram": 2148299360
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_27.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_27.CPP",
+   "name": "D_800C2174_de",
+   "placements": [
+    {
+     "rom_end": 798072,
+     "rom_start": 798068,
+     "section": ".rodata",
+     "version": "de",
+     "vram": 2148278644
+    },
+    {
+     "rom_end": 798744,
+     "rom_start": 798740,
+     "section": ".rodata",
+     "version": "eu",
+     "vram": 2148279316
+    },
+    {
+     "rom_end": 798808,
+     "rom_start": 798804,
+     "section": ".rodata",
+     "version": "eu-x",
+     "vram": 2148279380
+    },
+    {
+     "rom_end": 797864,
+     "rom_start": 797860,
+     "section": ".rodata",
+     "version": "us",
+     "vram": 2148278436
+    },
+    {
+     "rom_end": 818792,
+     "rom_start": 818788,
+     "section": ".rodata",
+     "version": "us-rev1",
+     "vram": 2148299364
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_27.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "data",
+   "module": "src/WEAPONS/80213ED4_27.CPP",
+   "name": "D_800C2178_de",
+   "placements": [
+    {
+     "rom_end": 798076,
+     "rom_start": 798072,
+     "section": ".rodata",
+     "version": "de",
+     "vram": 2148278648
+    },
+    {
+     "rom_end": 798748,
+     "rom_start": 798744,
+     "section": ".rodata",
+     "version": "eu",
+     "vram": 2148279320
+    },
+    {
+     "rom_end": 798812,
+     "rom_start": 798808,
+     "section": ".rodata",
+     "version": "eu-x",
+     "vram": 2148279384
+    },
+    {
+     "rom_end": 797868,
+     "rom_start": 797864,
+     "section": ".rodata",
+     "version": "us",
+     "vram": 2148278440
+    },
+    {
+     "rom_end": 818796,
+     "rom_start": 818792,
+     "section": ".rodata",
+     "version": "us-rev1",
+     "vram": 2148299368
+    }
+   ],
+   "segment": "data_800C",
+   "unit": "src/WEAPONS/80213ED4_27.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_3.CPP",
+   "name": "func_80214DD4_de",
+   "placements": [
+    {
+     "rom_end": 90128,
+     "rom_start": 88532,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149666260
+    },
+    {
+     "rom_end": 90160,
+     "rom_start": 88564,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149666292
+    },
+    {
+     "rom_end": 90160,
+     "rom_start": 88564,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149666292
+    },
+    {
+     "rom_end": 90128,
+     "rom_start": 88532,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149666260
+    },
+    {
+     "rom_end": 90128,
+     "rom_start": 88532,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149666260
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_3.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_4.CPP",
+   "name": "func_80215410_de",
+   "placements": [
+    {
+     "rom_end": 91240,
+     "rom_start": 90128,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149667856
+    },
+    {
+     "rom_end": 91272,
+     "rom_start": 90160,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149667888
+    },
+    {
+     "rom_end": 91272,
+     "rom_start": 90160,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149667888
+    },
+    {
+     "rom_end": 91240,
+     "rom_start": 90128,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149667856
+    },
+    {
+     "rom_end": 91240,
+     "rom_start": 90128,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149667856
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_4.CPP"
+  },
+  {
+   "fuzzy": "src/WEAPONS/80213ED4_4.CPP",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_4.CPP",
+   "name": "func_80215868_de",
+   "placements": [
+    {
+     "rom_end": 92048,
+     "rom_start": 91240,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149668968
+    },
+    {
+     "rom_end": 92080,
+     "rom_start": 91272,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149669000
+    },
+    {
+     "rom_end": 92080,
+     "rom_start": 91272,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149669000
+    },
+    {
+     "rom_end": 92048,
+     "rom_start": 91240,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149668968
+    },
+    {
+     "rom_end": 92048,
+     "rom_start": 91240,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149668968
+    }
+   ],
+   "segment": "span_1000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_4.CPP",
+   "name": "func_80215B90_de",
+   "placements": [
+    {
+     "rom_end": 93448,
+     "rom_start": 92048,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149669776
+    },
+    {
+     "rom_end": 93480,
+     "rom_start": 92080,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149669808
+    },
+    {
+     "rom_end": 93480,
+     "rom_start": 92080,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149669808
+    },
+    {
+     "rom_end": 93448,
+     "rom_start": 92048,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149669776
+    },
+    {
+     "rom_end": 93448,
+     "rom_start": 92048,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149669776
+    }
+   ],
+   "segment": "span_1000",
+   "unit": null
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_5.CPP",
+   "name": "func_80216108_de",
+   "placements": [
+    {
+     "rom_end": 93832,
+     "rom_start": 93448,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149671176
+    },
+    {
+     "rom_end": 93864,
+     "rom_start": 93480,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149671208
+    },
+    {
+     "rom_end": 93864,
+     "rom_start": 93480,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149671208
+    },
+    {
+     "rom_end": 93832,
+     "rom_start": 93448,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149671176
+    },
+    {
+     "rom_end": 93832,
+     "rom_start": 93448,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149671176
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_5.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_6.CPP",
+   "name": "func_80216288_de",
+   "placements": [
+    {
+     "rom_end": 94344,
+     "rom_start": 93832,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149671560
+    },
+    {
+     "rom_end": 94376,
+     "rom_start": 93864,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149671592
+    },
+    {
+     "rom_end": 94376,
+     "rom_start": 93864,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149671592
+    },
+    {
+     "rom_end": 94344,
+     "rom_start": 93832,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149671560
+    },
+    {
+     "rom_end": 94344,
+     "rom_start": 93832,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149671560
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_6.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_7.CPP",
+   "name": "func_80216488_de",
+   "placements": [
+    {
+     "rom_end": 94376,
+     "rom_start": 94344,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149672072
+    },
+    {
+     "rom_end": 94408,
+     "rom_start": 94376,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149672104
+    },
+    {
+     "rom_end": 94408,
+     "rom_start": 94376,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149672104
+    },
+    {
+     "rom_end": 94376,
+     "rom_start": 94344,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149672072
+    },
+    {
+     "rom_end": 94376,
+     "rom_start": 94344,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149672072
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_7.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_8.CPP",
+   "name": "func_802164A8_de",
+   "placements": [
+    {
+     "rom_end": 94712,
+     "rom_start": 94376,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149672104
+    },
+    {
+     "rom_end": 94744,
+     "rom_start": 94408,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149672136
+    },
+    {
+     "rom_end": 94744,
+     "rom_start": 94408,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149672136
+    },
+    {
+     "rom_end": 94712,
+     "rom_start": 94376,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149672104
+    },
+    {
+     "rom_end": 94712,
+     "rom_start": 94376,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149672104
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_8.CPP"
+  },
+  {
+   "fuzzy": "",
+   "kind": "function",
+   "module": "src/WEAPONS/80213ED4_9.CPP",
+   "name": "func_802165F8_de",
+   "placements": [
+    {
+     "rom_end": 94964,
+     "rom_start": 94712,
+     "section": ".text",
+     "version": "de",
+     "vram": 2149672440
+    },
+    {
+     "rom_end": 94996,
+     "rom_start": 94744,
+     "section": ".text",
+     "version": "eu",
+     "vram": 2149672472
+    },
+    {
+     "rom_end": 94996,
+     "rom_start": 94744,
+     "section": ".text",
+     "version": "eu-x",
+     "vram": 2149672472
+    },
+    {
+     "rom_end": 94964,
+     "rom_start": 94712,
+     "section": ".text",
+     "version": "us",
+     "vram": 2149672440
+    },
+    {
+     "rom_end": 94964,
+     "rom_start": 94712,
+     "section": ".text",
+     "version": "us-rev1",
+     "vram": 2149672440
+    }
+   ],
+   "segment": "span_1000",
+   "unit": "src/WEAPONS/80213ED4_9.CPP"
+  }
+ ],
+ "modules": [
+  {
+   "header": "",
+   "members": [
+    "func_8023CFB0_us",
+    "rodata_unresolved_8023CFB8"
+   ],
+   "name": "src/ANIM/8023CFB0.CPP",
+   "segment": "span_1000",
+   "source": "src/ANIM/8023CFB0.CPP"
+  },
+  {
+   "header": "include/ANIM/8023CFB0_2.H",
+   "members": [
+    "func_8023D010_eu_x"
+   ],
+   "name": "src/ANIM/8023CFB0_2.CPP",
+   "segment": "span_1000",
+   "source": "src/ANIM/8023CFB0_2.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_8023CFD0_de"
+   ],
+   "name": "src/ANIM/8023CFB0_3.CPP",
+   "segment": "span_1000",
+   "source": "src/ANIM/8023CFB0_3.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_8023CFE0_eu"
+   ],
+   "name": "src/ANIM/8023CFB0_4.CPP",
+   "segment": "span_1000",
+   "source": "src/ANIM/8023CFB0_4.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_8044524C_us_rev1",
+    "func_80445288_us_rev1",
+    "func_804452C4_us_rev1",
+    "func_80445304_us_rev1",
+    "func_80445344_us_rev1",
+    "func_80445384_us_rev1"
+   ],
+   "name": "src/MENU/PAK/80444EC0.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80445160_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_10.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_10.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_804451D0_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_11.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_11.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_804452B0_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_12.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_12.CPP"
+  },
+  {
+   "header": "include/MENU/PAK/80444EC0_13.H",
+   "members": [
+    "func_80445310_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_13.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_13.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_804453F0_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_14.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_14.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80445ECC"
+   ],
+   "name": "src/MENU/PAK/80444EC0_15.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_15.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80445504_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_16.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_16.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80445FC8_us_rev1",
+    "func_80446000_us_rev1",
+    "func_80446048_us_rev1"
+   ],
+   "name": "src/MENU/PAK/80444EC0_17.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_17.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80444D50_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_2.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_2.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80444D9C_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_3.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_3.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80444FA0_us_rev1"
+   ],
+   "name": "src/MENU/PAK/80444EC0_4.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_4.CPP"
+  },
+  {
+   "header": "include/MENU/PAK/80444EC0_5.H",
+   "members": [
+    "func_80444E30_de",
+    "func_80444E70_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_5.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_5.CPP"
+  },
+  {
+   "header": "include/MENU/PAK/80444EC0_6.H",
+   "members": [
+    "func_80444E7C_de",
+    "func_80444EB4_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_6.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_6.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80444EBC_de",
+    "func_80444EE8_de",
+    "func_80444F14_de",
+    "func_80444F40_de",
+    "func_80444F6C_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_7.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_7.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80444F98_de",
+    "func_80445020_de"
+   ],
+   "name": "src/MENU/PAK/80444EC0_8.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_8.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80445AB8"
+   ],
+   "name": "src/MENU/PAK/80444EC0_9.CPP",
+   "segment": "ovl_80400000",
+   "source": "src/MENU/PAK/80444EC0_9.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80213ED4_de",
+    "func_80214178_de"
+   ],
+   "name": "src/WEAPONS/80213ED4.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_802166F4_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_10.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_10.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216808_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_11.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_11.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_802168B8_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_12.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_12.CPP"
+  },
+  {
+   "header": "include/WEAPONS/80213ED4_13.H",
+   "members": [
+    "func_802169AC_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_13.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_13.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216A6C_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_14.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_14.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216BF4_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_15.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_15.CPP"
+  },
+  {
+   "header": "include/WEAPONS/80213ED4_16.H",
+   "members": [
+    "func_80216D30_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_16.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_16.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216D3C_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_17.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_17.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216F44_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_18.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_18.CPP"
+  },
+  {
+   "header": "include/WEAPONS/80213ED4_19.H",
+   "members": [
+    "func_80217074_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_19.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_19.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80214310_de",
+    "func_80214624_de",
+    "func_802149C0_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_2.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_2.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_802170A0_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_20.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_20.CPP"
+  },
+  {
+   "header": "include/WEAPONS/80213ED4_21.H",
+   "members": [
+    "func_802171BC_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_21.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_21.CPP"
+  },
+  {
+   "header": "include/WEAPONS/80213ED4_22.H",
+   "members": [
+    "func_802171C8_de",
+    "func_802171FC_de",
+    "func_80217224_de",
+    "func_80217290_de",
+    "func_802172C4_de",
+    "func_802172D0_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_22.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_22.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "D_800C21D8_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_23.CPP",
+   "segment": "data_800C",
+   "source": "src/WEAPONS/80213ED4_23.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C21D8"
+   ],
+   "name": "src/WEAPONS/80213ED4_24.CPP",
+   "segment": "data_800C",
+   "source": "src/WEAPONS/80213ED4_24.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C2478"
+   ],
+   "name": "src/WEAPONS/80213ED4_25.CPP",
+   "segment": "data_800C",
+   "source": "src/WEAPONS/80213ED4_25.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C24B8"
+   ],
+   "name": "src/WEAPONS/80213ED4_26.CPP",
+   "segment": "data_800C",
+   "source": "src/WEAPONS/80213ED4_26.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "D_800C216C_de",
+    "D_800C2170_de",
+    "D_800C2174_de",
+    "D_800C2178_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_27.CPP",
+   "segment": "data_800C",
+   "source": "src/WEAPONS/80213ED4_27.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80214DD4_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_3.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_3.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80215410_de",
+    "func_80215868_de",
+    "func_80215B90_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_4.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_4.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216108_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_5.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_5.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216288_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_6.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_6.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_80216488_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_7.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_7.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_802164A8_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_8.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_8.CPP"
+  },
+  {
+   "header": "",
+   "members": [
+    "func_802165F8_de"
+   ],
+   "name": "src/WEAPONS/80213ED4_9.CPP",
+   "segment": "span_1000",
+   "source": "src/WEAPONS/80213ED4_9.CPP"
+  }
+ ],
+ "names_from": "us-rev1",
+ "units": [
+  {
+   "members": [
+    "func_8023CFB0_us"
+   ],
+   "module": "src/ANIM/8023CFB0.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/ANIM/8023CFB0.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_8023D010_eu_x"
+   ],
+   "module": "src/ANIM/8023CFB0_2.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/ANIM/8023CFB0_2.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_8023CFD0_de"
+   ],
+   "module": "src/ANIM/8023CFB0_3.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/ANIM/8023CFB0_3.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_8023CFE0_eu"
+   ],
+   "module": "src/ANIM/8023CFB0_4.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/ANIM/8023CFB0_4.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_8044524C_us_rev1",
+    "func_80445288_us_rev1",
+    "func_804452C4_us_rev1",
+    "func_80445304_us_rev1",
+    "func_80445344_us_rev1",
+    "func_80445384_us_rev1"
+   ],
+   "module": "src/MENU/PAK/80444EC0.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80445160_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_10.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_10.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_804452B0_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_12.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_12.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80445FC8_us_rev1",
+    "func_80446000_us_rev1",
+    "func_80446048_us_rev1"
+   ],
+   "module": "src/MENU/PAK/80444EC0_17.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_17.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80444D50_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_2.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_2.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80444FA0_us_rev1"
+   ],
+   "module": "src/MENU/PAK/80444EC0_4.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_4.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80444E30_de",
+    "func_80444E70_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_5.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_5.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80444E7C_de",
+    "func_80444EB4_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_6.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_6.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80444EBC_de",
+    "func_80444EE8_de",
+    "func_80444F14_de",
+    "func_80444F40_de",
+    "func_80444F6C_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_7.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_7.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80445020_de"
+   ],
+   "module": "src/MENU/PAK/80444EC0_8.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/MENU/PAK/80444EC0_8.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80213ED4_de",
+    "func_80214178_de"
+   ],
+   "module": "src/WEAPONS/80213ED4.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802166F4_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_10.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_10.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216808_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_11.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_11.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802168B8_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_12.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_12.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802169AC_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_13.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_13.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216A6C_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_14.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_14.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216BF4_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_15.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_15.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216D30_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_16.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_16.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216D3C_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_17.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_17.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216F44_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_18.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_18.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80217074_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_19.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_19.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80214310_de",
+    "func_80214624_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_2.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_2.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802170A0_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_20.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_20.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802171BC_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_21.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_21.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802171C8_de",
+    "func_802171FC_de",
+    "func_80217224_de",
+    "func_80217290_de",
+    "func_802172C4_de",
+    "func_802172D0_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_22.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_22.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "D_800C21D8_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_23.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_23.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C21D8"
+   ],
+   "module": "src/WEAPONS/80213ED4_24.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_24.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C2478"
+   ],
+   "module": "src/WEAPONS/80213ED4_25.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_25.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "D_auto_rodata_func_802170A0_de_800C24B8"
+   ],
+   "module": "src/WEAPONS/80213ED4_26.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_26.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "D_800C216C_de",
+    "D_800C2170_de",
+    "D_800C2174_de",
+    "D_800C2178_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_27.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_27.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80214DD4_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_3.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_3.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80215410_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_4.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_4.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216108_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_5.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_5.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216288_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_6.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_6.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_80216488_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_7.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_7.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802164A8_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_8.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_8.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  },
+  {
+   "members": [
+    "func_802165F8_de"
+   ],
+   "module": "src/WEAPONS/80213ED4_9.CPP",
+   "options": {
+    "add": [],
+    "omit": []
+   },
+   "path": "src/WEAPONS/80213ED4_9.CPP",
+   "toolchain": "gcc-2.8.1-sn64"
+  }
+ ],
+ "versions": [
+  "de",
+  "eu",
+  "eu-x",
+  "us",
+  "us-rev1"
+ ]
+}

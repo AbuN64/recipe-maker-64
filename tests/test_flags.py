@@ -5,17 +5,12 @@ from pathlib import Path
 
 from recipemaker import flags
 
-DATA = Path(__file__).parent / "data" / "map.json"
+DATA = Path(__file__).parent / "data" / "structure.json"
+X = ("-x",)
 
 
-def _doc(classes):
-    """The structure fixture map with edge classes: `classes` per function, unal (a join) for the rest."""
-    doc = json.loads(DATA.read_text(encoding="utf-8"))
-    for m in doc["members"]:
-        if m["kind"] == "function":
-            held = [p["version"] for p in m["placements"] if p["section"] == ".text"]
-            m["edge"] = {v: classes.get(m["name"], "unal") for v in held}
-    return doc
+def _doc():
+    return json.loads(DATA.read_text(encoding="utf-8"))
 
 
 def test_the_lattice_is_default_singles_and_pairs_inside_one_family():
@@ -54,28 +49,27 @@ def test_best_prefers_default_then_the_smallest_set():
     assert flags.best({(): 0.5}) is None
 
 
-def test_neighbours_stop_at_a_proven_cut_and_skip_asm():
-    doc = _doc({"f4": "pad"})
-    got = flags.neighbours(doc, ["f2"])
-    assert got == [("f1", "f2", "left"), ("f3", "f2", "right")]  # f4 sits past the proven cut f3|f4
-    assert flags.neighbours(doc, ["f4"]) == [("f5", "f4", "right"), ("f6", "f5", "right")]
+def test_neighbours_are_the_landed_c_functions_beside_a_run_and_skip_asm():
+    got = flags.neighbours(_doc(), ["func_80214310_de"])
+    assert got == [
+        ("func_80214178_de", "func_80214310_de", "left"),
+        ("func_80213ED4_de", "func_80214178_de", "left"),
+        ("func_80214624_de", "func_80214310_de", "right"),
+        ("func_80214DD4_de", "func_802149C0_de", "right"),  # asm func_802149C0_de is passed over
+    ]
 
 
-def test_a_set_its_neighbours_lose_bytes_under_is_a_conflict_at_a_join_and_a_cut_at_an_open_edge():
-    doc = _doc({"f3": "al0", "f4": "pad"})
-    values = {("f1", ("-x",)): 0.5, ("f3", ("-x",)): 0.6}
-    judged = flags.judge(doc, {"f2": ("-x",)}, values)
-    assert [c["function"] for c in judged["conflicts"]] == ["f2"]  # f1|f2 is unal: one object, two sets
-    assert judged["decided_cuts"] == [{"left": "f2", "right": "f3", "by": ["-x"], "start": "flags"}]
-    judged = flags.judge(_doc({"f2": "al0", "f3": "al0", "f4": "pad"}), {"f2": ("-x",)}, values)
-    assert not judged["conflicts"] and [s["function"] for s in judged["splits"]] == ["f2"]
+def test_a_set_a_neighbour_loses_bytes_under_decides_a_cut_and_splits_the_function():
+    judged = flags.judge(_doc(), {"func_80214310_de": X}, {("func_80214178_de", X): 0.5})
+    edge = {"left": "func_80214178_de", "right": "func_80214310_de", "by": ["-x"], "start": "flags"}
+    assert judged["decided_cuts"] == [edge] and [s["function"] for s in judged["splits"]] == ["func_80214310_de"]
     assert flags.moves(judged) == [
-        {"op": "member", "subject": "f2", "target": "obj_f2"},
-        {"op": "options", "subject": "obj_f2", "target": '{"add": ["-x"], "omit": []}'},
+        {"op": "member", "subject": "func_80214310_de", "target": "obj_func_80214310_de"},
+        {"op": "options", "subject": "obj_func_80214310_de", "target": '{"add": ["-x"], "omit": []}'},
     ]
 
 
 def test_a_set_every_landed_member_keeps_becomes_an_options_move():
-    judged = flags.judge(_doc({"f4": "pad"}), {"f2": ("-x",)}, {})
-    assert judged["options"] == [{"module": "code_old1", "flags": ["-x"], "for": "f2"}]
+    judged = flags.judge(_doc(), {"func_80214310_de": X}, {})
+    assert judged["options"] == [{"module": "src/WEAPONS/80213ED4_2.CPP", "flags": ["-x"], "for": "func_80214310_de"}]
     assert flags.moves(judged)[0]["op"] == "options"

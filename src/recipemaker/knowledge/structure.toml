@@ -1,8 +1,0 @@
-# Knobs of the structure proposal that are facts about code, not about one project.
-schema = 1
-source = "original"
-# a shared header goes to the base headers (types.h, game/common.h) only when at least this share of the subsystems use it;
-# otherwise to `<lowest common folder of its users>/common.h`
-shared_threshold = 0.5
-# a library region may not hold a region with this many times its fan-in ratio (it is a layer of the program, not a library)
-dominance = 4

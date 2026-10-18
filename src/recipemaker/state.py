@@ -44,14 +44,7 @@ class Settings:
 
 @dataclass(frozen=True)
 class Structure:
-    split_over: int = 48
-    reach: int = 16
-    share_jaccard: float = 0.8
     batch_moves: int = 400
-    library_leak: float = 0.10
-    library_fan_in: int = 3
-    library_min_modules: int = 6
-    dir_min: int = 4
     dir_max: int = 32
 
 

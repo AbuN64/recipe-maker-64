@@ -101,12 +101,16 @@ _INCLUDE = re.compile(rb'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 
 
 def _header(snapshot: Snapshot, path: str) -> str:
+    return header_of(path, snapshot.peek(path) or b"")
+
+
+def header_of(path: str, text: bytes) -> str:
     """The quoted include of a module whose file stem is the module's own, as an include/ path."""
     stem = posixpath.splitext(posixpath.basename(path))[0].lower()
-    for name in _INCLUDE.findall(snapshot.peek(path) or b""):
-        text = name.decode(errors="replace")
-        if posixpath.splitext(posixpath.basename(text))[0].lower() == stem:
-            return posixpath.normpath(posixpath.join("include", text))
+    for name in _INCLUDE.findall(text):
+        spelled = name.decode(errors="replace")
+        if posixpath.splitext(posixpath.basename(spelled))[0].lower() == stem:
+            return posixpath.normpath(posixpath.join("include", spelled))
     return ""
 
 
@@ -129,7 +133,7 @@ def _build(snapshot: Snapshot) -> Layout:
     groups: dict[str, Group] = {}
     units: dict[str, Unit] = {}
     fuzzy: dict[str, str] = {}
-    ends = {v: _extents(table) for v, table in tables.items()}
+    ends = {v: extents(table) for v, table in tables.items()}
     for module in tree.modules:
         order: list[str] = []
         versions = sorted(module.owns, key=lambda v: (v != names_from, v))
@@ -165,7 +169,7 @@ def _build(snapshot: Snapshot) -> Layout:
     return Layout(groups, members, units, fuzzy)
 
 
-def _extents(table: Mapping[str, tuple[int, int | None, int | None, str]]) -> dict[str, int]:
+def extents(table: Mapping[str, tuple[int, int | None, int | None, str]]) -> dict[str, int]:
     """Per symbol with no size its extent up to the next symbol's ROM offset (the last one has none)."""
     starts = sorted({rom for _, rom, _, _ in table.values() if rom is not None})
     after = dict(pairwise(starts))
