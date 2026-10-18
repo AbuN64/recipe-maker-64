@@ -183,7 +183,7 @@ def _drop_repeats(snapshot: Snapshot, edits: dict[str, bytes]) -> tuple[dict[str
         if not path.endswith(".c"):
             continue
         heads = (
-            out.get(h := f"include/{n}") or snapshot.peek(h) or b""
+            out[h] if (h := f"include/{n}") in out else snapshot.peek(h) or b""
             for n in re.findall(r'^#include "([^"]+)"', text, re.M)
         )
         given = {_normal(m[0]) for h in heads for m in _STATEMENT.finditer(h.decode(errors="replace"))}

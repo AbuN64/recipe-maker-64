@@ -80,11 +80,9 @@ def test_score_many_screens_every_row_in_one_call(config, ran, tmp_path):
     assert second.proofs[0].missing == ("compile.error: e",) and judge.score_many(config, []) == []
 
 
-def test_submit_compare_and_items_read_their_results(config, ran, tmp_path):
+def test_submit_and_compare_read_their_results(config, ran, tmp_path):
     ran.documents.append(ok({"submissions": [{"member": "f", "id": "i1"}], "drain": {"landed": []}}))
     assert judge.submit(config, tmp_path / "f.c", "f")["submissions"][0]["id"] == "i1"
-    ran.documents.append(ok({"items": [{"member": "f", "kind": "function", "size": 8}]}))
-    assert judge.items(config)[0]["member"] == "f" and ran.argv[-1][3:5] == ["report", "--next"]
     ran.documents.append(ok({"exact": True, "proofs": []}))
     assert judge.compare(config, tmp_path / "f.c", "f")["exact"] and ran.argv[-1][3] == "compare"
 
@@ -96,5 +94,5 @@ def test_a_command_that_prints_no_json_refuses_with_its_last_error_line(config, 
         lambda argv, cwd, config, **kw: SimpleNamespace(exit=2, stdout=b"", stderr=b"x\nusage: bad\n"),
     )
     with pytest.raises(Refusal) as caught:
-        judge.items(config)
+        judge.compare(config, tmp_path / "f.c", "f")
     assert "usage: bad" in caught.value.findings[0].reason

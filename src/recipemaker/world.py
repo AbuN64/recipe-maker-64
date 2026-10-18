@@ -9,6 +9,7 @@ import posixpath
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 from unbake import api
@@ -92,7 +93,7 @@ def overlay(snapshot: Snapshot, writes: Mapping[str, bytes | None]) -> Snapshot:
     merged = {**snapshot.overlays, **writes}
     sources = any(p.startswith("src/") for p in writes)
     files = api.capture(snapshot.config, merged) if sources else snapshot.files
-    key = digest((snapshot.digest, sorted((p, digest(b or b"")) for p, b in writes.items())))
+    key = digest((snapshot.digest, sorted((p, None if b is None else digest(b)) for p, b in writes.items())))
     return dataclasses.replace(snapshot, files=files, overlays=merged, digest=key, reads={})
 
 
@@ -128,6 +129,7 @@ def _build(snapshot: Snapshot) -> Layout:
     groups: dict[str, Group] = {}
     units: dict[str, Unit] = {}
     fuzzy: dict[str, str] = {}
+    ends = {v: _extents(table) for v, table in tables.items()}
     for module in tree.modules:
         order: list[str] = []
         versions = sorted(module.owns, key=lambda v: (v != names_from, v))
@@ -141,7 +143,7 @@ def _build(snapshot: Snapshot) -> Layout:
                     continue
                 vram, rom, size, kind = tables[version][name]
                 section = module.sections.get(version, {}).get(name) or (".text" if kind == "func" else ".data")
-                start, extent = rom or 0, size or 0
+                start, extent = rom or 0, size or ends[version].get(name, 0)
                 bss = section == ".bss"
                 places.append(Placement(version, section, start, start if bss else start + extent, vram, extent * bss))
             if not places:
@@ -163,9 +165,32 @@ def _build(snapshot: Snapshot) -> Layout:
     return Layout(groups, members, units, fuzzy)
 
 
+def _extents(table: Mapping[str, tuple[int, int | None, int | None, str]]) -> dict[str, int]:
+    """Per symbol with no size its extent up to the next symbol's ROM offset (the last one has none)."""
+    starts = sorted({rom for _, rom, _, _ in table.values() if rom is not None})
+    after = dict(pairwise(starts))
+    return {n: after[rom] - rom for n, (_, rom, size, _) in table.items() if rom is not None and rom in after}
+
+
 def of(snapshot: Snapshot) -> Layout:
     """The layout of a snapshot, built once per snapshot digest."""
     return api.memo(("recipe.world", snapshot.digest), lambda: _build(snapshot))
+
+
+def open_items(snapshot: Snapshot) -> list[Json]:
+    """The work list: every member no file defines as C yet, {member, kind, segment, size, address} in its reference
+    version, largest first and the tiny ones last."""
+    layout, names_from = of(snapshot), snapshot.config.project.names_from
+    rows = []
+    for name, member in layout.members.items():
+        if member.landed:
+            continue
+        version = member.reference(names_from)
+        places = [p for p in member.placements if p.version == version]
+        segment = layout.groups[member.group].segment if member.group in layout.groups else ""
+        size, address = sum(p.size for p in places), min(p.vram for p in places)
+        rows.append({"member": name, "kind": member.kind, "segment": segment, "size": size, "address": address})
+    return sorted(rows, key=lambda r: (r["size"] < 16, -r["size"], r["address"], r["member"]))
 
 
 def unit_of(snapshot: Snapshot, name: str) -> Unit | None:

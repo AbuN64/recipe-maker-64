@@ -68,9 +68,9 @@ def _sdk(snapshot: Snapshot, member: str) -> bool:
 
 
 def items(config: Config) -> list[Json]:
-    """unbake's ordered work list, read once per tree."""
+    """The ordered work list, built once per tree."""
     snapshot = world.capture(config)
-    return api.memo(("work.items", snapshot.digest), lambda: judge.items(config))
+    return api.memo(("work.items", snapshot.digest), lambda: world.open_items(snapshot))
 
 
 def _is_open(snapshot: Snapshot, item: str) -> bool:

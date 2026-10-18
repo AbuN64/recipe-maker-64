@@ -32,7 +32,7 @@ SEAMS = (
     (judge, "score_many", "score_many"),
     (judge, "submit", "submit"),
     (judge, "compare", "compare_run"),
-    (judge, "items", "report_items"),
+    (world, "open_items", "report_items"),
     (host, "run", "process_run"),
     (host, "git", "git"),
     (headers, "catalog", "catalog"),
@@ -243,7 +243,7 @@ class Fakes:
         ]
         return {"running": False, "landed": rows, "refused": []}
 
-    def report_items(self, config: Config, count: int = 100000) -> list[Json]:
+    def report_items(self, snapshot: Snapshot) -> list[Json]:
         return list(self.items)
 
     # -- processes

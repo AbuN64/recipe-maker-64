@@ -168,3 +168,10 @@ def test_a_name_with_a_landed_definition_starts_with_every_spelling_rewritten_to
     assert (where / "include/a.h").read_text() == "s32 func_f(s32 a, s32 *b);\n"
     assert (where / "src/a.c").read_text().splitlines()[1] == "extern s32 func_f(s32 a, s32 *b);"
     assert "The copies already spell it so" in (where / "brief.md").read_text()
+
+
+def test_an_edited_header_that_is_now_empty_is_read_as_empty_not_from_disk(fakes):
+    fakes.snapshot = replace(fakes.snapshot, overlays={"include/a.h": b"extern s32 gX;\n"})
+    edits = {"include/a.h": b"", "src/a.c": b'#include "a.h"\nextern s32 gX;\nint f(void) { return gX; }\n'}
+    out, notes = declare._drop_repeats(fakes.snapshot, edits)
+    assert out["src/a.c"] == edits["src/a.c"] and notes == []  # the empty header declares nothing to drop

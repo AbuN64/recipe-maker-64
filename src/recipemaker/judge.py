@@ -1,4 +1,4 @@
-"""unbake's verdicts through its command line: score a candidate, score many, submit, the work list. Each call runs
+"""unbake's verdicts through its command line: score a candidate, score many, compare and submit. Each call runs
 `unbake` in the project with the host config and reads its one JSON line; a refusal comes back as a `Refusal`."""
 
 from __future__ import annotations
@@ -137,12 +137,6 @@ def submit(config: Config, file: Path, member: str, extras: Mapping[str, bytes] 
     with host.work(config) as work:
         args = [str(file), *_extras(work, extras or {}), "--function", member, "--note", "recipe"]
         return call(config, "submit", *args)
-
-
-def items(config: Config, count: int = 100000) -> list[Json]:
-    """unbake's ordered work list: {member, kind, segment, size, address} rows of what no file defines as C yet."""
-    rows: list[Json] = call(config, "report", "--next", "--count", str(count))["items"]
-    return rows
 
 
 def compare(config: Config, file: Path, member: str) -> Json:
