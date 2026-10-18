@@ -1,23 +1,24 @@
-"""Module structure as JSON moves: evidence from `unbake map`, a proposal from it, batches piped to `unbake move -`."""
+"""Module structure as a file patch: evidence from `unbake map`, a proposal from it, one unified diff that moves
+functions between files, renames symbols and files and edits includes. `recipe apply` applies it, then runs sync."""
 
 from __future__ import annotations
 
+import difflib
 import json
 import posixpath
-import shutil
+import re
 import sys
-import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Sequence
-from dataclasses import asdict
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from itertools import groupby, pairwise
 from pathlib import Path
 from typing import Any
 
-from unbake import process, store
+from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
 from recipemaker import clash, state, table, tree
+from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
 
@@ -28,26 +29,21 @@ def _refusal(document: Json) -> Refusal:
     return Refusal(*(found or [Finding("recipe.unbake", "unbake failed without a finding")]))
 
 
-def _unbake(
-    config: Config, host: Path | None, *args: str, stdin: bytes = b"", clock: list[Json] | None = None
-) -> tuple[Json, str]:
-    """One unbake command through process.run: its JSON document and its stderr text. Its wall time goes to `clock`."""
+def _unbake(config: Config, host: Path | None, *args: str) -> tuple[Json, str]:
+    """One unbake command: its JSON document and its stderr text."""
     exe, root = str(Path(sys.executable).with_name("unbake")), config.project.root
     argv = [exe, *(["--host", str(host)] if host else []), "--project", str(root), *args]
-    began = time.monotonic()
-    ran = process.run("unbake", argv, cwd=root, tmp=process.scratch(root), stdin=stdin)
-    if clock is not None:
-        clock.append({"verb": args[0], "wall_s": round(time.monotonic() - began, 3)})
-    lines = ran.stdout.decode(errors="replace").strip().splitlines()
+    ran = recipe_host.run(argv, root, config)
+    lines = bytes(ran.stdout).decode(errors="replace").strip().splitlines()
     try:
-        return json.loads(lines[-1]), ran.stderr.decode(errors="replace")
+        return json.loads(lines[-1]), bytes(ran.stderr).decode(errors="replace")
     except (ValueError, IndexError) as error:
         raise Refusal(Finding("recipe.unbake", f"unbake {args[0]} printed no JSON")) from error
 
 
-def evidence(config: Config, host: Path | None = None, clock: list[Json] | None = None) -> Json:
+def evidence(config: Config, host: Path | None = None) -> Json:
     """Read the public map evidence."""
-    document, _ = _unbake(config, host, "map", clock=clock)
+    document, _ = _unbake(config, host, "map")
     if not document["ok"]:
         raise _refusal(document)
     return dict(json.loads((config.project.root / document["result"]["path"]).read_text(encoding="utf-8")))
@@ -156,17 +152,6 @@ def verdicts(doc: Json) -> dict[tuple[str, str], str] | None:
         cut, join = bool(kinds & _CUT), "unal" in kinds
         out[pair] = "contradiction" if cut and join else "cut" if cut else "join" if join else "open"
     return out
-
-
-def evidence_rows(root: Path) -> list[Json]:
-    """Read configured original-object evidence: its first/last function, path and provenance."""
-    import tomllib
-
-    try:
-        doc = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    return list(doc.get("evidence", {}).get("object", ()))
 
 
 def with_evidence(
@@ -636,168 +621,322 @@ def _batches(proposal: Json) -> list[tuple[str, list[dict[str, Any]]]]:
     return head + [(s, by[s]) for s in proposal["order"] if by[s]] + tail
 
 
-def _lines(items: Iterable[Json]) -> str:
-    return "".join(json.dumps(i, sort_keys=True) + "\n" for i in items)
+# ------------------------------------------------------------------------------------------------ the patch
+
+_TEXT = (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".s", ".inc")
+_STAND_IN = r"^[ \t]*INCLUDE_(?:ASM|DATA|RODATA|BSS)\([ \t]*[^,()]+,[ \t]*{name}\b[^\n]*\n"
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _word(name: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![\w]){re.escape(name)}(?![\w])")
+
+
+def _blocks(lines: list[str]) -> list[tuple[int, int, str]]:
+    """Every `#if` block as (first line, last line, condition), from its `#if` to its `#endif`."""
+    stack: list[tuple[int, str]] = []
+    out: list[tuple[int, int, str]] = []
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith("#"):
+            continue
+        word = line.lstrip().removeprefix("#").lstrip()
+        if word.startswith("if"):
+            stack.append((i, word))
+        elif word.startswith("endif") and stack:
+            start, cond = stack.pop()
+            out.append((start, i, cond))
+    return out
+
+
+def _brace_end(text: str, at: int) -> int:
+    """The index after the `}` that closes the `{` at `at`, skipping strings, characters and comments."""
+    depth, i = 0, at
+    while i < len(text):
+        two, one = text[i : i + 2], text[i]
+        if two == "/*":
+            i = text.find("*/", i + 2) + 1 or len(text)
+        elif two == "//":
+            i = text.find("\n", i) if "\n" in text[i:] else len(text)
+        elif one in "\"'":
+            i += 1
+            while i < len(text) and text[i] != one:
+                i += 1 + (text[i] == "\\")
+        elif one == "{":
+            depth += 1
+        elif one == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)
+
+
+def cut(text: str, name: str) -> tuple[str, str] | None:
+    """(the text without the unit of `name`, the unit): its INCLUDE_* line or its C definition, or the whole
+    `#ifdef NON_MATCHING` block that holds either. None when the text has neither."""
+    found = re.search(_STAND_IN.format(name=re.escape(name)), text, re.M)
+    if found:
+        lo, hi = found.start(), found.end()
+    else:
+        head = re.search(rf"^[ \t]*(?:static[ \t]+)?[\w \t*]*?\b{re.escape(name)}[ \t]*\([^;{{]*\)\s*\{{", text, re.M)
+        if not head:
+            return None
+        lo, hi = head.start(), _brace_end(text, head.end() - 1)
+        hi += text[hi : hi + 1] == "\n"
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+    first = next(i for i in range(len(lines)) if starts[i + 1] > lo)
+    held = [b for b in _blocks([x.rstrip("\n") for x in lines]) if b[0] <= first <= b[1] and "NON_MATCHING" in b[2]]
+    if held:
+        start, end, _ = min(held, key=lambda b: b[1] - b[0])
+        lo, hi = starts[start], starts[end + 1]
+    return text[:lo] + text[hi:], text[lo:hi]
+
+
+def _preamble(text: str) -> str:
+    """The `#include` lines a file opens with: a new file that takes a unit from it starts from the same ones."""
+    return "".join(x for x in text.splitlines(keepends=True) if x.lstrip().startswith("#include"))
+
+
+class Files:
+    """The project's source files as text, edited in memory; `diff()` is the git diff of every change."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.text: dict[str, str | None] = {}
+        self.orig: dict[str, str | None] = {}
+        self.origin: dict[str, str] = {}
+
+    def get(self, path: str) -> str | None:
+        if path not in self.text:
+            file = self.root / path
+            self.text[path] = self.orig[path] = file.read_text(encoding="utf-8") if file.is_file() else None
+        return self.text[path]
+
+    def put(self, path: str, text: str) -> None:
+        self.get(path)
+        self.text[path] = text
+
+    def rename(self, old: str, new: str) -> None:
+        text = self.get(old)
+        if text is None or self.get(new) is not None:
+            return
+        self.text[new], self.text[old] = text, None
+        self.origin[new] = self.origin.get(old, old)
+
+    def everything(self) -> list[str]:
+        """The source and header files under src/ and include/, by their current names."""
+        found = {
+            p.relative_to(self.root).as_posix()
+            for d in ("src", "include")
+            for p in (self.root / d).rglob("*")
+            if p.is_file() and p.suffix.lower() in _TEXT
+        }
+        gone = {p for p, t in self.text.items() if t is None}
+        return sorted((found | {p for p, t in self.text.items() if t is not None}) - gone)
+
+    def replace(self, pattern: re.Pattern[str], new: str | Callable[[re.Match[str]], str], paths: Iterable[str]) -> int:
+        count = 0
+        for path in paths:
+            text = self.get(path)
+            if text is not None:
+                changed, n = pattern.subn(new, text)
+                if n:
+                    self.put(path, changed)
+                    count += n
+        return count
+
+    def changed(self) -> list[str]:
+        return sorted(p for p in self.text if self.text[p] != self.orig[p] or p in self.origin)
+
+    def diff(self) -> str:
+        moved = set(self.origin.values())
+        out: list[str] = []
+        for path in self.changed():
+            new, was = self.text[path], self.origin.get(path, path)
+            if new is None and path in moved:
+                continue
+            out.append(_file_diff(path, was, self.orig[was], new))
+        return "".join(out)
+
+
+def _file_diff(path: str, was: str, old: str | None, new: str | None) -> str:
+    head = f"diff --git a/{was} b/{path}\n"
+    if old is None:
+        head += "new file mode 100644\n"
+    elif new is None:
+        head += "deleted file mode 100644\n"
+    elif was != path:
+        head += f"similarity index {int(difflib.SequenceMatcher(None, old, new, autojunk=False).ratio() * 100)}%\n"
+        head += f"rename from {was}\nrename to {path}\n"
+    before, after = (old or "").splitlines(keepends=True), (new or "").splitlines(keepends=True)
+    if before == after:
+        return head
+    names = ("/dev/null" if old is None else f"a/{was}", "/dev/null" if new is None else f"b/{path}")
+    body = [
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
+        for line in difflib.unified_diff(before, after, *names, lineterm="\n")
+    ]
+    return head + "".join(body)
+
+
+def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None], modules: Mapping[str, Json]) -> Json:
+    """A unified diff of the moves, as `{"patch", "files", "moves"}`. `owner` gives the file now holding a function
+    (the tree's), `modules` the source and header path of each module the moves name.
+
+    - member: the function's C body or INCLUDE_* line leaves its owner file for the module's file, made if absent;
+    - symbol: its `versions/*/symbol_addrs.txt` lines and, word-bounded, every identifier in src/ and include/;
+    - type: the identifier only;
+    - module, source, header: the file renames, with the includes that name the old header;
+    - file: the includes of a header move to the header it goes to."""
+    files, applied = Files(root), 0
+    where: dict[str, str] = {}
+    path = {n: m["source"] for n, m in modules.items()}
+    header = {n: m["header"] for n, m in modules.items()}
+    final = {m["subject"]: m["target"] for m in moves if m["op"] == "source"}
+
+    def at(name: str) -> str | None:
+        if name not in where and (found := owner(name)):
+            where[name] = found
+        return where.get(name)
+
+    def include(old: str, new: str) -> int:
+        pattern = re.compile(
+            rf'(#[ \t]*include[ \t]*[<"])({re.escape(old)}|{re.escape(old.removeprefix("include/"))})([>"])'
+        )
+
+        def spell(m: re.Match[str]) -> str:
+            return f"{m[1]}{new if m[2] == old else new.removeprefix('include/')}{m[3]}"
+
+        return files.replace(pattern, spell, files.everything())
+
+    for move in moves:
+        op, subject, target = move["op"], move["subject"], move["target"]
+        if op in ("symbol", "type"):
+            hits = 0
+            if op == "symbol":
+                found = sorted((root / "versions").glob("*/symbol_addrs.txt"))
+                line = re.compile(rf"(?m)^([ \t]*){re.escape(subject)}(?![\w])")
+                hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found])
+            hits += files.replace(_word(subject), target, files.everything())
+            applied += bool(hits)
+            if subject in where:
+                where[target] = where.pop(subject)
+        elif op == "module":
+            for names in (path, header):
+                if subject in names:
+                    names[target] = names.pop(subject)
+        elif op == "member":
+            src, dest = at(subject), path.get(target) or final.get(target)
+            text = files.get(src) if src else None
+            taken = cut(text, subject) if text is not None and src and dest and src != dest else None
+            if taken is None or not src or not dest:
+                continue
+            files.put(src, taken[0])
+            have = files.get(dest)
+            files.put(dest, (_preamble(text or "") + "\n" if have is None else have + "\n") + taken[1])
+            path[target], where[subject] = dest, dest
+            applied += 1
+        elif op in ("source", "header"):
+            names = path if op == "source" else header
+            old = names.get(subject)
+            names[subject] = target
+            if old and old != target and files.get(old) is not None:
+                files.rename(old, target)
+                if op == "header":
+                    include(old, target)
+                else:
+                    where.update({n: target for n, w in list(where.items()) if w == old})
+                applied += 1
+        elif op == "file":
+            applied += bool(include(subject, target))
+            if files.get(subject) is not None and files.get(target) is None:
+                files.rename(subject, target)
+    return {"patch": files.diff(), "files": files.changed(), "moves": applied}
+
+
+def ops(proposal: Json) -> list[Json]:
+    """The flat move list of a proposal: renames of symbols first, then one folder after the other, then headers."""
+    return [m for _, group in _batches(proposal) for m in group]
+
+
+def modules_of(doc: Json) -> dict[str, Json]:
+    return {m["name"]: {"source": m["source"], "header": m["header"]} for m in doc["modules"]}
+
+
+def save(config: Config, built: Json) -> str:
+    """The patch as the next `patch-N.diff` under `.unbake/recipe/patches/`; its path relative to the project."""
+    root = config.project.root / ".unbake/recipe/patches"
+    found = [int(m[1]) for p in root.glob("patch-*.*") if (m := re.match(r"patch-(\d+)\.", p.name))]
+    path = root / f"patch-{max(found, default=0) + 1}.diff"
+    write(path, built["patch"])
+    return str(path.relative_to(config.project.root))
+
+
+def stream(built: Json) -> str:
+    """What the verb prints on stdout: the patch, the files it touches and the count of moves."""
+    return json.dumps({k: built[k] for k in ("patch", "files", "moves")}) + "\n"
 
 
 def run(config: Config, params: Json) -> Json:
-    """`recipe structure`: write the proposal, `moves.jsonl` and a reset cursor under `.unbake/recipe/structure/`."""
-    library = getattr(config.project, "library_dirs", ())
-    clock: list[Json] = []
-    document = evidence(config, params["host"], clock)
-    types = clash.reader(config.project.root)
-    rows = evidence_rows(config.project.root)
-    naming = tree.style(config.project.root)
-    proposal = dict(propose(document, state.structure(), params["segment"], library, types, rows, naming))
-    batches, root = _batches(proposal), config.project.root / ".unbake/recipe/structure"
-    stream = _lines(m for _, group in batches for m in group)
-    proposal["runs"] = [{"segment": s, "count": len(g)} for s, g in batches]
-    files = {"proposal.json": json.dumps(proposal), "moves.jsonl": stream, "cursor.json": "0", "refused.jsonl": ""}
-    for name, text in files.items():
-        store.write(root / name, text.encode())
+    """`recipe structure`: write the proposal as a patch under `.unbake/recipe/patches/` and print it as JSON."""
+    root = config.project.root
+    document = evidence(config, params["host"])
+    proposal = dict(
+        propose(
+            document,
+            state.structure(),
+            params["segment"],
+            getattr(config, "libraries", ()),
+            clash.reader(root),
+            (),
+            tree.style(root),
+        )
+    )
+    captured = api.capture(config)
+    built = build(root, ops(proposal), lambda n: captured.owner(document["names_from"], n), modules_of(document))
     return {
         **{k: dict(zip(("before", "after"), v, strict=True)) for k, v in proposal["estimate"].items()},
         "tree": proposal["tree"],
         "gates": proposal["gates"],
         "dead_headers": proposal["dead_headers"],
         "boundaries": proposal["boundaries"],
-        "moves": len(stream.splitlines()),
-        "path": str((root / "moves.jsonl").relative_to(config.project.root)),
-        "stream": stream,
-        "unbake_calls": clock,
-        "next": "recipe apply" if stream else "recipe status",
+        **{k: built[k] for k in ("patch", "files", "moves")},
+        "path": save(config, built),
+        "stream": stream(built),
+        "next": "recipe apply" if built["moves"] else "recipe status",
     }
 
 
-_BACKOFF = (5, 15, 45)  # seconds before the 2nd, 3rd and 4th try of a batch the lock or the journal refused
-_TRANSIENT = ("setup.busy", "journal.changed")
-
-
-def _transient(document: Json) -> bool:
-    found = [f["key"] for f in document["findings"]]
-    found += [f["key"] for r in (document["result"] or {}).get("refused", []) for f in r["findings"]]
-    return bool(found) and all(k in _TRANSIENT for k in found) and not (document["ok"])
-
-
-def _dirty(root: Path) -> set[str]:
-    """Paths `git status --porcelain` reports as changed or untracked (read only); none when root is no repository."""
-    git = shutil.which("git")
-    argv = [git or "git", "-C", str(root), "status", "--porcelain"]
-    ran = process.run("git", argv, cwd=root, tmp=process.scratch(root)) if git else None
-    lines = ran.stdout.decode(errors="replace").splitlines() if ran and ran.exit == 0 else []
-    return {line[3:].split(" -> ")[-1].strip().strip('"') for line in lines}
-
-
-def _files(move: Json, proposal: Json) -> set[str]:
-    """Tracked paths affected by a move: explicit paths and the sources of named modules."""
-    existing, current = proposal["existing"], proposal["current"]
-    out = {x for x in (move["subject"], move["target"]) if "/" in x}
-    named = {current.get(move["subject"], move["subject"]), move["target"]}
-    return out | {existing[x]["source"] for x in named if x in existing}
-
-
-_FOLLOWED = asdict(Finding("recipe.dependent", "an earlier refusal leaves this move nothing to act on", blocking=False))
-
-
-def _key(move: Json) -> tuple[str, str, str]:
-    return move["op"], move["subject"], move["target"]
-
-
-def _dead(pending: list[Json], existing: Json, refused: list[Json]) -> list[Json]:
-    """Moves that can only fail: the member moves of a symbol whose rename was refused, and the source and header of a
-    new module that no member move is left for (every member move of it is dead or refused)."""
-    names = {m["target"] for m in refused if m["op"] == "symbol"}
-    gone = {_key(m) for m in refused}
-    orphan = [m for m in pending if m["op"] == "member" and m["subject"] in names]
-    left = {m["target"] for m in pending if m["op"] == "member" and m["subject"] not in names and _key(m) not in gone}
-    wanted = {m["target"] for m in pending if m["op"] == "member"}
-    return orphan + [
-        m for m in pending if m["op"] in ("source", "header") and m["subject"] in wanted - left - set(existing)
-    ]
-
-
-def _follow(batch: list[Json], deferred: list[Json]) -> tuple[list[Json], list[Json]]:
-    """A source or header move waits with the member moves of its module: it must not run before them."""
-    late = {m["target"] for m in deferred if m["op"] == "member"}
-    after = [m for m in batch if m["op"] in ("source", "header") and m["subject"] in late]
-    return [m for m in batch if m not in after], [*deferred, *after]
-
-
 def apply(config: Config, params: Json) -> Json:
-    """`recipe apply`: the next batch, or with `--all` the whole rest of the stream as ONE `unbake move --partial -`.
-    Each move is proved: unbake keeps a failing move's files as they were, applies the rest in that one pass and exits
-    zero; every refused move is recorded with its finding in `refused.jsonl`: nothing is filtered silently."""
-    return _batch(config, params, bool(params.get("all")))
-
-
-def _batch(config: Config, params: Json, everything: bool) -> Json:
-    """Prove the selected moves with one public partial move call, retaining every refusal.
-    Defer dirty paths unless applying all; retry only transient lock or journal changes."""
-    root = config.project.root / ".unbake/recipe/structure"
-    try:
-        proposal = json.loads((root / "proposal.json").read_text(encoding="utf-8"))
-        runs = proposal["runs"]
-        pending = [json.loads(x) for x in (root / "moves.jsonl").read_text(encoding="utf-8").splitlines()]
-        cursor = int(json.loads((root / "cursor.json").read_text(encoding="utf-8")))
-    except (OSError, ValueError) as error:
-        raise state.stop("recipe.structure", "no proposal is saved", action="recipe structure") from error
-    ends = [sum(r["count"] for r in runs[: i + 1]) for i in range(len(runs))]
-    at = next((i for i, end in enumerate(ends) if cursor < end), len(runs) - 1)
-    stop = len(pending) if everything else min(ends[at], cursor + state.structure().batch_moves) if pending else 0
-    dirty = _dirty(config.project.root) if pending and not everything else set()
-    batch = [m for m in pending[cursor:stop] if not _files(m, proposal) & dirty]
-    deferred = [m for m in pending[cursor:stop] if m not in batch]
-    batch, deferred = _follow(batch, deferred)
-    old = [json.loads(x)["move"] for x in (root / "refused.jsonl").read_text(encoding="utf-8").splitlines()]
-    refused: list[Json] = []
-    stderr = ""
-    clock: list[Json] = []
-    document: Json = {}
-    while batch:
-        dead = _dead(pending, proposal["existing"], [*old, *[r["move"] for r in refused]])
-        refused += [{"move": m, "findings": [_FOLLOWED]} for m in batch if m in dead]
-        batch = [m for m in batch if m not in dead]
-        if not batch:
-            break
-        for attempt in range(len(_BACKOFF) + 1):
-            flags = ("--partial",)  # per move proof: a failing move keeps its old state, the rest land
-            document, stderr = _unbake(
-                config, params["host"], "move", *flags, "-", stdin=_lines(batch).encode(), clock=clock
-            )
-            if attempt == len(_BACKOFF) or not _transient(document):
-                break
-            time.sleep(_BACKOFF[attempt])
-        if document["result"] is None:
-            raise _refusal(document)
-        bad = {r["index"]: r for r in document["result"]["refused"]}
-        refused += [{"move": batch[i], "findings": r["findings"]} for i, r in sorted(bad.items())]
-        batch = [m for i, m in enumerate(batch) if i not in bad]
-        break  # partial: unbake applied every move it did not refuse
-    ledger = (root / "refused.jsonl").read_text(encoding="utf-8")
-    store.write(root / "refused.jsonl", (ledger + _lines(refused)).encode())
-    done_to = max(stop, cursor) - len(deferred)
-    if deferred:  # they wait at the end of the stream, in the last batch
-        kept = [m for m in pending[cursor:stop] if m not in deferred]
-        pending = pending[:cursor] + kept + pending[stop:] + deferred
-        runs[at]["count"] -= len(deferred)
-        runs[-1]["count"] += len(deferred)
-        store.write(root / "moves.jsonl", _lines(pending).encode())
-        store.write(root / "proposal.json", json.dumps({**proposal, "runs": runs}).encode())
-    store.write(root / "cursor.json", str(done_to).encode())
-    done = document["result"] if batch else {}
-    git = [x.strip() for x in stderr.splitlines() if x.strip().startswith("git ")] * bool(batch)
+    """`recipe apply`: `git apply` the oldest saved patch (or PATCH), then `unbake sync`; sync's result comes back.
+    The one explicit operator action that writes."""
+    root = config.project.root
+    saved = sorted(
+        (root / ".unbake/recipe/patches").glob("patch-*.diff"),
+        key=lambda p: int("".join(c for c in p.name if c.isdigit())),
+    )
+    patch = Path(params["patch"]) if params.get("patch") else saved[0] if saved else None
+    if patch is None or not patch.is_file():
+        raise state.stop("recipe.apply", "no patch is saved", action="recipe structure")
+    ran = recipe_host.run(["git", "-C", str(root), "apply", str(patch.resolve())], root, config)
+    if ran.exit:
+        tail = bytes(ran.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git apply failed"]
+        raise state.stop("recipe.apply", f"git apply refused {patch.name}: {tail[0]}", action="recipe structure")
+    patch.rename(patch.with_suffix(".applied"))
+    document, _ = _unbake(config, params["host"], "sync")
+    if not document["ok"]:
+        raise _refusal(document)
+    left = len([p for p in saved if p != patch])
     return {
-        "batch": "all" if everything else runs[at]["segment"] if runs else None,
-        "moves": stop - cursor,
-        "applied": len(batch),
-        "deferred": [{"subject": m["subject"], "target": m["target"]} for m in deferred],
-        "first_refused": refused[0]["move"]["subject"] if refused else None,
-        "refused": [
-            {"move": r["move"], "key": r["findings"][0]["key"], "reason": r["findings"][0]["reason"]} for r in refused
-        ],
-        **{k: done.get(k) for k in ("units", "headers", "files")},
-        "message": done.get("message") or "no move was applied",
-        "remaining": len(pending) - done_to,
-        "unbake_calls": clock,
-        "next": " && ".join([*git, "recipe apply" if done_to < len(pending) else "recipe structure"]),
+        **(document["result"] or {}),
+        "patch": patch.name,
+        "left": left,
+        "next": "recipe apply" if left else "recipe structure",
     }

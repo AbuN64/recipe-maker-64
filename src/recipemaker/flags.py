@@ -21,11 +21,9 @@ from collections.abc import Iterable, Sequence
 from itertools import combinations
 from pathlib import Path
 
-from unbake import config as configuration
-from unbake import store
-from unbake.contracts import Config, Json
+from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import structure
+from recipemaker import compiler, host, structure
 
 Flags = tuple[str, ...]
 
@@ -43,8 +41,10 @@ def lattice(supported: Iterable[str], extra: Iterable[str] = ()) -> list[Flags]:
 
 
 def _supported(config: Config, toolchain: str) -> list[str]:
-    rows = configuration.load_resource("toolchains.toml")["toolchain"]
-    return list(rows.get(toolchain, {}).get("supported_options", ()))
+    try:
+        return list(compiler(toolchain).get("supported_options", ()))
+    except Refusal:  # a toolchain without a compiler card has no lattice
+        return []
 
 
 def _project_lattice(root: Path) -> list[str]:
@@ -97,14 +97,14 @@ def neighbours(doc: Json, names: Sequence[str], reach: int = 2) -> list[tuple[st
     return out
 
 
-def _score(config: Config, host: Path | None, rows: list[Json], clock: list[Json], tag: str) -> list[Json]:
+def _score(config: Config, unbake_host: Path | None, rows: list[Json], clock: list[Json], tag: str) -> list[Json]:
     """Every row (file, function, flags) in one `unbake score --variants` call; the cores it used go to `clock`."""
     if not rows:
         return []
     path = config.project.root / ".unbake/recipe/flags" / f"variants-{tag}.json"
-    store.write(path, json.dumps(rows).encode())
+    host.write(path, json.dumps(rows).encode())
     began = time.monotonic()
-    document, stderr = structure._unbake(config, host, "score", "--variants", str(path))
+    document, stderr = structure._unbake(config, unbake_host, "score", "--variants", str(path))
     cores = [float(x) for x in re.findall(r"^score\s+\S+s\s+([\d.]+) cores", stderr, re.M)]
     clock.append(
         {
@@ -207,7 +207,7 @@ def run(config: Config, params: Json) -> Json:
     """`recipe flags`: score the lattice, judge and write proposal.json and moves.jsonl under .unbake/recipe/flags."""
     began = time.monotonic()
     clock: list[Json] = []
-    doc = structure.evidence(config, params["host"], clock)
+    doc = structure.evidence(config, params["host"])
     wanted = set((params.get("segment") or "").split(",")) - {""}
     by = {m["name"]: m for m in doc["members"]}
     fuzzy = [
@@ -250,8 +250,8 @@ def run(config: Config, params: Json) -> Json:
         "unbake_calls": clock,
         "wall_s": round(time.monotonic() - began, 3),
     }
-    store.write(root / "proposal.json", json.dumps(proposal, indent=1).encode())
-    store.write(root / "moves.jsonl", "".join(json.dumps(m, sort_keys=True) + "\n" for m in stream).encode())
+    host.write(root / "proposal.json", json.dumps(proposal, indent=1).encode())
+    host.write(root / "moves.jsonl", "".join(json.dumps(m, sort_keys=True) + "\n" for m in stream).encode())
     after = "unbake move --partial - < .unbake/recipe/flags/moves.jsonl" if stream else "recipe status"
     return {
         **{k: v for k, v in proposal.items() if k != "found"},

@@ -1,6 +1,7 @@
-"""Module structure: the proposal from a map document, the move stream and the batches sent to `unbake move -`."""
+"""Module structure: the proposal from a map document and the file patch built from its moves."""
 
 import json
+import subprocess
 from collections import Counter
 from importlib import resources
 from pathlib import Path
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 
 import jsonschema
 import pytest
-from fakes import native_result
+from r1_fake_api import fake_api  # noqa: F401
 from unbake.contracts import Finding, Refusal
 
 from recipemaker import clash, state, structure, tree
@@ -26,15 +27,6 @@ MOVE = {
         "target": {"type": "string", "minLength": 1},
     },
 }
-
-
-@pytest.fixture(autouse=True)
-def calm(monkeypatch):
-    """No sleeping, and a clean git tree unless a test says otherwise."""
-    slept = []
-    monkeypatch.setattr(structure.time, "sleep", slept.append)
-    monkeypatch.setattr(structure, "_dirty", lambda root: set())
-    return slept
 
 
 @pytest.fixture
@@ -304,163 +296,6 @@ def test_a_module_that_already_has_the_proposed_name_and_paths_needs_no_move(doc
     assert Counter(m["op"] for m in flat) == {"file": 5}
 
 
-class Unbake:
-    """The unbake command line at the process boundary: `map` writes the fixture, `move -` answers from a script."""
-
-    def __init__(self, root, answers):
-        self.root, self.answers, self.calls, self.argv = root, list(answers), [], []
-
-    def __call__(self, name, argv, cwd, **kwargs):
-        verb = argv[argv.index("--project") + 2]
-        stdin = kwargs.get("stdin", b"").decode()
-        self.argv.append(argv)
-        self.calls.append((verb, [json.loads(x) for x in stdin.splitlines()]))
-        if verb == "map":
-            (self.root / ".unbake").mkdir(parents=True, exist_ok=True)
-            (self.root / ".unbake" / "map.json").write_bytes(DATA.read_bytes())
-            return native_result(
-                stdout=json.dumps({"ok": True, "result": {"path": ".unbake/map.json"}, "findings": []}).encode()
-            )
-        document, git = self.answers.pop(0)
-        return native_result(stdout=json.dumps(document).encode(), stderr=git.encode())
-
-    def moves(self):
-        return [c for c in self.calls if c[0] == "move"]
-
-
-def answer(refused=(), units=3, ok=True):
-    result = {
-        "moves": 0,
-        "applied": {},
-        "units": {"before": 5, "after": units},
-        "headers": {"before": 7, "after": 6},
-        "files": ["Makefile"],
-        "refused": [{"index": i, "move": {}, "findings": [FINDING]} for i in refused],
-        "message": "move: done",
-    }
-    return {
-        "ok": ok and not refused,
-        "result": result,
-        "findings": [],
-    }, "git add -A -- Makefile\ngit commit -m 'move: done'\n"
-
-
-FINDING = {
-    "key": "move.not_exact",
-    "reason": "unit differs",
-    "path": "",
-    "line": 0,
-    "unit": "",
-    "versions": [],
-    "missing": [],
-    "origin": None,
-    "blocking": True,
-    "action": "",
-    "symptoms": {},
-}
-
-
-def project(tmp_path, monkeypatch, answers):
-    root = tmp_path / "project"
-    root.mkdir()
-    fake = Unbake(root, answers)
-    monkeypatch.setattr(structure.process, "run", fake)
-    config = SimpleNamespace(project=SimpleNamespace(root=root))
-    result = structure.run(config, {"host": None, "segment": None})
-    return config, fake, result, root / ".unbake" / "recipe" / "structure"
-
-
-def test_structure_writes_the_stream_the_proposal_and_a_zero_cursor(tmp_path, monkeypatch):
-    _, fake, result, saved = project(tmp_path, monkeypatch, [])
-    assert [c[0] for c in fake.calls] == ["map"]
-    assert result["moves"] == 25 and len(result["stream"].splitlines()) == 25
-    assert (saved / "moves.jsonl").read_text(encoding="utf-8") == result["stream"]
-    assert (saved / "cursor.json").read_text(encoding="utf-8") == "0"
-    assert json.loads((saved / "proposal.json").read_text(encoding="utf-8"))["runs"] == [
-        {"segment": "src/game/main/sys_80001000", "count": 17},
-        {"segment": "src/game/ovl_80002000/sys_80002000", "count": 3},
-        {"segment": "headers", "count": 5},
-    ]
-    assert result["modules"] == {"before": 3, "after": 6} and result["next"] == "recipe apply"
-
-
-def test_apply_records_the_moves_unbake_refused_and_never_sends_the_rest_again(tmp_path, monkeypatch):
-    config, fake, result, saved = project(tmp_path, monkeypatch, [answer(refused=(3, 7)), answer()])
-    stream = [json.loads(x) for x in result["stream"].splitlines()]
-    got = structure.apply(config, {"host": None})
-    (first,) = [c[1] for c in fake.moves()]  # partial: unbake proved each move and applied the rest itself
-    assert first == stream[:17]
-    held = [json.loads(x) for x in (saved / "refused.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert [h["move"] for h in held] == [stream[3], stream[7]] and held[0]["findings"][0]["key"] == "move.not_exact"
-    assert (saved / "cursor.json").read_text(encoding="utf-8") == "17"
-    assert (got["moves"], got["applied"], got["remaining"], got["batch"]) == (17, 15, 8, "src/game/main/sys_80001000")
-    assert got["first_refused"] == stream[3]["subject"]
-    assert [r["key"] for r in got["refused"]] == ["move.not_exact"] * 2 and got["files"] == ["Makefile"]
-    assert got["next"] == "git add -A -- Makefile && git commit -m 'move: done' && recipe apply"
-
-
-def test_apply_takes_the_next_segment_batch_and_ends_with_a_new_structure(tmp_path, monkeypatch):
-    config, fake, _, _saved = project(tmp_path, monkeypatch, [answer(), answer(), answer()])
-    batches = [structure.apply(config, {"host": None}) for _ in range(3)]
-    assert [(b["batch"], b["moves"]) for b in batches] == [
-        ("src/game/main/sys_80001000", 17),
-        ("src/game/ovl_80002000/sys_80002000", 3),
-        ("headers", 5),
-    ]
-    assert [len(c[1]) for c in fake.moves()] == [17, 3, 5] and batches[-1]["next"].endswith("recipe structure")
-    again = structure.apply(config, {"host": None})
-    assert (again["moves"], again["remaining"], len(fake.moves())) == (0, 0, 3) and again["next"] == "recipe structure"
-
-
-def test_batch_moves_bounds_a_batch(tmp_path, monkeypatch):
-    path = tmp_path / "recipe.toml"
-    path.write_text(
-        "[budget]\nstall_tries = 4\nidle_minutes = 15\npermute_seconds = 120\nskip_days = 7\n"
-        "[structure]\nbatch_moves = 5\n"
-    )
-    monkeypatch.setenv("RECIPE_CONFIG", str(path))
-    config, fake, _, _saved = project(tmp_path, monkeypatch, [answer()])
-    got = structure.apply(config, {"host": None})
-    assert (got["moves"], len(fake.moves()[0][1]), got["remaining"]) == (5, 5, 20)
-
-
-def test_a_lock_that_stays_busy_waits_5_15_45_s_then_leaves_the_cursor(tmp_path, monkeypatch, calm):
-    busy = {
-        "ok": False,
-        "result": None,
-        "findings": [{**FINDING, "key": "setup.busy", "reason": "a landing holds the lock"}],
-    }
-    config, fake, _, saved = project(tmp_path, monkeypatch, [(busy, "")] * 4)
-    with pytest.raises(Refusal) as caught:
-        structure.apply(config, {"host": None})
-    assert caught.value.findings[0] == Finding("setup.busy", "a landing holds the lock")
-    assert calm == [5, 15, 45]
-    assert len(fake.moves()) == 4 and (saved / "cursor.json").read_text(encoding="utf-8") == "0"
-    assert (saved / "refused.jsonl").read_text(encoding="utf-8") == ""
-
-
-def test_a_batch_where_every_move_is_refused_still_advances(tmp_path, monkeypatch):
-    config, fake, _, saved = project(tmp_path, monkeypatch, [answer(refused=range(17))])
-    got = structure.apply(config, {"host": None})
-    assert (got["applied"], len(got["refused"]), len(fake.moves())) == (0, 17, 1)
-    assert (saved / "cursor.json").read_text(encoding="utf-8") == "17" and got["next"] == "recipe apply"
-
-
-def test_apply_without_a_proposal_says_to_run_structure(tmp_path, monkeypatch):
-    monkeypatch.setattr(structure.process, "run", Unbake(tmp_path, []))
-    with pytest.raises(Refusal) as caught:
-        structure.apply(SimpleNamespace(project=SimpleNamespace(root=tmp_path)), {"host": None})
-    assert caught.value.findings[0].action == "recipe structure"
-
-
-def test_a_failing_map_is_refused_with_unbakes_findings(tmp_path, monkeypatch):
-    bad = {"ok": False, "result": None, "findings": [{**FINDING, "key": "config.schema", "reason": "schema 3"}]}
-    monkeypatch.setattr(structure.process, "run", lambda *a, **k: native_result(stdout=json.dumps(bad).encode()))
-    with pytest.raises(Refusal) as caught:
-        structure.run(SimpleNamespace(project=SimpleNamespace(root=tmp_path)), {"host": None, "segment": None})
-    assert caught.value.findings[0].key == "config.schema"
-
-
 def _plain(doc):
     """Every function without a relation to another: no call, no load, no alignment padding."""
     for m in doc["members"]:
@@ -558,26 +393,6 @@ def test_module_headers_are_estimated_from_co_usage_not_one_per_module(doc):
     )
 
 
-def test_one_run_parses_the_map_once_and_writes_one_proposal(tmp_path, monkeypatch):
-    writes = []
-    real = structure.store.write
-    monkeypatch.setattr(structure.store, "write", lambda path, data: (writes.append(path.name), real(path, data))[1])
-    root = tmp_path / "project"
-    root.mkdir()
-    fake = Unbake(root, [])
-    monkeypatch.setattr(structure.process, "run", fake)
-    config = SimpleNamespace(project=SimpleNamespace(root=root))
-    reads = []
-    real_loads = structure.json.loads
-    monkeypatch.setattr(
-        structure.json, "loads", lambda text, *a, **k: (reads.append(len(text)), real_loads(text, *a, **k))[1]
-    )
-    structure.run(config, {"host": None, "segment": "span_1000,span_2000"})
-    assert [c[0] for c in fake.calls] == ["map"]
-    assert writes.count("proposal.json") == 1
-    assert len([n for n in reads if n > 1000]) == 1  # the map document is parsed once
-
-
 def _clusters(doc, subsystems, shared):
     """Units uN of subsystem N (member mN, home include/game/<folder>/<sub>.h) and shared headers including them."""
     row = {"modules": [], "includes": []}
@@ -633,29 +448,6 @@ def _move(op, subject, target):
     return {"op": op, "subject": subject, "target": target}
 
 
-def test_moves_that_follow_a_refused_rename_or_a_module_left_without_members_are_dead():
-    stream = [
-        _move("symbol", "func_a", "osYield"),
-        _move("member", "osYield", "yield"),
-        _move("source", "yield", "src/yield.c"),
-        _move("header", "yield", "include/y.h"),
-        _move("member", "func_b", "kept"),
-        _move("source", "kept", "src/kept.c"),
-        _move("source", "old", "src/old.c"),
-    ]
-    dead = structure._dead(stream, {"old": {}}, [stream[0]])
-    assert dead == [stream[1], stream[2], stream[3]]
-    assert structure._dead(stream, {}, [stream[4]]) == [stream[5]]  # a refused member leaves its module empty
-
-
-def test_a_source_or_header_waits_with_the_deferred_members_of_its_module():
-    members = [_move("member", "f1", "m"), _move("member", "f2", "m")]
-    source, header = _move("source", "m", "src/m.c"), _move("header", "m", "include/m.h")
-    other = _move("source", "n", "src/n.c")
-    batch, deferred = structure._follow([members[1], source, header, other], [members[0]])
-    assert batch == [members[1], other] and deferred == [members[0], source, header]
-
-
 def _spell(**by_unit):
     """`types(unit)` as the clash reader gives it, from the C text each unit defines."""
     return lambda unit: clash.definitions(by_unit.get(unit.removeprefix("src/").removesuffix(".c"), ""))
@@ -699,32 +491,6 @@ def test_a_header_that_is_a_file_target_is_never_a_chain_link(doc):
     assert structure._final({"x": "y", "y": "x"}, "y") == "x"  # a cycle stops
     moves = structure.headers(doc, 0.8)
     assert not {m["target"] for m in moves} & {m["subject"] for m in moves}
-
-
-def test_apply_all_is_one_partial_move_of_the_whole_stream_and_records_each_refusal(tmp_path, monkeypatch):
-    config, fake, result, saved = project(tmp_path, monkeypatch, [answer(refused=(3, 20))])
-    got = structure.apply(config, {"host": None, "all": True})
-    stream = [json.loads(x) for x in result["stream"].splitlines()]
-    moves = [a for a in fake.argv if "move" in a]
-    assert len(moves) == 1 and moves[0][-2:] == ["--partial", "-"] and fake.moves()[0][1] == stream
-    held = [json.loads(x) for x in (saved / "refused.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert [h["move"] for h in held] == [stream[3], stream[20]] and len(got["unbake_calls"]) == 1
-    assert (got["batch"], got["moves"], got["applied"], got["remaining"]) == ("all", 25, 23, 0)
-    assert (saved / "cursor.json").read_text(encoding="utf-8") == "25" and got["next"].endswith("recipe structure")
-
-
-def test_apply_all_never_resends_what_unbake_applied_after_a_refusal(tmp_path, monkeypatch):
-    config, fake, _, _ = project(tmp_path, monkeypatch, [answer(refused=range(25))])
-    got = structure.apply(config, {"host": None, "all": True})
-    assert len(fake.moves()) == 1 and (got["applied"], len(got["refused"]), got["remaining"]) == (0, 25, 0)
-    again = structure.apply(config, {"host": None, "all": True})
-    assert len(fake.moves()) == 1 and (again["moves"], again["remaining"]) == (0, 0)
-
-
-def test_apply_without_all_proves_each_move_and_never_passes_unproved(tmp_path, monkeypatch):
-    config, fake, _, _ = project(tmp_path, monkeypatch, [answer()])
-    structure.apply(config, {"host": None})
-    assert not [a for a in fake.argv if "--unproved" in a] and [a for a in fake.argv if "--partial" in a]
 
 
 def _edges(doc, classes, default="unal"):
@@ -843,18 +609,6 @@ def test_a_stem_over_the_styles_limit_is_refused():
         tree.Naming(stem_max=8).file("src/game/x", {"name": "code_80001000", "vram": 0x80001000})
 
 
-def test_the_project_config_chooses_the_style(tmp_path):
-    (tmp_path / "config.toml").write_text(
-        '[layout]\nsubsystem_source = "src/{subsystem}"\n[naming]\ncase = "upper"\nstem_max = 8\n'
-    )
-    got = tree.style(tmp_path)
-    assert (got.case, got.stem_max, got.subsystem_source, got.source_ext) == ("upper", 8, "src/{subsystem}", ".c")
-    assert tree.style(tmp_path / "missing") == tree.Naming()
-    (tmp_path / "config.toml").write_text("[naming]\nstem_limit = 8\n")
-    with pytest.raises(ValueError, match="stem_limit"):
-        tree.style(tmp_path)
-
-
 def test_tied_origin_votes_choose_the_same_module_by_name(doc):
     next(m for m in doc["modules"] if m["name"] == "code_old2")["segment"] = "span_1000"
     _plain(doc)
@@ -885,3 +639,176 @@ def test_library_protection_is_a_directory_not_a_name_prefix(doc, root, path, pr
     unit["path"] = member["unit"] = path
     got = next(m for m in structure.atoms(doc, "span_1000", (root,)) if m["name"] == "f1")
     assert got["protected"] is protected
+
+
+# ---- the patch
+
+C_FILE = """#include "types.h"
+
+void keep(void) {
+    int a = 1;
+}
+
+#ifdef NON_MATCHING
+void fuzzy(int x) {
+    if (x) { x = 2; }
+}
+#else
+INCLUDE_ASM(main, fuzzy);
+#endif
+
+INCLUDE_ASM(main, func_8000);
+
+void tail(void) {
+}
+"""
+
+
+def _repo(tmp_path, files):
+    """A git repository holding `files` (path -> text), committed."""
+    for path, text in files.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    for argv in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]):
+        subprocess.run(["git", "-C", str(tmp_path), *argv], check=True, capture_output=True)
+    return tmp_path
+
+
+def _check(root, patch, *flags):
+    return subprocess.run(
+        ["git", "-C", str(root), "apply", *flags, "-"], input=patch.encode(), capture_output=True, check=False
+    )
+
+
+MODULES = {"old": {"source": "src/a.c", "header": "include/a.h"}}
+
+
+def test_one_member_move_is_a_diff_git_apply_accepts_that_makes_the_target_file(tmp_path):
+    root = _repo(tmp_path, {"src/a.c": C_FILE, "include/a.h": ""})
+    moves = [
+        {"op": "member", "subject": "func_8000", "target": "new"},
+        {"op": "source", "subject": "new", "target": "src/game/new.c"},
+    ]
+    got = structure.build(root, moves, {"func_8000": "src/a.c"}.get, MODULES)
+    assert got["moves"] == 1 and got["files"] == ["src/a.c", "src/game/new.c"]
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    assert "func_8000" not in (root / "src/a.c").read_text()
+    made = (root / "src/game/new.c").read_text()
+    assert made == '#include "types.h"\n\nINCLUDE_ASM(main, func_8000);\n'
+
+
+def test_a_fuzzy_function_moves_with_its_whole_non_matching_block_and_a_c_body_with_its_braces(tmp_path):
+    root = _repo(tmp_path, {"src/a.c": C_FILE, "src/b.c": "int b;\n"})
+    modules = {"old": {"source": "src/a.c", "header": ""}, "other": {"source": "src/b.c", "header": ""}}
+    moves = [{"op": "member", "subject": n, "target": "other"} for n in ("fuzzy", "keep")]
+    got = structure.build(root, moves, {"fuzzy": "src/a.c", "keep": "src/a.c"}.get, modules)
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    left, took = (root / "src/a.c").read_text(), (root / "src/b.c").read_text()
+    assert "fuzzy" not in left and "#else" not in left and "keep" not in left and "tail" in left
+    assert took.startswith("int b;\n") and "#ifdef NON_MATCHING" in took and "int a = 1;" in took
+
+
+def test_a_symbol_rename_edits_symbol_addrs_and_every_word_bounded_use(tmp_path):
+    root = _repo(
+        tmp_path,
+        {
+            "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\nfunc_80001 = 0x9000;\n",
+            "src/a.c": "INCLUDE_ASM(main, func_8000);\nvoid g(void) { func_8000(); func_80001(); }\n",
+            "include/a.h": "void func_8000(void);\n",
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
+    assert got["files"] == ["include/a.h", "src/a.c", "versions/us/symbol_addrs.txt"] and got["moves"] == 1
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    assert (root / "versions/us/symbol_addrs.txt").read_text().startswith("osYield = 0x8000;")
+    assert "func_80001()" in (root / "src/a.c").read_text() and "osYield();" in (root / "src/a.c").read_text()
+
+
+def test_a_source_and_a_header_rename_are_rename_diffs_and_the_includes_follow(tmp_path):
+    root = _repo(
+        tmp_path,
+        {"src/a.c": '#include "x/a.h"\n', "include/x/a.h": "int a;\n", "src/c.c": "#include <x/a.h>\n"},
+    )
+    modules = {"m": {"source": "src/a.c", "header": "include/x/a.h"}}
+    moves = [
+        {"op": "source", "subject": "m", "target": "src/game/m.c"},
+        {"op": "header", "subject": "m", "target": "include/game/m.h"},
+    ]
+    got = structure.build(root, modules=modules, moves=moves, owner={}.get)
+    assert "rename from src/a.c" in got["patch"] and "rename to include/game/m.h" in got["patch"]
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    assert (root / "src/game/m.c").read_text() == '#include "game/m.h"\n'
+    assert (root / "src/c.c").read_text() == "#include <game/m.h>\n"
+    assert not (root / "src/a.c").exists() and (root / "include/game/m.h").exists()
+
+
+def test_a_header_move_edits_the_include_lines(tmp_path):
+    root = _repo(tmp_path, {"src/a.c": '#include "old.h"\n#include "other.h"\n', "include/old.h": "int a;\n"})
+    got = structure.build(root, [{"op": "file", "subject": "include/old.h", "target": "include/types.h"}], {}.get, {})
+    _check(root, got["patch"])
+    assert (root / "src/a.c").read_text() == '#include "types.h"\n#include "other.h"\n'
+
+
+def _fake_unbake(monkeypatch, answers):
+    calls = []
+
+    def run(config, host, *args):
+        calls.append(args)
+        if args[0] == "map":
+            return {"ok": True, "result": {"path": "map.json"}, "findings": []}, ""
+        return answers.pop(0), ""
+
+    monkeypatch.setattr(structure, "_unbake", run)
+    return calls
+
+
+def test_structure_prints_the_patch_files_and_moves_and_saves_the_patch(tmp_path, monkeypatch):
+    (tmp_path / "map.json").write_text(DATA.read_text(encoding="utf-8"))
+    calls = _fake_unbake(monkeypatch, [])
+    owners: dict[str, str] = {}
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path), owners=owners)
+    got = structure.run(config, {"host": None, "segment": None})
+    out = json.loads(got["stream"])
+    assert set(out) == {"patch", "files", "moves"} and out["moves"] == got["moves"] and calls == [("map",)]
+    assert (tmp_path / got["path"]).read_text() == got["patch"] and got["path"] == ".unbake/recipe/patches/patch-1.diff"
+    assert got["modules"] == {"before": 3, "after": 6}
+
+
+def test_apply_runs_git_apply_then_unbake_sync_and_returns_syncs_result(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.c": "INCLUDE_ASM(main, func_8000);\n"})
+    built = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
+    saved = root / ".unbake/recipe/patches"
+    structure.write(saved / "patch-1.diff", built["patch"])
+    calls = _fake_unbake(monkeypatch, [{"ok": True, "result": {"changed": ["Makefile"]}, "findings": []}])
+    got = structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    assert calls == [("sync",)] and got["changed"] == ["Makefile"] and got["left"] == 0
+    assert "osYield" in (root / "src/a.c").read_text() and (saved / "patch-1.applied").exists()
+    with pytest.raises(Refusal) as caught:
+        structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    assert caught.value.findings[0].action == "recipe structure"
+
+
+def test_a_patch_git_refuses_stays_saved_and_sync_is_not_run(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.c": "x\n"})
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")
+    calls = _fake_unbake(monkeypatch, [])
+    with pytest.raises(Refusal) as caught:
+        structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    assert "git apply refused" in caught.value.findings[0].reason and calls == []
+    assert (root / ".unbake/recipe/patches/patch-1.diff").exists()
+
+
+def test_a_failing_sync_is_refused_with_unbakes_findings(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.c": "x\n"})
+    patch = structure.build(root, [{"op": "symbol", "subject": "x", "target": "y"}], {}.get, {})["patch"]
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", patch)
+    bad = {"ok": False, "result": None, "findings": [{"key": "config.schema", "reason": "schema 3"}]}
+    monkeypatch.setattr(structure, "_unbake", lambda *a: (bad, ""))
+    monkeypatch.setattr(structure, "_refusal", lambda document: Refusal(Finding("config.schema", "schema 3")))
+    with pytest.raises(Refusal) as caught:
+        structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    assert caught.value.findings[0].key == "config.schema"

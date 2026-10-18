@@ -3,12 +3,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-import pytest
-from unbake import headers
-from unbake.contracts import Refusal
-
-from recipemaker import index, ledger
-from recipemaker.index import usage
+from recipemaker import headers, index, ledger
 
 
 def build_world(fakes, monkeypatch, texts):
@@ -51,50 +46,27 @@ def test_next_reads_declarations_alone_and_each_part_is_built_once_per_command(f
     assert idx.callers == idx.callers == {} and calls == ["catalog", "callers"]
 
 
-def scanned(rows):
-    return {"a": [(n, frozenset(), frozenset(c), False, {"accesses": acc}) for n, c, acc in rows]}
-
-
-def test_callers_and_uses_come_from_unbakes_scan_rows(fakes, monkeypatch):
-    monkeypatch.setattr(
-        index.infer,
-        "scan",
-        lambda snap: scanned(
-            [("f", {"g"}, [(0x1004, 4, "lw", "abs", None), (0x1000, 4, "sw", "taken", None)]), ("g", (), [])]
-        ),
-    )
-    snapshot = replace(fakes.snapshot, versions={"a": SimpleNamespace(symbols={"D_1": 0x1000, "D_2": 0x2000})})
+def test_callers_and_uses_come_from_the_assembly_scans(fakes, monkeypatch):
+    rows = [
+        ("f", "", ("g",), (("lw", "D_1", 4), ("lw", "D_80002004", 0), ("sw", "D_9", 0))),
+        ("g", "", (), ()),
+    ]
+    monkeypatch.setattr(index, "_scans", lambda snap: rows)
+    snapshot = replace(fakes.snapshot, versions={"a": SimpleNamespace(symbols={"D_1": 0x1000, "D_2": 0x80002000})})
     assert index._callers(snapshot) == {"g": ("f",)}
-    assert index._uses(snapshot) == {"D_1": (("f", "lw", 4),)}
+    assert index._uses(snapshot) == {"D_1": (("f", "lw", 4),), "D_2": (("f", "lw", 4),)}
 
 
-@pytest.mark.parametrize("holders, expected", [(("a", "b"), "a"), [("b",), "b"], [(), None]])
-def test_usage_reads_a_version_the_member_holds_or_refuses_by_name(fakes, monkeypatch, holders, expected):
-    member = "func_a"
-    item = fakes.snapshot.layout.members[member]
-    item = replace(item, placements=tuple(p for p in item.placements if p.version in holders))
-    snapshot = replace(fakes.snapshot, layout=replace(fakes.snapshot.layout, members={member: item}))
-    calls = []
-
-    def read_usage(snap, name, version):
-        assert name == member and version in snap.layout.members[name].holders()
-        calls.append(version)
-        return {"version": version}
-
-    monkeypatch.setattr(index.types, "usage", read_usage)
-    if expected is None:
-        with pytest.raises(Refusal, match=f"{member} is in no version") as caught:
-            usage(snapshot, member)
-        assert caught.value.findings[0].unit == member
-        assert calls == []
-    else:
-        assert usage(snapshot, member) == usage(snapshot, member) == {"version": expected}
-        assert calls == [expected]
-        if len(holders) > 1:
-            # Changing the preferred holder under the same digest must not reuse the other version's rows.
-            config = replace(snapshot.config, project=replace(snapshot.config.project, names_from="b"))
-            assert usage(replace(snapshot, config=config), member) == {"version": "b"}
-            assert calls == ["a", "b"]
+def test_a_scan_reads_the_calls_and_each_lo_access_with_its_offset(tmp_path):
+    path = tmp_path / "f.s"
+    path.write_text(
+        "    /* 0 80000000 0C000000 */  jal        g\n"
+        "    /* 4 80000004 8C42372C */  lw         $v0, %lo(D_800E372C)($v0)\n"
+        "    /* 8 80000008 AC22372C */  sw         $v0, %lo(D_1 + 0x8)($at)\n"
+    )
+    name, _, calls, accesses = index._scan((str(path), "f", ""))
+    assert (name, calls) == ("f", ("g",))
+    assert accesses == (("lw", "D_800E372C", 0), ("sw", "D_1", 8))
 
 
 def test_scope_sees_the_globals_of_included_headers_transitively_and_other_record_globals_by_address(monkeypatch):

@@ -11,10 +11,26 @@ from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 
-from unbake import compare, effort, headers, layout, native, pool, process, recipes, report, store, symbols, versions
-from unbake.contracts import Config, Finding, Json, Member, Placement, Refusal, Snapshot, UnitSpec, digest
+from unbake import api
+from unbake.contracts import Config, Finding, Json, Refusal, Snapshot, digest
 
-from recipemaker import errors, gbi, idiom64, index, m2c_target, records, repair, resource, signatures, state
+from recipemaker import (
+    errors,
+    gbi,
+    headers,
+    host,
+    idiom64,
+    index,
+    judge,
+    m2c_target,
+    records,
+    repair,
+    resource,
+    signatures,
+    state,
+    world,
+)
+from recipemaker.world import Member, Placement
 
 C_TYPES = {
     "I": "unsigned int",
@@ -31,11 +47,11 @@ _ACCESS = {"lb": "b", "lbu": "B", "lh": "h", "lhu": "H", "lwc1": "f", "swc1": "f
 def _tables(snapshot: Snapshot, version: str) -> dict[str, str]:
     """Each jump table the layout holds as a data member of the version, as assembly read from its ROM bytes."""
     record, found = snapshot.versions[version], {}
-    for name, member in snapshot.layout.members.items():
+    for name, member in world.of(snapshot).members.items():
         places = sorted((p for p in member.placements if p.version == version), key=lambda p: p.vram)
         if not (name.startswith("jtbl_") and places):
             continue
-        raw = b"".join(versions.rom_bytes(record, p.rom_start, p.rom_end) for p in places)
+        raw = b"".join(world.rom_bytes(record, p.rom_start, p.rom_end) for p in places)
         if places[0].vram % 4 or len(raw) % 4:  # m2c cannot read this table: say so with its first word as bytes
             rows = [f"  .byte 0x{b:02X}" for b in raw]
         else:
@@ -48,13 +64,13 @@ def _inside(snapshot: Snapshot, version: str, name: str) -> str:
     """A jump table inside a larger data member, read from the version's symbol address to the next symbol."""
     record = snapshot.versions[version]
     start = record.symbols.get(name)
-    places = [p for m in snapshot.layout.members.values() for p in m.placements if p.version == version]
+    places = [p for m in world.of(snapshot).members.values() for p in m.placements if p.version == version]
     held = next((p for p in places if start is not None and p.vram <= start < p.vram + p.size), None)
     if start is None or held is None:
         why = "no address in the version's symbols" if start is None else "no data member holds it"
         return f"/* unresolved {name}: {why} */"
     stop = min([v for v in record.symbols.values() if v > start] + [held.vram + held.size])
-    raw = versions.rom_bytes(record, held.rom_start + start - held.vram, held.rom_start + stop - held.vram)
+    raw = world.rom_bytes(record, held.rom_start + start - held.vram, held.rom_start + stop - held.vram)
     rows = [f"  .word .Lauto_{int.from_bytes(raw[i : i + 4], 'big'):08X}" for i in range(0, len(raw) - 3, 4)]
     return "\n".join([f"dlabel {name}", *rows, f"enddlabel {name}"])
 
@@ -80,7 +96,7 @@ def _retarget(wanted: list[str], text: str) -> list[str]:
 def _jumps(snapshot: Snapshot, member: str, version: str, asm: Path) -> list[str]:
     """The files m2c reads for `member`: its assembly and the jump tables it reads, with each table target labelled."""
     root, text = snapshot.config.project.root, asm.read_text(errors="replace")
-    tables = effort.memo(("draft.jtbl", snapshot.digest, version), lambda: _tables(snapshot, version))
+    tables = api.memo(("draft.jtbl", snapshot.digest, version), lambda: _tables(snapshot, version))
     names = list(dict.fromkeys(re.findall(r"%lo\((jtbl_\w+)\)", text)))
     wanted = [tables[n] if n in tables else _inside(snapshot, version, n) for n in names]
     if not wanted:
@@ -95,8 +111,8 @@ def _jumps(snapshot: Snapshot, member: str, version: str, asm: Path) -> list[str
         for line in text.splitlines(keepends=True)
     ]
     out = root / ".unbake/recipe/jumps" / member
-    store.write(out / asm.name, "".join(lines).encode())
-    store.write(out / "tables.s", (".section .rodata\n" + "\n".join(wanted) + "\n").encode())
+    host.write(out / asm.name, "".join(lines).encode())
+    host.write(out / "tables.s", (".section .rodata\n" + "\n".join(wanted) + "\n").encode())
     return [str(out / asm.name), str(out / "tables.s")]
 
 
@@ -104,10 +120,10 @@ def _m2c_call(item: tuple[Snapshot, str, str, bool, Path]) -> tuple[list[str], s
     """m2c's argv and its cache key."""
     snapshot, member, version, stack_structs, context = item
     config = snapshot.config
-    unit = layout.unit_of(snapshot, member)
+    unit = world.unit_of(snapshot, member)
     target = m2c_target(unit.toolchain if unit is not None else config.project.toolchain)
     argv = [str(state.tool("m2c")), "-t", target, "--valid-syntax", *["--stack-structs"] * stack_structs]
-    asm = versions.asm_path(config, version, member)
+    asm = world.asm_path(config, version, member)
     files = _jumps(snapshot, member, version, asm)
     argv += ["--context", str(context), "--function", _label(asm.read_text(errors="replace"), member), *files]
     return argv, digest((argv, [Path(p).read_bytes() for p in files], os.stat(argv[0]).st_mtime_ns))
@@ -136,8 +152,8 @@ def _misaligned(config: Config, member: str) -> str:
 def _function_text(item: tuple[Snapshot, str, str, bool, Path]) -> str:
     argv = _m2c_call(item)[0]
     config, member, version = item[0].config, item[1], item[2]
-    with effort.stage(f"m2c {member} {'stack' if item[3] else 'flat'}"):  # one path per job, not one shared by all
-        result = process.run("m2c", argv, cwd=config.project.root, tmp=process.scratch(config.project.root))
+    with host.stage(f"m2c {member} {'stack' if item[3] else 'flat'}"):  # one path per job, not one shared by all
+        result = host.run([str(a) for a in argv], config.project.root, config)
     if result.exit != 0 or not result.stdout.strip():
         reason = _failure(result.stdout.decode(errors="replace")) or "; ".join(
             result.stderr.decode(errors="replace").strip().splitlines()[-3:]
@@ -145,11 +161,11 @@ def _function_text(item: tuple[Snapshot, str, str, bool, Path]) -> str:
         misaligned = _misaligned(config, member)
         reason = "; ".join(filter(None, [reason or f"m2c exited {result.exit} with no output", misaligned]))
         raise Refusal(Finding("draft.m2c", reason, unit=member, versions=(version,)))
-    return result.stdout.decode(errors="replace")
+    return bytes(result.stdout).decode(errors="replace")
 
 
 def _member_of(snapshot: Snapshot, member: str) -> Member:
-    entry = snapshot.layout.members.get(member)
+    entry = world.of(snapshot).members.get(member)
     if entry is None or not entry.placements:
         raise Refusal(Finding("land.request", f"{member} is not a member of this layout", unit=member))
     return entry
@@ -164,7 +180,7 @@ def data_image(snapshot: Snapshot, member: str) -> tuple[Member, str, tuple[Plac
     if not placements:
         raise Refusal(Finding("draft.data", "no ROM bytes to draft", unit=entry.name, versions=(version,)))
     record = snapshot.versions[version]
-    return entry, version, placements, b"".join(versions.rom_bytes(record, p.rom_start, p.rom_end) for p in placements)
+    return entry, version, placements, b"".join(world.rom_bytes(record, p.rom_start, p.rom_end) for p in placements)
 
 
 def data_symbol(snapshot: Snapshot, entry: Member, version: str, vram: int) -> str:
@@ -211,7 +227,7 @@ def _into(
         spans = sorted(
             (
                 (p.vram, p.vram + p.size, m)
-                for m in snapshot.layout.members.values()
+                for m in world.of(snapshot).members.values()
                 for p in m.placements
                 if p.version == version and p.size
             ),
@@ -242,9 +258,7 @@ def _agrees(
     for other in sorted({p.version for p in entry.placements} - {version}):
         if other not in images:
             parts = sorted((p for p in entry.placements if p.version == other and p.section != ".bss"), key=_vram)
-            images[other] = b"".join(
-                versions.rom_bytes(snapshot.versions[other], p.rom_start, p.rom_end) for p in parts
-            )
+            images[other] = b"".join(world.rom_bytes(snapshot.versions[other], p.rom_start, p.rom_end) for p in parts)
         image = images[other]
         same = _into(snapshot, held, other, int.from_bytes(image[at : at + 4], "big")) if len(image) >= at + 4 else None
         if same is None or (same[0].name, same[1]) != (hit[0].name, hit[1]):
@@ -292,8 +306,47 @@ def data_text(snapshot: Snapshot, member: str) -> str:
     return "\n".join([*head, f"{qualifier}{C_TYPES[code]} {symbol}[] = {{", *lines, "};", ""])
 
 
+def _delay_slot(word: int) -> bool:  # a MIPS jump or branch: the next word is its delay slot
+    op, rt = word >> 26, word >> 16 & 31
+    return (
+        (op == 0 and word & 62 == 8)
+        or (op == 1 and rt & 12 == 0)
+        or 2 <= op <= 7
+        or 20 <= op <= 23
+        or (16 <= op <= 18 and word >> 21 & 31 == 8)
+    )
+
+
+def _ends(word: int) -> bool:  # an unconditional jr, j or b: execution never reaches the next member
+    return (word >> 26 == 0 and word & 0x3F == 8) or word >> 26 == 2 or word >> 16 == 0x1000
+
+
+def split_slot(snapshot: Snapshot, member: str) -> str | None:
+    """The member that `member` runs into: the one holding its last delay slot, or the one it falls through into."""
+    layout = world.of(snapshot)
+    for place in layout.members[member].placements:
+        if place.section != ".text" or place.size < 4:
+            continue
+        version = snapshot.versions[place.version]
+        last = int.from_bytes(world.rom_bytes(version, place.rom_end - 4, place.rom_end), "big")
+        pair = int.from_bytes(world.rom_bytes(version, place.rom_end - 8, place.rom_end - 4), "big")
+        if _delay_slot(last) or (place.size >= 8 and not _ends(pair)) or (place.size == 4 and last):
+            starts = api.memo(("recipe.text-starts", snapshot.digest), lambda: _text_starts(layout))
+            return starts.get((place.version, place.rom_end), "an unowned range")
+    return None
+
+
+def _text_starts(layout: world.Layout) -> dict[tuple[str, int], str]:
+    starts: dict[tuple[str, int], str] = {}
+    for name, entry in layout.members.items():
+        for p in entry.placements:
+            if p.section == ".text":
+                starts.setdefault((p.version, p.rom_start), name)
+    return starts
+
+
 def refuse_fragment(snapshot: Snapshot, member: str) -> None:
-    successor = report.split_slot(snapshot, member)
+    successor = split_slot(snapshot, member)
     if successor is not None:
         reason = f"{member} ends on a branch or jump whose delay slot is the first word of {successor}"
         raise Refusal(Finding("member.split-delay-slot", reason, unit=member))
@@ -306,7 +359,7 @@ _NOISE = re.compile(r"[ \t]*/\* (?:extern|size =? ?0x[0-9A-Fa-f]+) \*/|/\* 0x[0-
 def declared_names(snapshot: Snapshot) -> dict[str, tuple[str, int, str]]:
     """Where each name a draft may use is declared or, for a macro, defined, read once per snapshot."""
 
-    return effort.memo(("draft.declared", snapshot.digest), lambda: {**macros(snapshot), **headers.catalog(snapshot)})
+    return api.memo(("draft.declared", snapshot.digest), lambda: {**macros(snapshot), **headers.catalog(snapshot)})
 
 
 def macros(snapshot: Snapshot) -> dict[str, tuple[str, int, str]]:
@@ -319,7 +372,7 @@ def macros(snapshot: Snapshot) -> dict[str, tuple[str, int, str]]:
             for m in re.finditer(r"^#define (\w+)", snapshot.read(path).decode(errors="replace"), re.M)
         }
 
-    return effort.memo(("draft.macros", snapshot.digest), read)
+    return api.memo(("draft.macros", snapshot.digest), read)
 
 
 def include_paths(declared: dict[str, tuple[str, int, str]], text: str) -> list[str]:
@@ -382,7 +435,7 @@ def _headers(snapshot: Snapshot) -> tuple[dict[str, str], dict[str, str], dict[s
         texts = {p: snapshot.read(p).decode(errors="replace") for p in headers.sources(snapshot)}
         return texts, records.where(texts), records.aliases(texts)
 
-    return effort.memo(("draft.records", snapshot.digest), read)
+    return api.memo(("draft.records", snapshot.digest), read)
 
 
 def header_texts(snapshot: Snapshot) -> dict[str, str]:
@@ -414,10 +467,8 @@ def _structs(snapshot: Snapshot, extras: dict[str, bytes]) -> dict[str, str]:
 
 def _helpers(snapshot: Snapshot, version: str) -> dict[str, str]:
     """The 64-bit libgcc helpers the project names, by every name the assembly calls them."""
-    try:
-        table = symbols.load(snapshot.read, snapshot.config.project.versions)
-    except Refusal:  # a project without a readable symbol table names no helper
-        return {}
+    facts = api.symbols(snapshot.config, version)
+    table = {name: {version: facts[name][0]} for name in idiom64.HELPERS if name in facts}
     return idiom64.aliases(table, version)
 
 
@@ -426,27 +477,28 @@ def with_macros(text: str) -> str:
     return resource("tables/m2c_macros.h").decode() + text if "M2C_" in text else text
 
 
-def bind(snapshot: Snapshot, path: Path, member: str) -> tuple[UnitSpec, Snapshot]:
+def measured(path: Path) -> Path:
+    """The file unbake measures for a candidate: itself, or a copy with m2c's macros in front when it uses them."""
     if "M2C_" in (text := path.read_text(encoding="utf-8")):
         path = path.with_suffix("") / "measured.c"
-        store.write(path, with_macros(text).encode())
-    return compare.bind(snapshot, path, member)
+        host.write(path, with_macros(text).encode())
+    return path
 
 
-def _checked(item: tuple[Snapshot, str, str, Json]) -> Json:
-    """A pool job: the draft with why it does not compile under the project's toolchain ("" when it does)."""
-    snapshot, member, version, draft = item
-    text = draft["text"]
-    unit, writes = layout.unit_options(snapshot, member, with_macros(text).encode())[-1]
-    with store.work(snapshot.config) as work, effort.stage(f"compile {member} {digest(text)[:8]}"):
-        proof = native.prove(
-            layout.overlay(snapshot, {**draft.get("extras", {}), **writes}),
-            unit,
-            version,
-            recipes.resolve(snapshot.config, unit, {}),
-            work,
-        )[0]
-    return {**draft, "reason": next((m for m in proof.missing if errors.unbuilt(m)), "")}
+def _checked(snapshot: Snapshot, member: str, drafts: list[Json]) -> list[Json]:
+    """Each draft with why it does not compile under the project's toolchain ("" when it does), all screened in one
+    unbake call."""
+    with host.work(snapshot.config) as work:
+        rows = []
+        for n, draft in enumerate(drafts):
+            file = work / f"draft-{n}.c"
+            host.write(file, with_macros(draft["text"]).encode())
+            rows.append((file, member, draft.get("extras", {})))
+        verdicts = judge.score_many(snapshot.config, rows)
+    return [
+        {**d, "reason": next((m for p in v.proofs for m in p.missing if errors.unbuilt(m)), "")}
+        for d, v in zip(drafts, verdicts, strict=True)
+    ]
 
 
 def _text_key(job: tuple[Snapshot, str, str, bool, Path]) -> str:
@@ -461,7 +513,7 @@ def create(snapshot: Snapshot, member: str, out: Path) -> str:
 def drafted(snapshot: Snapshot, member: str, out: Path) -> tuple[str, dict[str, bytes]]:
     """Draft the function `member` into `out`: m2c and prototypes in one dispatch, then compile probes. Returns why it
     is no draft ("" when it compiles) and the header edits it compiles with (the struct fields m2c read)."""
-    with effort.stage("draft.create"):
+    with host.stage("draft.create"):
         config = snapshot.config
         entry = _member_of(snapshot, member)
         refuse_fragment(snapshot, member)
@@ -470,13 +522,13 @@ def drafted(snapshot: Snapshot, member: str, out: Path) -> tuple[str, dict[str, 
         callees = [n for n in dict.fromkeys(re.findall(r"\bjal\s+(\w+)", asm)) if n != member]
         context = signatures.context(snapshot, version)  # built once here, never inside each m2c job
         jobs = [(snapshot, member, version, s, context) for s in (True, False)]
-        texts = pool.map(config, "draft.m2c", _function_text, jobs, _text_key)
+        texts = api.pool_map(config, "draft.m2c", _function_text, jobs, _text_key)
         known = signatures.declarations(snapshot, [member, *callees])
         helpers = _helpers(snapshot, version)
         stages = list(
             {s["text"]: s for s in _stages(snapshot, member, version, known, callees, texts, helpers)}.values()
         )
-        results = pool.map(config, "draft.compile", _checked, [(snapshot, member, version, s) for s in stages])
+        results = _checked(snapshot, member, stages)
         result = next((r for r in results if not r["reason"]), None) or _dereferenced(
             snapshot, member, version, results
         )
@@ -498,7 +550,7 @@ def _dereferenced(snapshot: Snapshot, member: str, version: str, results: list[J
             fixed = repair.deref(now["text"], now["reason"], skew)
             if fixed == now["text"]:
                 break
-            now = _checked((snapshot, member, version, {**now, "text": fixed}))
+            now = _checked(snapshot, member, [{**now, "text": fixed}])[0]
             if not now["reason"]:
                 return now
     return results[0]
@@ -520,6 +572,6 @@ def skeleton(snapshot: Snapshot, member: str) -> str:
     version = entry.reference(snapshot.config.project.names_from)
     known = signatures.declarations(snapshot, [member]).get(member)
     signature = known.removesuffix(";") if known else f"void {member}(void)"
-    asm = versions.asm_path(snapshot.config, version, member).relative_to(snapshot.config.project.root)
+    asm = world.asm_path(snapshot.config, version, member).relative_to(snapshot.config.project.root)
     wanted = include_paths(declared_names(snapshot), signature)
     return "".join(f'#include "{p}"\n' for p in wanted) + f"\n/* target assembly: {asm} */\n{signature} {{\n}}\n"

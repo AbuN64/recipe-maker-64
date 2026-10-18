@@ -3,7 +3,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from recipemaker import brief, cparse, ledger
+from recipemaker import brief
 from recipemaker.ledger import Left
 
 
@@ -63,21 +63,15 @@ def test_a_longer_build_says_how_many_bytes_longer_and_lists_what_the_proof_miss
     assert "## Why it is not exact\n- built is 16 bytes longer than the target\n- size 64 != 48\n" in text
 
 
-def test_the_twin_is_named_with_its_file_and_what_differs_in_its_version(fakes):
+def test_the_twin_is_named_with_its_file(fakes):
     body = packet(fakes)
     body["twin"] = {
         "function": "func_b",
         "file": "src/b.c",
         "version": "us-rev1",
-        "macros": [["-DVERSION_US"], ["-DVERSION_US_REV1"]],
-        "flags": {"cflags": [["-O2"], ["-O2"]], "cppflags": [["-DX"], []]},
-        "diff": "-lw a\n+lw b",
     }
     text = brief.write(fakes.snapshot, "func_a", body, []).read_text()
     assert "## Twin\nfunc_b in src/b.c (us-rev1); read it: recipe look func_b\n" in text
-    assert "version macros: this -DVERSION_US, twin -DVERSION_US_REV1" in text
-    assert "unit cppflags: this ['-DX'], twin []" in text and "unit cflags" not in text
-    assert "(+):\n-lw a\n+lw b" in text
 
 
 def test_a_refused_landing_prints_its_reason_and_each_distinct_missing_text_once():
@@ -161,19 +155,8 @@ def test_an_address_of_placeholder_base_maps_its_offsets_to_the_neighbour_symbol
     assert "&D_B at +8: that offset is the symbol D_C, not a field" in text
 
 
-def test_a_withheld_member_names_the_versions_its_source_is_fixed_for(fakes):
-    from unbake.contracts import UnitSpec
-
-    fakes.with_units({"src/a.c": UnitSpec("src/a.c", "c", "main", ("func_a",), "gcc-test", {}, ("eu", "eu-x"))})
-    text = brief.write(fakes.snapshot, "func_a", packet(fakes), []).read_text()
-    assert "src/a.c is withheld in eu, eu-x" in text
-
-
 def test_a_neighbour_refusal_names_the_neighbouring_globals_with_their_distance(fakes, monkeypatch):
-    from unbake import types
-
-    rows = {n: {"declaration": f"extern s32 {n};", "size": 4, "section": ".data"} for n in ("D_A", "D_B", "D_C")}
-    monkeypatch.setattr(types, "load", lambda snap: {"function": {}, "global": rows, "struct": {}})
+    rows = ("D_A", "D_B", "D_C")
     declared = {n: ("include/d.h", i, f"extern s32 {n};") for i, n in enumerate(rows)}
     monkeypatch.setattr(brief.index, "get", lambda snap: SimpleNamespace(declarations=declared))
     snapshot = _with_symbols(fakes, D_B=0x100, D_A=0xFC, D_C=0x108)
@@ -222,15 +205,15 @@ def test_a_global_used_as_a_pointer_and_a_callee_with_more_arguments_than_declar
 def test_a_data_brief_shows_the_symbol_home_bytes_with_ascii_and_each_reference(fakes, monkeypatch):
     from recipemaker import draft, index
 
-    place = fakes.snapshot.layout.members["data_d"].placements[0]
-    entry = fakes.snapshot.layout.members["data_d"]
+    place = fakes.layout.members["data_d"].placements[0]
+    entry = fakes.layout.members["data_d"]
     monkeypatch.setattr(draft, "data_image", lambda s, m: (entry, "a", (place,), b"Hi!\x00\x00\x00\x00\x01"))
     version = replace(fakes.snapshot.versions["a"], symbols={"data_d": place.vram})
     fakes.snapshot = replace(fakes.snapshot, versions={**fakes.snapshot.versions, "a": version})
     uses = {"data_d": (("func_a", "lbu", 0), ("func_a", "lw", 4), ("func_b", "lh", 2))}
     monkeypatch.setattr(index, "get", lambda s: SimpleNamespace(declarations={}, uses=uses))
     text = "\n".join(brief.data_facts(fakes.snapshot, "data_d"))
-    assert "symbol: data_d (a); .data" in text and "definition goes in src/data_d.c" in text
+    assert "symbol: data_d (a); .data" in text and "definition goes in src/main.c" in text
     assert "+0x0000  48692100 00000001" in text and "|Hi!.....|" in text
     assert "- func_a: lbu +0x0 (u8), lw +0x4 (32)" in text and "- func_b: lh +0x2 (s16)" in text
 
@@ -250,30 +233,5 @@ def test_an_entry_in_front_of_the_frame_in_one_version_only_is_named_up_front():
     got = brief.entry_artifacts(snapshot, packet)
     assert got == [
         "eu: extra instructions at entry not present in other versions (addu $t0, $a3; addiu $a2, $sp, 0x18); "
-        "land the others with eu withheld"
+        "wrap the difference in #if VERSION_EU"
     ]
-
-
-def test_the_brief_says_what_landed_code_knows_of_the_addresses_and_arguments(fakes, monkeypatch):
-    row = {
-        "address": 0x1000,
-        "names": ["D_1"],
-        "readers": [("func_w", True)],
-        "landed_readers": 1,
-        "spellings": [("src/a.c", 3, "s32"), ("src/b.c", 4, "f32"), ("src/c.c", 5, "s32")],
-        "span": {"start": 0x1000, "size": 0x40, "writer": "func_w", "stores": 5, "fills": 1},
-    }
-    use = {"addresses": [row], "args": {"a0": {"offsets": [4, 8], "landed_callers": ["func_c"]}}, "calls": []}
-    monkeypatch.setattr(brief.index, "usage", lambda snapshot, member: use)
-    big = ledger.Identity(
-        (cparse.Layout("Big", "h.h", (cparse.Field("a", 4, 4, 1, "i"), cparse.Field("b", 8, 0x18, 1, "i"))),), ()
-    )
-    big = ledger.Identity(big.views, big.views[0].fields)
-    monkeypatch.setattr(brief.index, "get", lambda snapshot: SimpleNamespace(declarations={}, identities=(big,)))
-    monkeypatch.setattr(brief.layout, "unit_of", lambda snapshot, name: SimpleNamespace(path="src/w.c"))
-    snapshot = replace(fakes.snapshot, versions={"a": SimpleNamespace(symbols={"D_1": 0x1000})})
-    got = brief.landed_facts(snapshot, "func_a")
-    assert got[0] == "D_1..+0x40 is written together by func_w (src/w.c): 5 stores, 1 fills"
-    assert "D_1: no header type; spelled `s32`, `f32`; landed readers: func_w" in got
-    assert "D_1 is spelled 2 ways: declaration item (recipe next --kind declaration)" in got
-    assert "a0: offsets 0x4, 0x8; landed callers: func_c; types: Big (2 of 2 offsets, 0x20 bytes)" in got

@@ -7,10 +7,9 @@ import difflib
 import re
 from pathlib import Path
 
-from unbake import headers, layout, store, types
 from unbake.contracts import Config, Json, Snapshot
 
-from recipemaker import errors, index, ladder, state, twin
+from recipemaker import errors, headers, host, index, ladder, state, twin, world
 
 _BLOCKED = 10  # blocked items named in the brief
 _SPELLING = re.compile(r"^[^:]*: (\S+?):(\d+) (.*)$")
@@ -28,7 +27,7 @@ def conflicts(config: Config, snapshot: Snapshot) -> list[Json]:
         for name in symbols:
             waiting.setdefault(name, []).append(item)
     rows = []
-    for f in types.conflicts(snapshot):
+    for f in headers.disagreements(snapshot)[1]:
         found = f.symptoms.get("definition")
         rows.append(
             {
@@ -43,7 +42,7 @@ def conflicts(config: Config, snapshot: Snapshot) -> list[Json]:
 
 
 def folder(config: Config, name: str) -> Path:
-    return config.project.root / ".unbake/recipe/work" / f"{store.stem(name)}.decl"
+    return config.project.root / ".unbake/recipe/work" / f"{host.stem(name)}.decl"
 
 
 def is_item(config: Config, name: str) -> bool:
@@ -51,17 +50,11 @@ def is_item(config: Config, name: str) -> bool:
 
 
 def _evidence(snapshot: Snapshot, name: str) -> list[str]:
-    unit = layout.unit_of(snapshot, name)
+    unit = world.unit_of(snapshot, name)
     source = index.source(snapshot, unit.path) if unit else ""
     head = twin.function(source, name) if source else None
     out = [f"defined in {unit.path}: {head.split('{')[0].strip()}"] if head and unit else []
-    doc = types.load(snapshot)
-    for kind in ("function", "global"):
-        row = doc[kind].get(name)
-        if row and "declaration" in row:
-            extra = ", ".join(f"{k} {row[k]}" for k in ("size", "section", "evidence") if k in row)
-            out.append(f"types.toml {kind}: {row['declaration']}" + (f" ({extra})" if extra else ""))
-    return out or ["no landed definition and no types.toml row: choose the type from how the callers use it"]
+    return out or ["no landed definition: choose the type from how the callers use it"]
 
 
 def _headers(snapshot: Snapshot, row: Json) -> tuple[list[str], str]:
@@ -69,7 +62,7 @@ def _headers(snapshot: Snapshot, row: Json) -> tuple[list[str], str]:
     today, else the first header the defining unit includes."""
     spelled = sorted({p for p, _, _ in row["spellings"]})
     known = set(headers.sources(snapshot))
-    unit = layout.unit_of(snapshot, row["name"])
+    unit = world.unit_of(snapshot, row["name"])
     texts = [index.source(snapshot, p) for p in ([unit.path] if unit else spelled) if p.endswith(".c")]
     names = (n for t in texts for n in re.findall(r'^#include "([^"]+)"', t, re.M))
     included = [p for p in dict.fromkeys(f"include/{n}" for n in names) if p in known]
@@ -131,8 +124,8 @@ def take(config: Config, snapshot: Snapshot, row: Json, now: float) -> Json:
     """Lease the declaration item `row` names and write its work folder."""
     where = folder(config, row["name"])
     for path in sorted({p for p, _, _ in row["spellings"]} | set(_headers(snapshot, row)[0])):
-        store.write(where / path, _canonical(path, snapshot.peek(path) or b"", row))
-    store.write(where / "brief.md", _brief(snapshot, row, where).encode())
+        host.write(where / path, _canonical(path, snapshot.peek(path) or b"", row))
+    host.write(where / "brief.md", _brief(snapshot, row, where).encode())
     lease = state.take(config, row["name"], now)
     files = len({p for p, _, _ in row["spellings"]})
     return {
@@ -141,7 +134,6 @@ def take(config: Config, snapshot: Snapshot, row: Json, now: float) -> Json:
         "size": 0,
         "regions": 0,
         "why": f"declared {len(row['spellings'])} ways in {files} files; blocks {len(row['items'])} items",
-        "withheld": [],
         "aims": [],
         "evidence": "",
         "brief": str(where / "brief.md"),
@@ -204,14 +196,14 @@ def _drop_repeats(snapshot: Snapshot, edits: dict[str, bytes]) -> tuple[dict[str
 
 def _score(config: Config, name: str) -> float:
     return max(
-        (state.worst(r["score"]) for r in store.rows(config, "recipe/tries") if r["item"] == name),
+        (state.worst(r["score"]) for r in host.rows(config, "recipe/tries") if r["item"] == name),
         default=0.0,
     )
 
 
 def run(config: Config, name: str, now: float) -> Json:
     """Prove the edited copies as one change set and land it when every touched unit is exact."""
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     edits = _edits(config, snapshot, name)
     if not edits:
         raise state.stop(
@@ -228,7 +220,7 @@ def run(config: Config, name: str, now: float) -> Json:
             reason, action = f"{path} holds {hits[0][1]} on line {hits[0][3]}", f"fix it, then run: recipe try {name}"
             raise state.stop(hits[0][0], reason, unit=name, action=action)
     edits, fixed = _drop_repeats(snapshot, edits)
-    unit = snapshot.layout.units[_primary(snapshot, edits)]
+    unit = world.of(snapshot).units[_primary(snapshot, edits)]
     proofs, drain = ladder.land_set(config, snapshot, unit, edits)
     score = {v: round(min(p.score for p in proofs if p.version == v), 4) for v in sorted({p.version for p in proofs})}
     landed = ladder.commits(drain).get("publish", "")

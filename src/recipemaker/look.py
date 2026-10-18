@@ -5,12 +5,9 @@ from __future__ import annotations
 import difflib
 from typing import Any
 
-from unbake import effort, headers, layout, types
 from unbake.contracts import Config, Json, Snapshot
 
-from recipemaker import index
-
-_ROWS = 6  # usage rows shown
+from recipemaker import headers, host, index, world
 
 
 def _hex(value: int) -> str:
@@ -22,14 +19,12 @@ def _answer(name: str, kind: str, text: str, where: str, **more: Any) -> Json:
 
 
 def _function(snapshot: Snapshot, name: str, idx: index.Index) -> Json | None:
-    row = types.load(snapshot)["function"].get(name)
     declared = idx.declarations.get(name)
-    if row is None and (declared is None or "(" not in declared[2]):
+    if declared is None or "(" not in declared[2]:
         return None
-    unit = layout.unit_of(snapshot, name)
-    where = f"{declared[0]}:{declared[1]}" if declared else ""
-    text = (row["signature"] + ";") if row else declared[2] if declared else ""
-    extra = {"landed": unit.path if unit else "", "evidence": row["evidence"] if row else "declared"}
+    unit = world.unit_of(snapshot, name)
+    where, text = f"{declared[0]}:{declared[1]}", declared[2]
+    extra = {"landed": unit.path if unit else "", "evidence": "declared"}
     return _answer(name, "function", text, where, seen_in=list(idx.callers.get(name, ())), **extra)
 
 
@@ -49,36 +44,22 @@ def _type(name: str, idx: index.Index) -> Json | None:
     return _answer(name, "type", text, where, fields=rows, seen_in=[v.path for v in found.views])
 
 
-def _reach(snapshot: Snapshot, name: str, item: str) -> int | None:
-    """The largest offset from `name` that the leased item's accesses reach, from unbake's usage rows."""
-    if not item:
-        return None
-    start = snapshot.versions[index.reference(snapshot, item)].symbols.get(name)
-    rows = index.usage(snapshot, item)["addresses"]
-    return max((r["address"] - start for r in rows if r["base"] and r["base"][0] == name), default=None)
-
-
-def _global(snapshot: Snapshot, name: str, idx: index.Index, item: str) -> Json | None:
-    row = types.load(snapshot)["global"].get(name)
+def _global(snapshot: Snapshot, name: str, idx: index.Index) -> Json | None:
     declared = idx.declarations.get(name)
-    landed = [e for e in headers.externs(snapshot).get(name, []) if not e[0].startswith("src/fuzzy/")]
-    if row is not None:
-        text, where, size = row["declaration"], f"types.toml ({row['evidence']})", ""
-    elif declared is not None and "(" not in declared[2]:
-        text, where, size = declared[2], f"{declared[0]}:{declared[1]}", ""
+    landed = headers.externs(snapshot).get(name, [])
+    if declared is not None and "(" not in declared[2]:
+        text, where = declared[2], f"{declared[0]}:{declared[1]}"
     elif landed:
-        text, where, size = "", f"{landed[0][0]}:{landed[0][1]}", ""
+        text, where = "", f"{landed[0][0]}:{landed[0][1]}"
     else:
         return None
     text += "".join(f"{'; ' if text else ''}declared in the landed source {p}:{n} as `{t}`" for p, n, t in landed[:3])
-    if (top := _reach(snapshot, name, item)) is not None:
-        text += f"; {name} {size}the leased function reaches +0x{top:X}"
-    return _answer(name, "global", text, where, facts=[*_conflict(snapshot, name), *_usage(snapshot, name)])
+    return _answer(name, "global", text, where, facts=[*_conflict(snapshot, name), *_usage(name, idx)])
 
 
 def _conflict(snapshot: Snapshot, name: str) -> list[str]:
     """Every declaration the census finds in disagreement for `name`, and which one it treats as authoritative."""
-    found = next((f for f in types.conflicts(snapshot) if f.unit == name), None)
+    found = next((f for f in headers.disagreements(snapshot)[1] if f.unit == name), None)
     if found is None:
         return []
     said = found.symptoms.get("definition")
@@ -86,38 +67,18 @@ def _conflict(snapshot: Snapshot, name: str) -> list[str]:
     return [f"conflict: {row}" for row in found.missing] + [f"authoritative: {wins}"]
 
 
-def _row(start: int, r: Json) -> str:
-    who = ", ".join(f"{n}{' (landed)' * landed}" for n, landed in r["readers"][:3]) or "no function"
-    base = f"; reached as {r['base'][0]}+0x{r['base'][1]:X}" if r["base"] else ""
-    span = r["span"]
-    both = (
-        f"; written together by {span['writer']}: {span['stores']} stores, {span['fills']} fills, "
-        f"+0x{span['size']:X} bytes"
-        if span
-        else ""
-    )
-    spelled = f"; {r['spellings'][0][2]}" if r["spellings"] else ""
-    return f"+0x{r['address'] - start:X} {r['how']} {r['width']} bytes: {who}{spelled}{base}{both}"
-
-
-def _usage(snapshot: Snapshot, name: str) -> list[str]:
-    """The versions that name the symbol and, from unbake's usage rows, who touches it and how."""
-    found = types.usage_at(snapshot, name)
-    have = [v for v in snapshot.versions if v in found]
-    if not have:
-        return []
-    missing = [v for v in snapshot.versions if v not in found]
-    named = f"named in: {', '.join(have)}" + f"; not in: {', '.join(missing)}" * bool(missing)
-    start = snapshot.versions[have[0]].symbols[name]
-    return [named, *(_row(start, r) for r in found[have[0]][:_ROWS])]
+def _usage(name: str, idx: index.Index) -> list[str]:
+    """Who touches the symbol in the names version, and how: the functions and mnemonics of its %lo accesses."""
+    rows = idx.uses.get(name, ())
+    return [f"+0x{offset:X} {mnemonic}: {who}" for who, mnemonic, offset in sorted(set(rows), key=lambda r: r[2])[:6]]
 
 
 def _unknown(snapshot: Snapshot, name: str, idx: index.Index) -> Json:
     """A name no project header defines, and the nearest names the project does define."""
     known = {*idx.declarations, *(n.removeprefix("struct ") for i in idx.identities for n in i.names)}
-    near = difflib.get_close_matches(name, known | types.load(snapshot)["global"].keys(), 5)
+    near = difflib.get_close_matches(name, known, 5)
     nearest = ", ".join(f"{n} ({idx.declarations[n][0]})" if n in idx.declarations else n for n in near)
-    member = snapshot.layout.members.get(name)
+    member = world.of(snapshot).members.get(name)
     said = "no header declares it; declare its prototype in your file (from the brief's Types line)"
     text = (
         f"{name} is a function: {said}"
@@ -130,8 +91,8 @@ def _unknown(snapshot: Snapshot, name: str, idx: index.Index) -> Json:
 
 
 def look(config: Config, name: str, item: str = "") -> Json:
-    with effort.stage("recipe.look"):
-        snapshot = layout.capture(config)
+    with host.stage("recipe.look"):
+        snapshot = world.capture(config)
         idx = index.get(snapshot)
-        found = _global(snapshot, name, idx, item) or _function(snapshot, name, idx) or _type(name, idx)
+        found = _global(snapshot, name, idx) or _function(snapshot, name, idx) or _type(name, idx)
         return found or _unknown(snapshot, name, idx)

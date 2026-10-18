@@ -20,7 +20,7 @@ def test_conflicts_are_ranked_by_the_skipped_items_they_wait_on(fakes, monkeypat
     for item, names in (("f1", ["D_A", "D_B"]), ("f2", ["D_B"]), ("f3", ["gX"])):
         state.skip(fakes.config, item, "needs-header-change", "", 0.9, NOW, "", {n: "" for n in names})
     found = [conflict("gX", "src/a.c:3 s32 gX;"), conflict("D_B", "a.h:1 s32 D_B;"), conflict("D_Z", "b.h:2 u8 D_Z;")]
-    monkeypatch.setattr(declare.types, "conflicts", lambda snap: found)
+    monkeypatch.setattr(declare.headers, "disagreements", lambda snap: ({}, found))
     got = declare.conflicts(fakes.config, fakes.snapshot)
     assert [(r["name"], r["items"]) for r in got] == [("D_B", ["f1", "f2"]), ("gX", ["f3"]), ("D_Z", [])]
     assert got[1]["spellings"] == [("src/a.c", 3, "s32 gX;")]
@@ -35,7 +35,7 @@ def test_a_definition_conflict_carries_the_definition_and_ranks_by_consumers_aft
         symptoms={"definition": {"path": "src/f.c", "line": 1, "signature": "s32 func_a(s32 a)"}, "consumers": 5},
     )
     busy = Finding("types.conflict", "gX", unit="gX", missing=("gX: a.h:1 s32 gX;",), symptoms={"consumers": 1})
-    monkeypatch.setattr(declare.types, "conflicts", lambda snap: [busy, fakes_found])
+    monkeypatch.setattr(declare.headers, "disagreements", lambda snap: ({}, [busy, fakes_found]))
     got = declare.conflicts(fakes.config, fakes.snapshot)
     assert [r["name"] for r in got] == ["func_a", "gX"]
     assert got[0]["definition"] == ("src/f.c", 1, "s32 func_a(s32 a)") and got[0]["consumers"] == 5

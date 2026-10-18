@@ -1,9 +1,11 @@
 """recipe name: catalog and tag names need no model, a pack carries checkable evidence, submit refuses by rule."""
 
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
+from r1_fake_api import fake_api  # noqa: F401
 
 from recipemaker import naming, structure
 
@@ -92,8 +94,16 @@ def document():
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    """The moves a verb hands to the patch builder are recorded in `ops`; the builder itself is tested below."""
     monkeypatch.setattr(structure, "evidence", lambda config, host=None: document())
-    return SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path), owners={}, ops=[], real=naming._patch)
+
+    def spy(cfg, doc, moves):
+        config.ops += moves
+        return {"patch": "", "files": [], "moves": len(moves), "path": ""}
+
+    monkeypatch.setattr(naming, "_patch", spy)
+    return config
 
 
 def run(project, action, **more):
@@ -102,8 +112,7 @@ def run(project, action, **more):
 
 
 def moves(project):
-    text = (project.project.root / ".unbake/recipe/structure/moves.jsonl").read_text()
-    return [json.loads(line) for line in text.splitlines()]
+    return project.ops
 
 
 def test_n0_emits_the_catalog_names_as_symbol_moves_and_writes_no_pack(project):
@@ -114,8 +123,6 @@ def test_n0_emits_the_catalog_names_as_symbol_moves_and_writes_no_pack(project):
         {"op": "symbol", "subject": "func_80900010", "target": "osContGetReadData"},
         {"op": "symbol", "subject": "func_80900020", "target": "alSeqpPlay"},
     ]
-    runs = json.loads((project.project.root / ".unbake/recipe/structure/proposal.json").read_text())["runs"]
-    assert runs == [{"segment": "names-N0", "count": 3}]
     assert not list((project.project.root / ".unbake/recipe/name").glob("pack-*"))
 
 
@@ -208,7 +215,7 @@ def test_accepted_rows_become_moves_in_subsystem_module_symbol_order_with_banner
         row("sys_80003000", "audio", ["string 'Mix'"], kind="subsystem"),
     ]
     got = submit(project, rows)
-    assert got["accepted"] == 3 and got["refused"] == 0 and got["batch"] == "names-1"
+    assert got["accepted"] == 3 and got["refused"] == 0
     assert moves(project) == [
         {"op": "source", "subject": "code_80003000", "target": "src/game/main/audio/code_80003000.c"},
         {"op": "header", "subject": "code_80003000", "target": "include/game/main/audio/code_80003000.h"},
@@ -242,17 +249,6 @@ def test_banners_become_candidates_with_the_address_line(project, monkeypatch):
     assert run(project, "banners")["skipped"] == 0  # the source itself is unchanged, so the same candidate again
 
 
-def test_n0_skips_a_rename_the_structure_stream_already_holds(project):
-    root = project.project.root / ".unbake/recipe/structure"
-    root.mkdir(parents=True)
-    (root / "moves.jsonl").write_text(
-        json.dumps({"op": "symbol", "subject": "func_80900010", "target": "osContGetReadData"}) + "\n"
-    )
-    run(project, "next", step="N0")
-    assert [m["subject"] for m in moves(project)].count("func_80900010") == 1
-    assert len([m for m in moves(project) if m["op"] == "symbol"]) == 3
-
-
 def test_a_type_row_becomes_a_type_move_not_a_symbol_move(project, monkeypatch):
     doc = document()
     header = {"path": "include/c.h", "declares": ["Record_func_80004010"], "modules": ["code_80004000"]}
@@ -261,3 +257,27 @@ def test_a_type_row_becomes_a_type_move_not_a_symbol_move(project, monkeypatch):
     got = submit(project, [row("Record_func_80004010", "ActorRecord", ["callee func_80004020"], kind="type")])
     assert got["accepted"] == 1, got
     assert moves(project) == [{"op": "type", "subject": "Record_func_80004010", "target": "ActorRecord"}]
+
+
+def test_n0_writes_a_patch_that_renames_the_symbol_in_symbol_addrs_and_the_sources(project, monkeypatch):
+    monkeypatch.setattr(naming, "_patch", project.real)
+    root = project.project.root
+    (root / "versions/us").mkdir(parents=True)
+    (root / "versions/us/symbol_addrs.txt").write_text("func_80900000 = 0x80900000; // type:func\n")
+    (root / "src").mkdir()
+    (root / "src/a.c").write_text("INCLUDE_ASM(main, func_80900000);\nvoid f(void) { func_80900000(); }\n")
+    got = run(project, "next", step="N0")
+    out = json.loads(got["stream"])
+    assert out["files"] == ["src/a.c", "versions/us/symbol_addrs.txt"] and out["moves"] == got["moves"] == 1
+    assert (root / got["path"]).read_text() == out["patch"] == got["patch"]
+    check = subprocess.run(["git", "-C", str(root), "apply", "--check", "-"], input=out["patch"].encode(), check=False)
+    assert check.returncode == 0 and "osContStartReadData" in out["patch"]
+
+
+def test_submit_prints_the_patch_of_the_accepted_renames(project, monkeypatch):
+    monkeypatch.setattr(naming, "_patch", project.real)
+    root = project.project.root
+    (root / "src").mkdir()
+    (root / "src/c.c").write_text("void func_80004030(void) {}\n")
+    got = submit(project, [row("func_80004030", "Actor_Spawn", ["callee func_80004020"])])
+    assert got["accepted"] == 1 and got["files"] == ["src/c.c"] and "Actor_Spawn" in json.loads(got["stream"])["patch"]

@@ -7,12 +7,15 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from unbake import config as configuration
-from unbake import effort, layout
+from unbake import api
 from unbake.contracts import Snapshot
-from unbake.families.typedebt import fake_name
 
-from recipemaker import cparse, dispatch, draft, gbi, index, ledger, records, twin
+from recipemaker import cparse, dispatch, draft, gbi, index, ledger, records, twin, world
+
+
+def fake_name(name: str) -> bool:
+    """Whether a record name is invented per function: it carries a function symbol."""
+    return bool(re.search(r"func_[0-9A-Fa-f]+", name))
 
 
 @dataclass(frozen=True)
@@ -258,7 +261,7 @@ def _readers(snapshot: Snapshot, table: str, holders: Mapping[str, list[str]], d
 
 def _sibling_type(snapshot: Snapshot, name: str, position: int) -> str:
     """The record type the function `name` declares for parameter `position`: its landed C, else its prototype."""
-    unit = layout.unit_of(snapshot, name)
+    unit = world.unit_of(snapshot, name)
     body = (twin.function(index.source(snapshot, unit.path), name) or "") if unit is not None else ""
     params = parameters(body, name) if body else []
     if position < len(params):
@@ -279,7 +282,7 @@ def _dispatched(
     """What the tables holding `member` show of parameter `position`: a type a sibling entry declares, and what
     reaches the argument register at each indirect call of the functions that read the table."""
     out: list[tuple[str, str]] = []
-    tables, holders = effort.memo(("recipe.tables", snapshot.digest), lambda: dispatch.tables(snapshot))
+    tables, holders = api.memo(("recipe.tables", snapshot.digest), lambda: dispatch.tables(snapshot))
     for table, column, _ in tables.get(member, []):
         out += [(kind, "") for kind in (_sibling_type(snapshot, s, position) for s in column) if kind]
         readers = _readers(snapshot, table, holders)
@@ -313,10 +316,10 @@ def asm_evidence(
     if position > 3 or len(seen) > 4:
         return []
     found = index.get(snapshot)
-    scope, owner, returns = effort.memo(("recipe.program", snapshot.digest), lambda: _program(snapshot))
+    scope, owner, returns = api.memo(("recipe.program", snapshot.digest), lambda: _program(snapshot))
     out = []
     for caller in dict.fromkeys(found.callers.get(member, ())):
-        if layout.unit_of(snapshot, caller) is not None or caller in seen:
+        if world.unit_of(snapshot, caller) is not None or caller in seen:
             continue  # a landed caller shows its types in C
         try:
             code = dispatch.instructions(index.asm(snapshot, caller))
@@ -342,12 +345,11 @@ def asm_evidence(
 def evidence(snapshot: Snapshot, member: str, position: int) -> list[str | None]:
     """Per call of `member`, the record type its argument `position` points at (None: unknown): in a landed caller
     from its C, in a caller still in assembly from what reaches the argument register."""
-    kinds = configuration.load_resource("units.toml")["kind"]
     declared = index.get(snapshot).declarations
     out: list[str | None] = [kind or None for kind, _ in asm_evidence(snapshot, member, position)]
     for caller in dict.fromkeys(index.get(snapshot).callers.get(member, ())):
-        unit = layout.unit_of(snapshot, caller)
-        if unit is None or not kinds[unit.kind]["decompiled"] or unit.path.startswith("src/fuzzy/"):
+        unit = world.unit_of(snapshot, caller)
+        if unit is None:
             continue
         body = twin.function(index.source(snapshot, unit.path), caller) or ""
         local = ledger.declared_types(body)
@@ -597,7 +599,7 @@ def owner_header(snapshot: Snapshot, name: str, member: str = "") -> str:
     """The module header of the unit owning the data symbol `name` in the layout: its own member, else the member of
     the names version whose placement holds its address. A symbol no unit owns (unsplit .bss) is owned by its users:
     the header every function using it (and `member`) reaches. "" when there is none."""
-    members, texts = snapshot.layout.members, draft.header_texts(snapshot)
+    members, texts = world.of(snapshot).members, draft.header_texts(snapshot)
     found = members.get(name)
     address = index.get(snapshot).addresses.get(name)
     if found is None and address is not None:
@@ -611,7 +613,7 @@ def owner_header(snapshot: Snapshot, name: str, member: str = "") -> str:
             ),
             None,
         )
-    group = snapshot.layout.groups.get(found.group) if found else None
+    group = world.of(snapshot).groups.get(found.group) if found else None
     if group and group.header in texts:
         return group.header
     users = {f for f, _, _ in index.get(snapshot).uses.get(name, ())} | ({member} if member else set())

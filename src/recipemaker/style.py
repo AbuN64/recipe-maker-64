@@ -11,10 +11,10 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from unbake import pool, process, store
+from unbake import api
 from unbake.contracts import Config, Json, sha256
 
-from recipemaker import cparse, table
+from recipemaker import cparse, host, table
 
 FACTS = 3  # the version of what _facts reads: bump it and every file is read again
 SEVERITY = {"m2c-local": "warning"}
@@ -253,7 +253,7 @@ def _listing(config: Config, paths: Sequence[str]) -> list[str]:
     """Tracked files, or the files under the given paths, as project-relative POSIX paths."""
     root = config.project.root
     if not paths:
-        return sorted(process.git(config, "ls-files").stdout.decode(errors="replace").splitlines())
+        return sorted(host.git(config, "ls-files").stdout.decode(errors="replace").splitlines())
     found: set[str] = set()
     for given in paths:
         base = Path(given) if Path(given).is_absolute() else root / given
@@ -279,9 +279,9 @@ def gather(config: Config, files: Sequence[str]) -> tuple[dict[str, Json], int]:
     path, cache = _cache(root)
     todo = sorted({keys[f]: texts[f] for f in texts if keys[f] not in cache}.items())
     if todo:
-        done = pool.map(config, "recipe.style", _facts, [text for _, text in todo])
+        done = api.pool_map(config, "recipe.style", _facts, [text for _, text in todo])
         cache.update({key: d for (key, _), d in zip(todo, done, strict=True)})
-        store.write(path, json.dumps(cache, sort_keys=True).encode())
+        host.write(path, json.dumps(cache, sort_keys=True).encode())
     return {f: cache[k] for f, k in keys.items()}, len(todo)
 
 
@@ -316,7 +316,7 @@ def run(config: Config, params: Json) -> Json:
     rose = {r: [saved.get(r, 0), n] for r, n in census.items() if r in saved and n > saved[r]}
     wrote = bool(params["baseline"])
     if wrote:
-        store.write(base, json.dumps(census, sort_keys=True).encode())
+        host.write(base, json.dumps(census, sort_keys=True).encode())
     mode = "census" if params["census"] or wrote else "findings"
     errors = [f for f in found if SEVERITY.get(f[0], "error") == "error"]
     bad = bool(rose) if mode == "census" else bool(errors)

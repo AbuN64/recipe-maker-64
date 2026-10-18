@@ -174,8 +174,7 @@ def test_live_queue_keeps_the_report_order_and_reads_each_row_once(
         {"member": m, "kind": "function", "segment": g, "size": s, "address": 0}
         for m, g, s in (("a", "x", 10), ("b", "y", 20), ("c", "x", 30))
     ]
-    monkeypatch.setattr(tui.layout, "capture", lambda config: calls.update(["capture"]) or "snapshot")
-    monkeypatch.setattr(tui.report, "items", lambda snapshot, params: items)
+    monkeypatch.setattr(tui.work, "items", lambda config: calls.update(["items"]) or items)
     history = {"c": [SimpleNamespace(outcome="worse"), SimpleNamespace(outcome="better")]}
     monkeypatch.setattr(
         tui.state, "attempts", lambda config, member: calls.update(["attempts"]) or history.get(member, [])
@@ -187,7 +186,7 @@ def test_live_queue_keeps_the_report_order_and_reads_each_row_once(
         ("b", "y", ""),
         ("c", "x", "better"),
     ]
-    assert calls == {"capture": 1, "attempts": 3}
+    assert calls == {"items": 1, "attempts": 3}
     monkeypatch.setattr(tui, "LIMIT", 2)
     assert [r["member"] for r in live.queue()] == ["a", "b"]
 

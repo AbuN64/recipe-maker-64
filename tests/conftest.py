@@ -92,3 +92,12 @@ def fakes(tmp_path, monkeypatch):
     found = Fakes(tmp_path / "project")
     found.install(monkeypatch)
     return found
+
+
+@pytest.fixture(autouse=True)
+def _layout_on_test_snapshots(monkeypatch):
+    """A test snapshot built by hand carries its layout as `layout`; a captured one is read by `world.of`."""
+    from recipemaker import world
+
+    real = world.of
+    monkeypatch.setattr(world, "of", lambda snapshot: getattr(snapshot, "layout", None) or real(snapshot))

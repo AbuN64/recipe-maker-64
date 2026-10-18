@@ -6,12 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 from fakes import proof
-from fixture import group as make_group
-from unbake import effort, store
-from unbake.contracts import Refusal, UnitSpec
+from fakes import unit as make_unit
+from unbake import effort
+from unbake.contracts import Refusal
 
-from recipemaker import cli, errors, index, ladder, state, work
+from recipemaker import cli, errors, host, index, ladder, state, work
 from recipemaker.state import SKIP_REASONS
+from recipemaker.world import Group
 
 pytestmark = pytest.mark.usefixtures("toolchains")
 NOW = 1_000_000.0
@@ -63,7 +64,7 @@ def test_next_leases_the_largest_open_item_and_ends_with_the_work_command(fakes)
 
 
 def test_next_takes_a_member_with_no_group_and_refuses_a_row_the_layout_lacks(fakes):
-    members = fakes.snapshot.layout.members
+    members = fakes.layout.members
     members["data_d"] = replace(members["data_d"], group="")
     fakes.items = [row("data_d", kind="data")]
     assert work.next_item(fakes.config, {})["item"] == "data_d"
@@ -97,10 +98,10 @@ def test_next_grants_the_second_row_when_another_session_leases_the_top_one_whil
 
 def in_sdk_group(fakes, *names):
     """Move the named members into a library group that the layout marks as sdk."""
-    lib = make_group("lib", "main", names, sdk=True)
-    members = {k: replace(m, group="lib") if k in names else m for k, m in fakes.snapshot.layout.members.items()}
-    groups = {**fakes.snapshot.layout.groups, "lib": lib}
-    fakes.snapshot = replace(fakes.snapshot, layout=replace(fakes.snapshot.layout, groups=groups, members=members))
+    lib = Group("lib", "main", names, True, "lib")
+    members = {k: replace(m, group="lib") if k in names else m for k, m in fakes.layout.members.items()}
+    groups = {**fakes.layout.groups, "lib": lib}
+    fakes.layout = replace(fakes.layout, groups=groups, members=members)
 
 
 def test_next_ranks_twin_ready_then_size_and_fragments_last_and_an_sdk_group_after_all_of_them(fakes):
@@ -111,8 +112,8 @@ def test_next_ranks_twin_ready_then_size_and_fragments_last_and_an_sdk_group_aft
 
 def test_next_prefers_a_twin_ready_item_over_a_bigger_one_and_twin_filters_split_ready_from_the_rest(fakes):
     fakes.items = [row("func_a", 20), row("func_b", 900)]
-    fakes.with_units({"src/b.c": UnitSpec("src/b.c", "c", "main", ("func_x",), "gcc-test", {})})
-    fakes.pairs = {("a", "b"): {"func_a": "func_x"}}
+    fakes.with_units({"src/b.c": make_unit("src/b.c", ("func_x",))})
+    fakes.shapes = {"s": ("func_a", "func_x")}
     got = work.next_item(fakes.config, {})
     assert got["item"] == "func_a" and "func_x in src/b.c" in got["why"] and "func_x in src/b.c" in got["twin"]
     state.release(fakes.config, "func_a")
@@ -151,7 +152,7 @@ def test_work_returns_rungs_candidate_brief_and_a_try_command(fakes):
     assert got["candidate"].endswith("func_a.c")
     text = (fakes.root / ".unbake/recipe/work/func_a/brief.md").read_text()
     assert "# func_a" in text and text.rstrip().endswith("next: recipe try func_a")
-    assert got["budget"]["stall_tries"] == 4 and got["landed"] == "abc1234" and got["score"] == {"a": 0.5, "b": 0.5}
+    assert got["budget"]["stall_tries"] == 4 and got["landed"] == "id-func_a" and got["score"] == {"a": 0.5, "b": 0.5}
 
 
 def test_an_exact_work_lands_releases_the_lease_and_sends_the_agent_on(fakes):
@@ -175,7 +176,7 @@ def test_work_skips_a_fragment_as_split_symbol_without_any_measure(fakes):
     fakes.split["func_a"] = "func_b"
     got = work.work(fakes.config, {"item": "func_a"})
     assert (got["result"], got["reason"], got["next"]) == ("skipped", "split-symbol", "recipe next")
-    assert fakes.calls["compare.measure"] == 0 and state.leases(fakes.config, NOW) == []
+    assert fakes.calls["judge.score"] == 0 and state.leases(fakes.config, NOW) == []
 
 
 def test_work_on_an_item_m2c_cannot_draft_starts_try_from_a_skeleton_and_says_why(fakes):
@@ -187,33 +188,11 @@ def test_work_on_an_item_m2c_cannot_draft_starts_try_from_a_skeleton_and_says_wh
     assert state.status(fakes.config, NOW)["skip_reasons"] == {}
 
 
-def test_work_honors_the_requested_permuter_seconds_and_defaults_to_the_budget(fakes, monkeypatch):
-    seen = []
-    monkeypatch.setattr(
-        ladder,
-        "run",
-        lambda config, members, **kw: (
-            seen.append(kw["seconds"])
-            or (_ for _ in ()).throw(
-                Refusal(__import__("unbake.contracts", fromlist=["Finding"]).Finding("land.request", "stop"))
-            )
-        ),
-    )
-    with pytest.raises(Refusal):
-        work.work(fakes.config, {"item": "func_a", "seconds": 9999})
-    with pytest.raises(Refusal):
-        work.work(fakes.config, {"item": "func_a", "seconds": 5})
-    with pytest.raises(Refusal):
-        work.work(fakes.config, {"item": "func_a"})
-    assert seen == [9999.0, 5.0, 120.0]
-
-
-# -- try
 def test_try_refuses_an_item_that_is_not_leased_and_never_calls_compare(fakes):
     candidate(fakes)
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
-    assert caught.value.findings[0].key == "recipe.not-leased" and fakes.calls["compare.run"] == 0
+    assert caught.value.findings[0].key == "recipe.not-leased" and fakes.calls["judge.compare"] == 0
 
 
 def test_try_refuses_when_the_budget_is_spent_skips_with_reason_budget_and_costs_no_compare(fakes):
@@ -227,7 +206,7 @@ def test_try_refuses_when_the_budget_is_spent_skips_with_reason_budget_and_costs
         caught.value.findings[0].key == "recipe.budget"
         and "4 tries without progress" in caught.value.findings[0].reason
     )
-    assert fakes.calls["compare.run"] == 0 and state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1}
+    assert fakes.calls["judge.compare"] == 0 and state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1}
 
 
 def test_try_refuses_when_the_time_is_spent(fakes, monkeypatch):
@@ -236,7 +215,7 @@ def test_try_refuses_when_the_time_is_spent(fakes, monkeypatch):
     monkeypatch.setattr(work, "_now", lambda: NOW + 901)
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
-    assert caught.value.findings[0].key == "recipe.budget" and fakes.calls["compare.run"] == 0
+    assert caught.value.findings[0].key == "recipe.budget" and fakes.calls["judge.compare"] == 0
 
 
 def test_try_passes_a_header_another_writer_left_dirty(fakes):
@@ -270,7 +249,7 @@ def test_try_refuses_m2c_text_left_in_the_candidate_and_names_the_lines(fakes):
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
     assert caught.value.findings[0].key == "recipe.placeholder" and "lines 2" in caught.value.findings[0].reason
-    assert fakes.calls["compare.run"] == 0
+    assert fakes.calls["judge.compare"] == 0
 
 
 def test_try_refuses_when_there_is_no_candidate(fakes):
@@ -291,7 +270,7 @@ def test_try_refuses_a_cast_to_another_type_or_view_by_name_before_comparing(fak
         work.try_(fakes.config, {"item": "func_a"})
     found = caught.value.findings[0]
     assert found.key == "recipe.cast" and "a cast to another type or view (lines 2)" in found.reason
-    assert fakes.calls["compare.run"] == 0
+    assert fakes.calls["judge.compare"] == 0
 
 
 def test_try_allows_value_casts_and_pointer_types_that_are_not_casts(fakes):
@@ -318,9 +297,9 @@ def test_a_fuzzy_landing_is_saved_as_nonmatching_not_landed_and_carries_no_error
     fakes.landed.append("func_a")
     fakes.run_result = {**failing_result("bytes"), "drain": fakes.drain(fakes.config)}
     got = work.try_(fakes.config, {"item": "func_a"})
-    assert (got["result"], got["landed"], got["saved"]) == ("fuzzy", "", "abc1234") and "error" not in got
+    assert (got["result"], got["landed"], got["saved"]) == ("fuzzy", "", "id-func_a") and "error" not in got
     text = cli.render("try", got)
-    assert "saved as nonmatching a 40.0%, b 40.0% (commit abc1234)" in text and "landed" not in text
+    assert "saved as nonmatching a 40.0%, b 40.0% (id-func_a)" in text and "landed" not in text
     assert "error:" not in text
 
 
@@ -341,7 +320,7 @@ def test_an_exact_try_lands_and_releases_the_lease(fakes):
     fakes.run_result = exact_result()
     got = work.try_(fakes.config, {"item": "func_a"})
     assert (got["result"], got["stalled"], got["landed"], got["next"]) == ("exact", 0, "abc1234", "recipe next")
-    assert fakes.calls["compare.run"] == 1 and state.leases(fakes.config, NOW) == []
+    assert fakes.calls["judge.compare"] == 1 and state.leases(fakes.config, NOW) == []
     assert len(state.attempts(fakes.config, "func_a")) == 1
     assert state.status(fakes.config, NOW)["today"]["exact"] == 1
 
@@ -387,7 +366,7 @@ def test_the_previous_errors_auto_fix_runs_before_the_next_try(fakes, monkeypatc
     )
     lease(fakes)
     path = candidate(fakes, "typedef struct {\n  int a;\n} Actor;\nint func_a(void) { return 0; }\n")
-    store.append(
+    host.append(
         fakes.config,
         "recipe/tries",
         {
@@ -451,7 +430,7 @@ def test_try_budget_uses_the_configured_number_of_tries(fakes, tmp_path, monkeyp
         work.try_(fakes.config, {"item": "func_a"})
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
-    assert "2 tries without progress" in caught.value.findings[0].reason and fakes.calls["compare.run"] == 3
+    assert "2 tries without progress" in caught.value.findings[0].reason and fakes.calls["judge.compare"] == 3
 
 
 def test_a_budget_refusal_skips_once_and_a_second_try_is_refused_as_not_leased(fakes):
@@ -464,7 +443,7 @@ def test_a_budget_refusal_skips_once_and_a_second_try_is_refused_as_not_leased(f
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
     assert caught.value.findings[0].key == "recipe.not-leased"
-    assert state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1} and fakes.calls["compare.run"] == 0
+    assert state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1} and fakes.calls["judge.compare"] == 0
 
 
 def test_a_landing_unbake_refused_is_translated_and_keeps_the_lease(fakes, monkeypatch):
@@ -507,13 +486,11 @@ def test_a_landing_unbake_refused_is_translated_and_keeps_the_lease(fakes, monke
 
 
 def test_work_on_an_item_whose_source_exists_is_refused_and_costs_no_try_or_measure(fakes):
-    from unbake.contracts import UnitSpec
-
-    fakes.with_units({"src/a.c": UnitSpec("src/a.c", "c", "main", ("func_a",), "gcc-test", {})})
+    fakes.with_units({"src/a.c": make_unit("src/a.c", ("func_a",))})
     lease(fakes)
     with pytest.raises(Refusal) as caught:
         work.work(fakes.config, {"item": "func_a"})
-    assert caught.value.findings[0].key == "recipe.landed" and fakes.calls["compare.measure"] == 0
+    assert caught.value.findings[0].key == "recipe.landed" and fakes.calls["judge.score"] == 0
     assert state.lease(fakes.config, "func_a").tries == 0
 
 
@@ -521,7 +498,7 @@ def test_no_submit_reaches_the_ladder(fakes):
     lease(fakes)
     fakes.scores.append(1.0)
     got = work.work(fakes.config, {"item": "func_a", "no_submit": True})
-    assert got["submitted"] is None and fakes.calls["land.submit"] == 0
+    assert got["submitted"] is None and fakes.calls["judge.submit"] == 0
 
 
 def test_skip_of_an_item_nobody_leased_still_records_the_reason(fakes):
@@ -578,10 +555,10 @@ def test_the_retired_next_table_of_the_config_is_refused(tmp_path, monkeypatch):
 
 
 def test_work_on_a_twin_ready_function_m2c_cannot_draft_keeps_the_twin_result_and_skips_nothing(fakes):
-    unit = UnitSpec("src/b.c", "c", "main", ("func_b",), "gcc-test", {})
+    unit = make_unit("src/b.c", ("func_b",))
     fakes.with_units({"src/b.c": unit})
     fakes.snapshot = replace(fakes.snapshot, overlays={"src/b.c": b"int func_b(void) {\n    return 0;\n}\n"})
-    fakes.pairs = {("a", "b"): {"func_a": "func_b"}}
+    fakes.shapes = {"s": ("func_a", "func_b")}
     fakes.m2c_fail = "/*\nDecompilation failure in function f:\n\nsomething else\n*/"
     got = work.work(fakes.config, {"item": "func_a"})
     assert got["result"] == "fuzzy" and [r["name"] for r in got["rungs"]][:2] == ["clone", "draft"]
@@ -591,9 +568,7 @@ def test_work_on_a_twin_ready_function_m2c_cannot_draft_keeps_the_twin_result_an
 def test_an_exact_result_that_unbake_refused_to_land_says_so_and_keeps_the_lease(fakes, monkeypatch):
     finding = {"reason": "'' should be non-empty", "path": "layout.toml:unit.1.group"}
     refused = {"id": "x", "member": "func_a", "findings": [finding]}
-    monkeypatch.setattr(
-        work.ladder.land, "drain", lambda config: {"running": False, "landed": [], "refused": [refused]}
-    )
+    monkeypatch.setattr(fakes, "drain", lambda config: {"running": False, "landed": [], "refused": [refused]})
     fakes.scores.append(1.0)
     got = work.work(fakes.config, {"item": "func_a"})
     assert got["result"] == "refused" and got["landed"] == "" and "should be non-empty" in got["refused"]
@@ -699,69 +674,12 @@ def runs(fakes, *results):
     return run
 
 
-def test_try_permutes_a_near_miss_of_order_or_registers_and_keeps_a_variant_that_scores_higher(fakes, monkeypatch):
-    lease(fakes)
-    path = candidate(fakes)
-    fakes.permutable = True
-    monkeypatch.setattr(work, "_prove", runs(fakes, failing_result("bytes", 0.9), failing_result("bytes", 0.97)))
-    monkeypatch.setattr(
-        work.crack, "permute_file", lambda config, file, item, seconds: b"int func_a(void) { return 9; }\n"
-    )
-    got = work.try_(fakes.config, {"item": "func_a"})
-    assert len(fakes.run_calls) == 2 and path.read_text() == "int func_a(void) { return 9; }\n"
-    assert got["score"] == {"a": 0.97, "b": 0.97} and "the permuter improved the candidate" in got["auto_fixes"]
-    assert got["permuter"] == "permuter: ran 120 s, best 97.0%"
-
-
-def test_try_puts_back_a_permuter_variant_that_does_not_score_higher(fakes, monkeypatch):
-    lease(fakes)
-    path = candidate(fakes)
-    fakes.permutable = True
-    monkeypatch.setattr(work, "_prove", runs(fakes, failing_result("bytes", 0.9), failing_result("bytes", 0.5)))
-    monkeypatch.setattr(
-        work.crack, "permute_file", lambda config, file, item, seconds: b"int func_a(void) { return 9; }\n"
-    )
-    got = work.try_(fakes.config, {"item": "func_a"})
-    assert path.read_text() == "int func_a(void) { return 0; }\n" and got["score"] == {"a": 0.9, "b": 0.9}
-
-
-def test_try_does_not_permute_other_kinds_of_difference_or_an_exact_result(fakes, monkeypatch):
-    calls = []
-    monkeypatch.setattr(work.crack, "permute_file", lambda *a: calls.append(a))
-    lease(fakes)
-    candidate(fakes)
-    fakes.run_result = failing_result("bytes", 0.9)
-    said = work.try_(fakes.config, {"item": "func_a"})["permuter"]  # permutable is False: some other kind of difference
-    assert said == (
-        "permuter: not run (diff class other; only order or register near misses permute; add PERM_ marks to force it)"
-    )
-    fakes.permutable = True
-    fakes.run_result = exact_result()
-    assert work.try_(fakes.config, {"item": "func_a"})["permuter"] == "permuter: not run (already exact)"
-    assert calls == []
-
-
-def test_try_permutes_around_perm_marks_and_writes_the_variant_back_without_the_marks(fakes, monkeypatch):
-    lease(fakes)
-    path = candidate(fakes, "int func_a(void) { PERM_LINESWAP(a = 1;\nb = 2;) }\n")
-    monkeypatch.setattr(
-        work.crack, "permute_file", lambda config, file, item, seconds: b"int func_a(void) { b = 2; a = 1; }\n"
-    )
-    fakes.run_result = failing_result("bytes", 0.9)
-    got = work.try_(fakes.config, {"item": "func_a"})
-    assert (
-        "PERM_" not in path.read_text()
-        and "the permuter replaced the PERM_ marks with its best variant" in got["auto_fixes"]
-    )
-
-
 def test_perm_marks_the_permuter_could_not_resolve_are_refused_and_never_landed(fakes, monkeypatch):
     lease(fakes)
     candidate(fakes, "int func_a(void) { PERM_LINESWAP(a = 1;\nb = 2;) }\n")
-    monkeypatch.setattr(work.crack, "permute_file", lambda *a: None)
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
-    assert caught.value.findings[0].key == "recipe.perm" and fakes.calls["compare.run"] == 0
+    assert caught.value.findings[0].key == "recipe.perm" and fakes.calls["judge.compare"] == 0
 
 
 def area(kind, start=0):
@@ -860,55 +778,6 @@ def test_work_says_how_many_lines_a_resumed_seed_holds_that_would_be_refused(fak
     assert got["seed"] in cli.render("work", {**got, "wall_s": 1})
 
 
-def partial_result(commit="abc1234"):
-    proofs = [asdict(proof("func_a", "a", 1.0)), asdict(proof("func_a", "b", 0.974))]
-    landed = [{"id": "x", "member": "func_a", "operation": "publish", "commit": commit}]
-    return {
-        "exact": False,
-        "score": {"a": 1.0, "b": 0.974},
-        "submitted": "id-func_a",
-        "proofs": proofs,
-        "gaps": [],
-        "drain": {"running": False, "landed": landed, "refused": []},
-    }
-
-
-def test_try_lands_the_exact_versions_and_withholds_the_rest_when_some_but_not_all_are_exact(fakes, monkeypatch):
-    lease(fakes)
-    candidate(fakes)
-    fakes.run_result = partial_result()
-    diff = "--- target\n+++ built\n-80000400: jal 0x1\n+80000400: nop\n"
-    monkeypatch.setattr(work.crack, "built_diff", lambda snapshot, member, proof: diff)
-    got = work.try_(fakes.config, {"item": "func_a"})
-    assert got["why"] == ["b withheld at 97.4%, first difference: -80000400: jal 0x1 / +80000400: nop"]
-    assert got["brief"] and got["regions"]["total"] == 0
-    assert fakes.withhold is True and got["landed"] == "abc1234" and got["held"] == {"b": 0.974}
-    assert cli.render("try", got).splitlines()[0] == "landed exact for a; b withheld (97.4%) (commit abc1234)"
-    assert state.leases(fakes.config, NOW) == [] and got["next"] == "recipe next"
-
-
-def test_try_always_lets_unbake_decide_the_withhold_and_reports_none_when_all_or_no_version_is_exact(fakes):
-    lease(fakes)
-    candidate(fakes)
-    fakes.run_result = exact_result()
-    assert work.try_(fakes.config, {"item": "func_a"})["held"] == {} and fakes.withhold is True
-    lease(fakes)
-    fakes.run_result = failing_result("bytes")
-    assert work.try_(fakes.config, {"item": "func_a"})["held"] == {} and fakes.withhold is True
-
-
-def test_work_withholds_when_the_candidate_is_exact_in_some_versions(fakes, monkeypatch):
-    lease(fakes)
-    candidate(fakes)
-    fakes.scores.extend([1.0, 0.9])
-    monkeypatch.setattr(
-        fakes, "_proofs", lambda unit: (proof("func_a", "a", 1.0), proof("func_a", "b", 0.9)), raising=False
-    )
-    got = work.work(fakes.config, {"item": "func_a"})
-    assert fakes.withhold is True and got["landed"] and got["held"] == {"b": 0.9}
-    assert cli.render("work", {**got, "wall_s": 1}).splitlines()[0].startswith("landed exact for a; b withheld (90.0%)")
-
-
 def test_a_refused_work_result_prints_the_file_and_the_brief(fakes, monkeypatch):
     path = candidate(fakes, "int func_a(void) {\n    return (u8 *) 0;\n}\n")
     lease(fakes)
@@ -952,13 +821,13 @@ def test_work_leases_a_census_conflict_with_an_empty_recipe_state(fakes, monkeyp
     found = Finding(
         "types.conflict", "gX", unit="gX", missing=("gX: include/a.h:9 extern f32 gX;", "gX: src/a.c:3 s32 gX;")
     )
-    monkeypatch.setattr(work.declare.types, "conflicts", lambda snapshot: [found])
+    monkeypatch.setattr(work.declare.headers, "disagreements", lambda snapshot: ({}, [found]))
     got = work.work(fakes.config, {"item": "gX"})
     assert (got["kind"], got["item"]) == ("declaration", "gX") and not store_rows(fakes)
 
 
 def store_rows(fakes):
-    return [r for r in work.store.rows(fakes.config, "recipe/conflicts")]
+    return [r for r in work.host.rows(fakes.config, "recipe/conflicts")]
 
 
 def test_a_declaration_conflict_names_the_canonical_declaration_and_points_at_work(fakes, monkeypatch):
@@ -981,8 +850,8 @@ def test_a_declaration_conflict_names_the_canonical_declaration_and_points_at_wo
 
 def test_try_and_work_on_a_landed_item_say_which_commit_landed_it(fakes, monkeypatch):
     fakes.items = []
-    fakes.with_units({"src/a.c": UnitSpec("src/a.c", "c", "main", ("func_a",), "gcc-test", {})})
-    monkeypatch.setattr(work.process, "git", lambda config, *a: SimpleNamespace(stdout=b"c0ffee1\n"))
+    fakes.with_units({"src/a.c": make_unit("src/a.c", ("func_a",))})
+    monkeypatch.setattr(work.host, "git", lambda config, *a: SimpleNamespace(stdout=b"c0ffee1\n"))
     for verb in (work.try_, work.work):
         with pytest.raises(Refusal) as caught:
             verb(fakes.config, {"item": "func_a"})
@@ -1071,18 +940,6 @@ def test_a_landing_row_without_a_commit_is_named_by_its_submission_id():
     assert work._commits(drain, "func_a") == ("sub1", "")
 
 
-def test_a_perm_marked_candidate_ignores_the_gate_and_goes_through_the_permute_call(fakes, monkeypatch):
-    lease(fakes)
-    candidate(fakes, "int func_a(void) { PERM_LINESWAP(a = 1;\nb = 2;) }\n")
-    fakes.permutable = False
-    seen = []
-    monkeypatch.setattr(work.crack, "permutable", lambda *a: seen.append(a) or "refused")
-    monkeypatch.setattr(work.crack, "permute_file", lambda config, file, item, seconds: seen.append(item) or None)
-    work._marked(fakes.config, "func_a", ladder.candidate_path(fakes.config, "func_a"), 5.0)
-    assert seen == ["func_a"]  # permute_file ran; the gate was never asked
-
-
-# -- the draft probe, the persistent memos and the unwinding of a command
 def test_next_leases_the_first_item_whose_draft_compiles_and_names_the_ones_it_passed(fakes, monkeypatch):
     fakes.items = [row("func_a", 40), row("func_b", 300)]
     probed = []
@@ -1122,7 +979,7 @@ def test_next_ends_the_probe_after_its_cap_and_still_returns_an_item(fakes, monk
 
 def test_the_twin_memos_are_read_from_the_content_cache_by_the_next_command(fakes):
     fakes.items = [row("func_a", 40)]
-    fakes.pairs = {("a", "b"): {"func_a": "func_x"}}
+    fakes.shapes = {"s": ("func_a", "func_x")}
     work.twin.ready(fakes.snapshot)
     first = fakes.calls["infer.pairs"]
     effort.forget("twin.ready")  # a new command: the in-process memo is empty
@@ -1134,9 +991,9 @@ def test_the_twin_memos_are_read_from_the_content_cache_by_the_next_command(fake
 
 
 def _four_members(fakes):
-    members = fakes.snapshot.layout.members
+    members = fakes.layout.members
     more = {n: replace(members["func_a"], name=n) for n in ("func_c", "func_d")}
-    fakes.snapshot = replace(fakes.snapshot, layout=replace(fakes.snapshot.layout, members={**members, **more}))
+    fakes.layout = replace(fakes.layout, members={**members, **more})
 
 
 def test_next_probes_one_draft_first_then_a_wider_batch_and_takes_the_first_that_compiles(fakes, monkeypatch):

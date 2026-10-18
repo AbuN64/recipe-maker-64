@@ -5,32 +5,29 @@ others in ROM order, and the layout keeps the link order. Rules S, L, Y and D ar
 
 from __future__ import annotations
 
+import re
 import statistics
-import tomllib
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from unbake import config as configuration
-from unbake import effort
 from unbake.contracts import Json
 
 from recipemaker import state, table
 
 Mod = dict[str, Any]
 Pair = tuple[str, str]
-Hit = tuple[str, str]  # (library, module) of a catalog hit
+
+
+SHARED_HEADERS = ("include/types.h", "include/game/common.h")  # the types header and the declarations header
 
 
 def shared_headers() -> tuple[str, str]:
-    """The types header and the declarations header: `repo.toml` `[layout] shared_headers`."""
-    rows = effort.memo(
-        ("recipe.shared_headers",), lambda: tuple(configuration.load_resource("repo.toml")["layout"]["shared_headers"])
-    )
-    return rows[0], rows[1]
+    """The types header and the declarations header."""
+    return SHARED_HEADERS
 
 
 @dataclass(frozen=True)
@@ -48,12 +45,7 @@ class Naming:
     evidence: str = "lower"
     subsystem_source: str = "src/game/{subsystem}"
     subsystem_header: str = "include/game/{subsystem}.h"
-    shared_headers: tuple[str, str] = field(default_factory=shared_headers)
-    subsystems: tuple[tuple[str, str], ...] = ()  # project-named subsystems: (templated name, name) pairs
-
-    def named(self, sub: str) -> str:
-        """The project's name for a templated subsystem, or the templated name when the project names none."""
-        return dict(self.subsystems).get(sub, sub)
+    shared_headers: tuple[str, str] = SHARED_HEADERS
 
     def cased(self, text: str, case: str | None = None) -> str:
         how = case or self.case
@@ -85,32 +77,26 @@ class Naming:
         return self.subsystem_header.format(subsystem=sub)
 
 
-PLAIN = Naming()  # the tool's own scheme, for projects without a [naming] table
+PLAIN = Naming()  # the tool's own scheme, for a project with no sources yet
+_SOURCE = re.compile(r"\.(c|cc|cpp|cxx)$", re.I)
 
 
 def style(root: Path | None) -> Naming:
-    """The project's Naming: config.toml `[naming]` plus its `[layout]` subsystem templates; defaults when absent."""
-    try:
-        doc = tomllib.loads((root / "config.toml").read_text(encoding="utf-8")) if root else {}
-    except (OSError, ValueError):
-        doc = {}
-    known = {f.name for f in fields(Naming)}
-    layout = {
-        k: v
-        for k, v in doc.get("layout", {}).items()
-        if k in ("subsystem_source", "subsystem_header", "shared_headers")
-    }
-    unknown = set(doc.get("naming", {})) - known
-    if unknown:
-        raise ValueError(f"recipe naming: unknown [naming] keys {sorted(unknown)}")
-    values = {**layout, **doc.get("naming", {})}
-    if "shared_headers" in values:
-        values["shared_headers"] = tuple(values["shared_headers"])
-        if len(values["shared_headers"]) != 2:
-            raise ValueError("recipe naming: layout shared_headers needs a types and a declarations path")
-    if "subsystems" in values:
-        values["subsystems"] = tuple(sorted(values["subsystems"].items()))
-    return Naming(**values)
+    """The project's Naming, read from its `src/` files by majority: the case of the stems, the source extension, and
+    the stem length limit when every stem of the majority extension fits 8 characters. PLAIN where there are none."""
+    found = sorted(p for p in (root / "src").rglob("*") if p.is_file() and _SOURCE.search(p.name)) if root else []
+    if not found:
+        return PLAIN
+    ext = Counter(p.suffix for p in found).most_common(1)[0][0]
+    stems = [p.stem for p in found if p.suffix == ext]
+    kinds = Counter("upper" if s.isupper() else "lower" if s.islower() else "as-is" for s in stems if s != s.swapcase())
+    case = kinds.most_common(1)[0][0] if kinds else "as-is"
+    return Naming(
+        case=case,
+        stem_max=8 if max(map(len, stems)) <= 8 else 0,
+        source_ext=ext,
+        evidence="keep" if case == "as-is" else case,
+    )
 
 
 def labels(doc: Json) -> dict[str, str]:
@@ -523,7 +509,7 @@ def place(
         for group in subsystems(reps, dict(joined), settings):
             names_in = [n for g in group for n in kin[g]]
             low = f"{min(by_name[n]['vram'] for n in names_in):08X}"
-            sub = naming.named(naming.fill(naming.subsystem, label=label_name, vram=low).strip("/"))
+            sub = naming.fill(naming.subsystem, label=label_name, vram=low).strip("/")
             for n in names_in:
                 by_name[n] |= {"sub": sub, "folder": naming.subsystem_source.format(subsystem=sub)}
     room: Counter[str] = Counter()

@@ -4,15 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
-from test_structure import DATA, SETTINGS, _one_unit, answer, names, project
+from r1_fake_api import fake_api  # noqa: F401
+from test_structure import DATA, SETTINGS, _one_unit, names
 
 from recipemaker import state, structure, tree
-
-
-@pytest.fixture(autouse=True)
-def calm(monkeypatch):
-    monkeypatch.setattr(structure.time, "sleep", lambda s: None)
-    monkeypatch.setattr(structure, "_dirty", lambda root: set())
 
 
 @pytest.fixture
@@ -262,55 +257,7 @@ def test_estimate_gates_are_printed_with_the_tree_numbers(doc):
     )
 
 
-def test_apply_retries_a_busy_lock_twice_then_succeeds(tmp_path, monkeypatch):
-    busy = ({"ok": False, "result": None, "findings": [{**structure_finding(), "key": "setup.busy"}]}, "")
-    config, fake, _, _ = project(tmp_path, monkeypatch, [busy, busy, answer()])
-    slept = []
-    monkeypatch.setattr(structure.time, "sleep", slept.append)
-    got = structure.apply(config, {"host": None})
-    assert len(fake.moves()) == 3 and slept == [5, 15] and got["applied"] == 17 and len(got["unbake_calls"]) == 3
-
-
-def structure_finding():
-    from test_structure import FINDING
-
-    return FINDING
-
-
-def test_moves_on_dirty_files_wait_for_the_end_of_the_stream(tmp_path, monkeypatch):
-    config, fake, result, saved = project(tmp_path, monkeypatch, [answer(), answer(), answer(), answer()])
-    stream = [json.loads(x) for x in result["stream"].splitlines()]
-    monkeypatch.setattr(structure, "_dirty", lambda root: {"include/b.h"})
-    for _ in range(2):
-        structure.apply(config, {"host": None})
-    got = structure.apply(config, {"host": None})
-    assert [d["subject"] for d in got["deferred"]] == ["include/b.h"] and got["applied"] == 4 and got["remaining"] == 1
-    assert [len(c[1]) for c in fake.moves()] == [17, 3, 4] and all(
-        m["subject"] != "include/b.h" for m in fake.moves()[-1][1]
-    )
-    last = [json.loads(x) for x in (saved / "moves.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert last[-1] == next(m for m in stream if m["subject"] == "include/b.h") and len(last) == len(stream)
-    again = structure.apply(config, {"host": None})
-    assert (again["applied"], again["remaining"], len(fake.moves())) == (0, 1, 3)
-    monkeypatch.setattr(structure, "_dirty", lambda root: set())
-    assert structure.apply(config, {"host": None})["applied"] == 1
-
-
-def test_a_changed_journal_in_a_refusal_is_retried_too(tmp_path, monkeypatch):
-    stale = {"key": "journal.changed", "reason": "r"}
-    first = (
-        {
-            "ok": False,
-            "result": {"refused": [{"index": 0, "findings": [{**structure_finding(), **stale}]}]},
-            "findings": [],
-        },
-        "",
-    )
-    config, fake, _, _ = project(tmp_path, monkeypatch, [first, answer()])
-    assert structure.apply(config, {"host": None})["applied"] == 17 and len(fake.moves()) == 2
-
-
-def test_the_dominance_knob_is_named_in_recipe_knowledge_and_the_shared_headers_come_from_the_layout():
+def test_the_dominance_knob_is_named_in_recipe_knowledge_and_the_shared_headers_are_the_tools_pair():
     assert tree.table("knowledge/structure.toml")["dominance"] == 4
     assert tree.shared_headers() == ("include/types.h", "include/game/common.h")
 
@@ -368,28 +315,28 @@ def test_address_style_keeps_the_existing_identity_collision_choice(doc, naming)
         assert [Path(m["source"]).name for m in modules] == ["80001000.CPP", "80001040.CPP"]
 
 
-def test_project_layout_shared_headers_are_used_for_data_and_header_moves(doc, tmp_path):
-    (tmp_path / "config.toml").write_text('[layout]\nshared_headers = ["include/TYPES.H", "include/COMMON.H"]\n')
-    naming = tree.style(tmp_path)
-    assert naming.shared_headers == ("include/TYPES.H", "include/COMMON.H")
-    data = {"name": "data_80001000", "vram": 0x80001000, "folder": "src/data", "library": "", "sub": ""}
-    assert tree.paths(data, naming)[1] == "include/COMMON.H"
-    doc["headers"].append(
-        {"path": "include/types.h", "modules": [], "declares": ["f1"], "includes": [], "included_by": []}
-    )
-    moves = structure.headers(doc, 0.8, naming=naming)
-    assert {"op": "file", "subject": "include/types.h", "target": "include/TYPES.H"} in moves
-    assert not any(m["target"] in tree.shared_headers() for m in moves)
-    assert (
-        structure._cluster_header(["include/game/A.H", "include/game/B.H"], naming.shared_headers[1])
-        == "include/game/COMMON.H"
-    )
+def _tree(tmp_path, names):
+    for name in names:
+        (tmp_path / "src" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / name).write_text("int x;\n")
+    return tree.style(tmp_path)
 
 
-def test_project_named_subsystems_replace_the_templated_name(tmp_path):
-    (tmp_path / "config.toml").write_text(
-        '[naming]\nsubsystem = "{label}/{vram}"\n[naming.subsystems]\n"MAIN/80208000" = "AUDIO"\n', encoding="utf-8"
-    )
-    naming = tree.style(tmp_path)
-    assert naming.named("MAIN/80208000") == "AUDIO"
-    assert naming.named("MAIN/80255C40") == "MAIN/80255C40"
+def test_the_style_is_read_from_the_existing_files_by_majority(tmp_path):
+    got = _tree(tmp_path, ["IO/80200500.CPP", "IO/80200600.CPP", "GAME/PLAYER.CPP", "lower.c"])
+    assert (got.case, got.source_ext, got.stem_max, got.evidence) == ("upper", ".CPP", 8, "upper")
+
+
+def test_lower_case_long_stems_get_no_length_limit(tmp_path):
+    got = _tree(tmp_path, ["game/player_update.c", "game/actor_list.c", "game/Mixed.c"])
+    assert (got.case, got.source_ext, got.stem_max) == ("lower", ".c", 0)
+
+
+def test_mixed_case_stems_keep_the_spelling_and_a_project_with_no_sources_gets_the_default(tmp_path):
+    assert _tree(tmp_path, ["a/Player.c", "a/ActorList.c"]).case == "as-is"
+    assert tree.style(tmp_path / "missing") == tree.PLAIN and tree.style(None) == tree.PLAIN
+
+
+def test_config_toml_is_not_read_for_the_style(tmp_path):
+    (tmp_path / "config.toml").write_text('[naming]\ncase = "upper"\nstem_max = 3\n')
+    assert _tree(tmp_path, ["a/player_update.c"]).case == "lower"

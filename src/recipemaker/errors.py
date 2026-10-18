@@ -7,10 +7,9 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from unbake import headers, layout, types
 from unbake.contracts import Finding, Snapshot
 
-from recipemaker import advice, index, resource, table
+from recipemaker import advice, headers, index, resource, table, world
 
 _STANDARD = {"NULL": "stddef.h", "size_t": "stddef.h", "offsetof": "stddef.h", "bool": "stdbool.h", "true": "stdbool.h"}
 _LINE = re.compile(r":(\d+)(?::\d+)?:")
@@ -148,7 +147,7 @@ def banned(
 
 def held(snapshot: Snapshot, text: str, member: str) -> list[tuple[str, str, str, int, str]]:
     """`banned` for a candidate of `member`, leaving out what its landed source already holds."""
-    unit = layout.unit_of(snapshot, member)
+    unit = world.unit_of(snapshot, member)
     old = index.source(snapshot, unit.path) if unit else ""
     return banned(text, index.get(snapshot).declarations, old)
 
@@ -201,13 +200,11 @@ def translate(snapshot: Snapshot, text: str, missing: Sequence[str], findings: S
     name = classify(missing, findings).name
     line = rf"^\s*(?:extern\s+)?[\w\s*]+\b{re.escape(name)}\s*\([^)]*\)\s*;"
     at = next((n for n, row in enumerate(text.splitlines(), 1) if name and re.match(line, row)), 0)
-    row = types.load(snapshot)
-    decl = (row["global"].get(name) or {}).get("declaration") or (
-        row["function"][name]["signature"] + ";" if name in row["function"] else ""
-    )
+    known = index.get(snapshot).declarations.get(name) if name else None
+    decl = known[2] if known else ""
     context = {
         "decl": f"`{decl}`" if decl else f"an extern declaration of {name}",
-        "typed": "the type is from types.toml" if decl else f"its type is unknown: find it with `recipe look {name}`",
+        "typed": f"the type is from {known[0]}" if known else f"its type is unknown: find it with `recipe look {name}`",
     }
     if not decl and (include := _macro_header(snapshot, name)):
         context |= {

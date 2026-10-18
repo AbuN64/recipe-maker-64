@@ -4,7 +4,8 @@ from dataclasses import replace
 
 import pytest
 from fakes import proof
-from unbake.contracts import Refusal, UnitSpec
+from fakes import unit as make_unit
+from unbake.contracts import Refusal
 
 from recipemaker import cli, declare, state, work
 
@@ -18,7 +19,7 @@ ROW = {
 
 @pytest.fixture
 def world(fakes, monkeypatch):
-    fakes.with_units({"src/a.c": UnitSpec("src/a.c", "c", "main", ("func_a",), "gcc-test", {})})
+    fakes.with_units({"src/a.c": make_unit("src/a.c", ("func_a",))})
     fakes.snapshot = replace(
         fakes.snapshot,
         overlays={
@@ -27,14 +28,6 @@ def world(fakes, monkeypatch):
         },
     )
     monkeypatch.setattr(declare, "conflicts", lambda config, snapshot: [ROW])
-    monkeypatch.setattr(
-        declare.types,
-        "load",
-        lambda s: {
-            "function": {},
-            "global": {"gX": {"declaration": "extern u8 gX[0x4];", "size": 4, "section": ".data"}},
-        },
-    )
     monkeypatch.setattr(declare.state, "skipped", lambda config, now: frozenset())
     monkeypatch.setattr(work, "_now", lambda: NOW)
     return fakes
@@ -47,7 +40,6 @@ def test_next_hands_out_the_worst_conflict_with_copies_of_every_file_and_a_brief
     assert (where / "include/a.h").read_bytes() == b"extern f32 gX;\n" and (where / "src/a.c").is_file()
     text = (where / "brief.md").read_text()
     assert "- include/a.h:9  extern f32 gX;" in text and "- src/a.c:3  s32 gX;" in text
-    assert "types.toml global: extern u8 gX[0x4]; (size 4, section .data)" in text
     assert "## Blocks 2 items\\n- func_b\\n- func_c" in text.replace("\\n", "\n").replace("\n", "\\n")
     assert [x.item for x in state.leases(world.config, NOW)] == ["gX"]
     assert declare.next_item(world.config, world.snapshot, NOW)["item"] == ""  # the only conflict is leased
@@ -85,7 +77,7 @@ def test_try_lands_the_edited_copies_as_one_change_set_under_the_edited_unit(wor
     got = work.try_(world.config, {"item": "gX"})
     assert seen["unit"] == "src/a.c" and sorted(seen["edits"]) == ["include/a.h", "src/a.c"]
     assert (got["result"], got["landed"], got["next"]) == ("exact", "abc1234", "recipe next")
-    assert state.leases(world.config, NOW) == [] and cli.render("try", got).splitlines()[0] == "landed (commit abc1234)"
+    assert state.leases(world.config, NOW) == [] and cli.render("try", got).splitlines()[0] == "landed (abc1234)"
 
 
 def test_only_the_files_that_changed_are_in_the_set_and_a_header_alone_goes_under_an_including_unit(world, monkeypatch):
@@ -125,12 +117,6 @@ def test_unbake_refusing_the_set_by_unit_name_is_reported_and_costs_no_try(world
     got = work.try_(world.config, {"item": "gX"})
     assert got["result"] == "refused" and "src/b.c does not match in us" in got["why"]
     assert state.lease(world.config, "gX").tries == 0
-
-
-def test_a_types_row_without_a_declaration_is_no_evidence(world, monkeypatch):
-    monkeypatch.setattr(declare.types, "load", lambda s: {"function": {}, "global": {"gX": {"size": 4}}})
-    declare.next_item(world.config, world.snapshot, NOW)
-    assert "no landed definition and no types.toml row" in (declare.folder(world.config, "gX") / "brief.md").read_text()
 
 
 def test_a_cast_on_an_untouched_old_line_does_not_refuse_the_set_but_a_new_one_does(world, monkeypatch):

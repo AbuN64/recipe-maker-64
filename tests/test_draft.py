@@ -1,22 +1,30 @@
-"""draft: m2c function drafts and word/byte data drafts. m2c is mocked through process.run."""
+"""draft: m2c function drafts and word/byte data drafts. m2c is mocked through host.run."""
 
 from __future__ import annotations
 
-import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import fixture
 import pytest
-from unbake import config as configuration
-from unbake import layout, process, report
-from unbake.contracts import Member, Placement, Refusal, Snapshot
+from unbake import api
+from unbake.contracts import Refusal, Snapshot, Version
 
-from recipemaker import draft, index, signatures
+from recipemaker import draft, host, index, judge, signatures, world
+from recipemaker.world import Group, Layout, Member, Placement
+
+
+@dataclass(frozen=True)
+class Snap(Snapshot):
+    """A snapshot that carries its layout, as the tests build it by hand."""
+
+    layout: Any = None
+
 
 CODE = bytes.fromhex("03e0000800000000")
+REAL_CHECKED = draft._checked
 USES: dict[str, Any] = {}
 
 
@@ -39,34 +47,30 @@ def _words(*values: int) -> bytes:
     return b"".join(v.to_bytes(4, "big") for v in values)
 
 
-def _retype(root: Path, kinds: dict[str, str]) -> None:
-    """Rewrite Game.yaml subsegment types by member name (the fixture only writes asm and data)."""
-    for path in root.glob("versions/*/Game.yaml"):
-        document = json.loads(path.read_text())
-        for sub in document["segments"][0]["subsegments"]:
-            if len(sub) == 3 and sub[2] in kinds:
-                sub[1] = kinds[sub[2]]
-        path.write_text(json.dumps(document, indent=1) + "\n")
-
-
-def _snapshot(tmp: Path, kinds: dict[str, str] | None = None, **kw: Any) -> Snapshot:
+def _snapshot(tmp: Path, kinds: dict[str, str] | None = None, **kw: Any) -> Snap:
     code = {"func_80000400": {"a": (0x1000, CODE), "b": (0x1000, CODE)}}
     kw.setdefault("functions", code)
-    members = [*kw["functions"], *kw.get("data", {})]
-    group = {"name": "code_80000400", "segment": "main", "members": members, "evidence": "authored"}
-    group |= {
-        "signals": [],
-        "subsystem": "",
-        "library": "",
-        "source": f"src/{group['name']}.c",
-        "header": f"include/{group['name']}.h",
-    }
-    kw.setdefault("groups", [group])
     root = fixture.project(tmp, **kw)
-    if kinds:
-        _retype(root, kinds)
-    loaded = configuration.load(root, fixture.host(tmp))
-    return layout.capture(loaded)
+    config = api.load(root, fixture.host(tmp))
+    members, symbols = {}, {}
+    for kind, items in (("function", kw["functions"]), ("data", kw.get("data", {}))):
+        for name, by in items.items():
+            places = []
+            for version, (rom, blob) in sorted(by.items()):
+                vram = fixture.VRAM_BASE + rom - fixture.ROM_BASE
+                symbols.setdefault(version, {})[name] = vram
+                section = {"rodata": ".rodata", "bss": ".bss"}.get((kinds or {}).get(name, ""), "")
+                section = section or (".text" if kind == "function" else ".data")
+                bss = section == ".bss"
+                places.append(Placement(version, section, rom, rom if bss else rom + len(blob), vram, len(blob) * bss))
+            members[name] = Member(name, kind, "src/code_80000400.c", tuple(places), False)
+    group = Group("src/code_80000400.c", "main", tuple(members), False, "src/code_80000400.c")
+    layout = Layout({group.name: group}, members, {}, {})
+    versions = {
+        v: Version(v, root / f"roms/baserom.{v}.z64", "0" * 64, "", "", symbols.get(v, {}), ())
+        for v in kw.get("versions", ("a", "b"))
+    }
+    return Snap(config, "0" * 40, None, versions, {}, "0" * 64, layout=layout)
 
 
 def _data_snapshot(tmp: Path, blob: bytes, kinds: dict[str, str] | None = None) -> Snapshot:
@@ -78,18 +82,15 @@ def _mock_m2c(monkeypatch: pytest.MonkeyPatch, stdout: bytes, exit: int = 0, std
     calls: list[Any] = []
     monkeypatch.setattr(signatures, "context", lambda snapshot, version: Path("context.c"))
     monkeypatch.setattr(
-        draft.pool,
-        "map",
-        lambda config, name, function, items, key=None: (
-            [function(i) for i in items] if name == "draft.m2c" else [{**item[3], "reason": ""} for item in items]
-        ),
+        draft.api, "pool_map", lambda config, name, function, items, key=None: [function(i) for i in items]
     )
+    monkeypatch.setattr(draft, "_checked", lambda snapshot, member, drafts: [{**d, "reason": ""} for d in drafts])
 
-    def run(name: str, argv: Any, cwd: Path, **kw: Any) -> Any:
-        calls.append((name, list(argv)))
-        return fixture.native_result(argv, exit, stdout, stderr)
+    def run(argv: Any, cwd: Path, config: Any, **kw: Any) -> Any:
+        calls.append(("m2c", list(argv)))
+        return fixture.native_result(exit, stdout, stderr)
 
-    monkeypatch.setattr(process, "run", run)
+    monkeypatch.setattr(host, "run", run)
     return calls
 
 
@@ -111,6 +112,7 @@ def cards(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fake the compiler card lookup."""
     monkeypatch.setattr(draft, "m2c_target", lambda toolchain: "mips-test")
     monkeypatch.setattr(draft.state, "tool", lambda name: Path(draft.__file__))
+    monkeypatch.setattr(world, "asm_path", lambda cfg, version, name: cfg.project.root / f"asm/{version}/{name}.s")
 
 
 def test_function_draft_writes_m2c_output(tmp_path: Path, toolchains: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,8 +290,8 @@ def test_fragment_ending_on_a_jump_refuses_naming_the_slot_holder(
     }
     snapshot = _snapshot(tmp_path, functions=cut)
     calls = _mock_m2c(monkeypatch, b"never")
-    assert report.split_slot(snapshot, "func_80000400") == "func_80000404"
-    assert report.split_slot(snapshot, "func_80000404") is None
+    assert draft.split_slot(snapshot, "func_80000400") == "func_80000404"
+    assert draft.split_slot(snapshot, "func_80000404") is None
     with pytest.raises(Refusal) as caught:
         _create(snapshot, "func_80000400", tmp_path / "out.c")
     (finding,) = caught.value.findings
@@ -298,7 +300,7 @@ def test_fragment_ending_on_a_jump_refuses_naming_the_slot_holder(
 
 
 def test_whole_function_has_no_split_slot(tmp_path: Path, toolchains: Any) -> None:
-    assert report.split_slot(_snapshot(tmp_path), "func_80000400") is None
+    assert draft.split_slot(_snapshot(tmp_path), "func_80000400") is None
 
 
 def _function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: bytes) -> Snapshot:
@@ -324,12 +326,7 @@ def test_a_name_a_project_header_defines_as_a_macro_gets_that_header_included(
     snapshot = _function(tmp_path, monkeypatch, b"void func_80000400(void) {\n    f(NULL);\n}\n")
     monkeypatch.setattr(draft.headers, "sources", lambda s: ["include/stddef.h"])
     monkeypatch.setattr(draft.headers, "catalog", lambda s: {})
-    monkeypatch.setattr(
-        type(snapshot),
-        "read",
-        lambda self, path: b"schema = 1\n\n[symbol]\n" if path == "symbols.toml" else b"#define NULL ((void *)0)\n",
-        raising=False,
-    )
+    monkeypatch.setattr(type(snapshot), "read", lambda self, path: b"#define NULL ((void *)0)\n", raising=False)
     out = tmp_path / "draft.c"
     _create(snapshot, "func_80000400", out)
     assert out.read_text().startswith('#include "stddef.h"\n')
@@ -376,27 +373,25 @@ def test_draft_defines_the_function_with_the_return_type_the_project_declares(
 def _two_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
     """m2c answers differently with and without --stack-structs, so the stages are distinct drafts."""
 
-    def run(name: str, argv: Any, cwd: Path, **kw: Any) -> Any:
+    def run(argv: Any, cwd: Path, config: Any, **kw: Any) -> Any:
         body = "/* stack */\n" * ("--stack-structs" in argv) + "void func_80000400(void) {\n}\n"
-        return fixture.native_result(argv, 0, body.encode(), b"")
+        return fixture.native_result(0, body.encode(), b"")
 
-    monkeypatch.setattr(process, "run", run)
+    monkeypatch.setattr(host, "run", run)
 
 
 def _serial_pool(monkeypatch: pytest.MonkeyPatch, check: Any) -> list[int]:
     dispatched: list[int] = []
 
-    def fake(config: Any, name: str, function: Any, items: Any, key: Any = None) -> list[Any]:
-        if name == "draft.m2c":
-            return [function(item) for item in items]
-        dispatched.extend([len(items)] * bool(items))
-        return [check(item[3]) for item in items]
+    def checked(snapshot: Any, member: str, drafts: list[Any]) -> list[Any]:
+        dispatched.append(len(drafts))
+        return [check(d) for d in drafts]
 
-    monkeypatch.setattr(draft.pool, "map", fake)
+    monkeypatch.setattr(draft, "_checked", checked)
     return dispatched
 
 
-def test_draft_is_the_richest_stage_that_builds_from_one_pool_map(
+def test_draft_is_the_richest_stage_that_builds_from_one_screen(
     tmp_path: Path, toolchains: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     snapshot = _function(tmp_path, monkeypatch, b"void func_80000400(void) {\n}\n")
@@ -434,16 +429,17 @@ def _fake_compiler(monkeypatch: pytest.MonkeyPatch, errors: list[str]) -> list[A
     proofs: list[Any] = []
     pending = iter(errors)
 
-    class Proof:
-        def __init__(self) -> None:
+    def screen(config: Any, rows: Any) -> list[Any]:
+        out = []
+        for row in rows:
+            proofs.append(row)
             reason = next(pending)
-            self.missing = (f"version a: compile.error: {reason}",) if reason else ()
+            missing = (f"version a: compile.error: {reason}",) if reason else ()
+            out.append(judge.Verdict((fixture.proof("u", "func_80000400", "a", not missing, missing),), False, ()))
+        return out
 
-    monkeypatch.undo()  # the real _checked, with only the compiler faked
-    monkeypatch.setattr(draft.layout, "unit_options", lambda s, m, source: [(None, {})])
-    monkeypatch.setattr(draft.layout, "overlay", lambda s, writes: s)
-    monkeypatch.setattr(draft.recipes, "resolve", lambda *a: None)
-    monkeypatch.setattr(draft.native, "prove", lambda *a: proofs.append(a) or (Proof(),))
+    monkeypatch.setattr(draft, "_checked", REAL_CHECKED)
+    monkeypatch.setattr(draft.judge, "score_many", screen)
     return proofs
 
 
@@ -453,7 +449,7 @@ def test_checked_reports_an_undeclared_stack_slot_and_adds_no_declaration_for_it
     snapshot = _function(tmp_path, monkeypatch, b"")
     proofs = _fake_compiler(monkeypatch, ["func_80000400.c:3: `sp30' undeclared (first use in this function)"])
     text = "void func_80000400(void) {\n    x = sp30[0];\n}\n"
-    fixed = draft._checked((snapshot, "func_80000400", "a", {"text": text, "gbi_rewrites": 0}))
+    fixed = draft._checked(snapshot, "func_80000400", [{"text": text, "gbi_rewrites": 0}])[0]
     assert "sp30' undeclared" in fixed["reason"] and len(proofs) == 1 and fixed["text"] == text
 
 
@@ -463,7 +459,7 @@ def test_checked_arity_mismatch_is_reported_without_a_define(
     snapshot = _function(tmp_path, monkeypatch, b"")
     proofs = _fake_compiler(monkeypatch, ["func_80000400.c:4: too many arguments to function `func_80000500'"])
     text = "void func_80000400(void) {\n    func_80000500(1);\n}\n"
-    result = draft._checked((snapshot, "func_80000400", "a", {"text": text, "gbi_rewrites": 0}))
+    result = draft._checked(snapshot, "func_80000400", [{"text": text, "gbi_rewrites": 0}])[0]
     assert "too many arguments" in result["reason"] and len(proofs) == 1
     assert result["text"] == text and "#define func_80000500" not in result["text"]
 
@@ -536,11 +532,11 @@ def test_draft_drops_a_store_to_a_saved_register_slot_nothing_reads(
 
 def test_the_macro_header_defines_null_and_a_large_function_with_an_empty_body_is_no_draft():
     assert "#define NULL" in draft.with_macros("M2C_UNK x;\n")
-    entry = Member("f", "function", "asm", "main", (Placement("a", ".text", 0, 0x40, 0x80000400),))
+    entry = Member("f", "function", "main", (Placement("a", ".text", 0, 0x40, 0x80000400),))
     empty = "void f(void) {\n}\n"
     assert "empty body for a 64 byte function" in draft._hollow(entry, "a", "f", empty)
     assert draft._hollow(entry, "a", "f", "void f(void) {\n    g();\n}\n") == ""
-    small = Member("f", "function", "asm", "main", (Placement("a", ".text", 0, 8, 0x80000400),))
+    small = Member("f", "function", "main", (Placement("a", ".text", 0, 8, 0x80000400),))
     assert draft._hollow(small, "a", "f", empty) == ""
 
 
@@ -556,8 +552,7 @@ def test_draft_collapses_a_division_helper_the_project_names_into_one_u64_expres
         "D_80145DA0, D_80145DA4);\n    D_80327C70 = temp_ret_2;\n    D_80327C74 = (s32) (u32) (u64) temp_ret_2;\n}\n"
     )
     snapshot = _function(tmp_path, monkeypatch, text.encode())
-    table = {"__udivdi3": {"kind": "function", "a": 0x80000500}}
-    monkeypatch.setattr(draft.symbols, "load", lambda reader, versions, cache=None: table)
+    monkeypatch.setattr(draft.api, "symbols", lambda config, version: {"__udivdi3": (0x80000500, 0, 8, "func")})
     out = tmp_path / "draft.c"
     _create(snapshot, "func_80000400", out)
     assert "D_80327C70 = now() * 1000ULL / D_80145DA0;" in out.read_text()
@@ -571,7 +566,7 @@ def _view(members: list[Member]) -> SimpleNamespace:
 
 
 def _span(name: str, version: str, vram: int, size: int, rom: int = 0) -> Member:
-    return Member(name, "data", "data", "main", (Placement(version, ".data", rom, rom + size, vram),))
+    return Member(name, "data", "main", (Placement(version, ".data", rom, rom + size, vram),))
 
 
 def test_an_address_past_an_inner_span_still_lands_in_the_outer_span_that_holds_it() -> None:
@@ -583,17 +578,16 @@ def test_an_address_past_an_inner_span_still_lands_in_the_outer_span_that_holds_
 
 
 def test_a_word_is_a_pointer_only_where_every_other_version_points_to_the_same_place(monkeypatch) -> None:
-    here = Member("d", "data", "data", "main", tuple(Placement(v, ".data", 0, 4, 0x80000600) for v in "ab"))
+    here = Member("d", "data", "main", tuple(Placement(v, ".data", 0, 4, 0x80000600) for v in "ab"))
     target = Member(
         "t",
-        "data",
         "data",
         "main",
         (Placement("a", ".data", 0, 0x40, 0x80000700), Placement("b", ".data", 0, 0x40, 0x80000900)),
     )
     view = _view([here, target])
     words = {"a": (0x80000710).to_bytes(4, "big"), "b": (0x80000910).to_bytes(4, "big")}
-    monkeypatch.setattr(draft.versions, "rom_bytes", lambda record, start, end: words[record.id])
+    monkeypatch.setattr(draft.world, "rom_bytes", lambda record, start, end: words[record.id])
     held: dict = {}
     images: dict = {}
     hit = draft._into(view, held, "a", 0x80000710)
@@ -608,8 +602,8 @@ def test_a_word_is_a_pointer_only_where_every_other_version_points_to_the_same_p
 
 def test_each_other_versions_member_image_is_read_once_however_many_words_there_are(monkeypatch) -> None:
     places = tuple(Placement(v, ".data", 0, 256, 0x80000600) for v in "abc")
-    here = Member("d", "data", "data", "main", places)
-    target = Member("t", "data", "data", "main", tuple(Placement(v, ".data", 0, 0x40, 0x80000700) for v in "abc"))
+    here = Member("d", "data", "main", places)
+    target = Member("t", "data", "main", tuple(Placement(v, ".data", 0, 0x40, 0x80000700) for v in "abc"))
     view = SimpleNamespace(
         layout=SimpleNamespace(members={"d": here, "t": target}),
         versions={v: SimpleNamespace(id=v) for v in "abc"},
@@ -621,7 +615,7 @@ def test_each_other_versions_member_image_is_read_once_however_many_words_there_
         reads.append(record.id)
         return word
 
-    monkeypatch.setattr(draft.versions, "rom_bytes", rom_bytes)
+    monkeypatch.setattr(draft.world, "rom_bytes", rom_bytes)
     held: dict = {}
     images: dict = {}
     hit = draft._into(view, held, "a", 0x80000710)
@@ -672,10 +666,10 @@ def test_a_draft_that_fails_on_a_dereferenced_scalar_is_retyped_until_it_builds(
     snapshot = _function(tmp_path, monkeypatch, b"void func_80000400(void) {\n    g(*var);\n}\n")
     seen: list[str] = []
 
-    def checked(item: Any) -> Any:
-        seen.append(item[3]["text"])
-        bad = "s32 *var" not in item[3]["text"]
-        return {**item[3], "reason": "x.c:40: invalid type argument of `unary *'" if bad else ""}
+    def checked(snapshot: Any, member: str, drafts: list[Any]) -> list[Any]:
+        seen.append(drafts[0]["text"])
+        bad = "s32 *var" not in drafts[0]["text"]
+        return [{**drafts[0], "reason": "x.c:40: invalid type argument of `unary *'" if bad else ""}]
 
     monkeypatch.setattr(draft, "_checked", checked)
     skew = draft.with_macros("M2C_x").count("\n")

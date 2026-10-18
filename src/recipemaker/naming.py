@@ -1,5 +1,5 @@
 """`recipe name`: evidence packs for an outside naming lane, then rows validated against the style and the map, turned
-into `symbol`/`module`/`source`/`header` moves that `recipe apply` sends to unbake unchanged. Catalog names (N0) and
+into one file patch (symbol, module, source and header renames) that `recipe apply` applies. Catalog names (N0) and
 tag-named subsystems (N2) need no model. No name is accepted without evidence a reader can check in map.json."""
 
 from __future__ import annotations
@@ -11,12 +11,11 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from unbake import store
+from unbake import api
 from unbake.contracts import Config, Json
 
 from recipemaker import state, structure, style, table
 
-STEPS = ("N0", "N1", "N2", "N3", "N4")
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2, "type": 2}
 _EVIDENCE = re.compile(r"^(callee|caller|tag) (\S+)$|^string '(.*)'$", re.S)
 _CARD_LIMIT = 12
@@ -218,27 +217,18 @@ def _ledger(config: Config, name: str) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
-def _append(config: Config, label: str, moves: Sequence[Json]) -> None:
-    """The moves as their own batch at the end of the structure stream, so `recipe apply` runs them unchanged."""
-    root = config.project.root / ".unbake/recipe/structure"
-    try:
-        proposal = json.loads((root / "proposal.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        proposal = {"runs": []}
-    old = (root / "moves.jsonl").read_text(encoding="utf-8") if (root / "moves.jsonl").is_file() else ""
-    proposal["runs"].append({"segment": label, "count": len(moves)})
-    files = {"moves.jsonl": old + structure._lines(moves), "proposal.json": json.dumps(proposal)}
-    files |= {n: t for n, t in (("cursor.json", "0"), ("refused.jsonl", "")) if not (root / n).is_file()}
-    for name, text in files.items():
-        store.write(root / name, text.encode())
-
-
-def _queued(config: Config) -> set[str]:
-    """Every subject and target of the symbol moves already waiting in the saved structure stream."""
-    path = config.project.root / ".unbake/recipe/structure/moves.jsonl"
-    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-    rows = [json.loads(x) for x in lines]
-    return {n for r in rows if r["op"] == "symbol" for n in (r["subject"], r["target"])}
+def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
+    """The moves as a saved patch: `{"patch", "files", "moves", "path"}`, the patch built on the files as they are."""
+    captured = api.capture(config)
+    built = dict(
+        structure.build(
+            config.project.root,
+            moves,
+            lambda name: captured.owner(doc["names_from"], name),
+            structure.modules_of(doc),
+        )
+    )
+    return {**built, "path": structure.save(config, built) if built["moves"] else ""}
 
 
 def _number(config: Config) -> int:
@@ -326,14 +316,9 @@ def next_(config: Config, params: Json) -> Json:
             if m.get("sdk_name") and m["sdk_name"] not in ctx.taken and style.neutral(n):
                 claims.setdefault(m["sdk_name"], []).append(n)
         # one name, one function: a name two members claim stays neutral on both and is recorded in the ledger
-        queued = _queued(config)  # the structure stream may already rename it: a second move would be a duplicate
-        moves = [
-            {"op": "symbol", "subject": n[0], "target": t}
-            for t, n in claims.items()
-            if len(n) == 1 and t not in queued and n[0] not in queued
-        ]
+        moves = [{"op": "symbol", "subject": n[0], "target": t} for t, n in claims.items() if len(n) == 1]
         twice = [{"name": t, "members": n} for t, n in sorted(claims.items()) if len(n) > 1]
-        store.write(_root(config) / "n0-ledger.jsonl", "".join(json.dumps(r) + "\n" for r in twice).encode())
+        structure.write(_root(config) / "n0-ledger.jsonl", "".join(json.dumps(r) + "\n" for r in twice))
     else:
         done: set[str] = set()
         for row in _auto(ctx) if step == "N2" else []:
@@ -347,16 +332,16 @@ def next_(config: Config, params: Json) -> Json:
         cards = [_card(ctx, kind, t, doc["names_from"]) for kind, t in pick]
         pack = {"step": step, "k": k, "targets": cards, "answer": answer}
         pack |= {x: rules[x] for x in ("names", "banned", "evidence_forms")}
-        store.write(path, json.dumps(pack).encode())
-    if moves:
-        _append(config, f"names-{step}", moves)
+        structure.write(path, json.dumps(pack))
+    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
     return {
         "action": "next",
         "step": step,
         "pack": str(path.relative_to(config.project.root)) if path else None,
         "targets": len(pick),
-        "moves": len(moves),
-        "next": "recipe apply" if moves else f"recipe name submit {answer}" if pick else "recipe status",
+        **{k: built[k] for k in ("patch", "files", "moves", "path")},
+        "stream": structure.stream(built) if built["moves"] else "",
+        "next": "recipe apply" if built["moves"] else f"recipe name submit {answer}" if pick else "recipe status",
         "after": f"recipe name submit {answer}" if pick else "",
     }
 
@@ -366,7 +351,8 @@ def submit(config: Config, params: Json) -> Json:
     path = Path(params["file"])
     if not path.is_file():
         raise state.stop("recipe.name", f"{path} does not exist", action="recipe name next")
-    ctx = Map(config, structure.evidence(config, params["host"]))
+    doc = structure.evidence(config, params["host"])
+    ctx = Map(config, doc)
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -383,22 +369,23 @@ def submit(config: Config, params: Json) -> Json:
             continue
         accepted.append((row, _moves(ctx, row)))
     moves = [m for _, group in accepted for m in group]
-    if moves:
-        _append(config, f"names-{k}", moves)
+    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
     banners = [{"name": r["name"], "kind": r["kind"], "doc": " ".join(r["doc"].split())} for r, _ in accepted]
-    store.write(_root(config) / f"banners-{k}.json", json.dumps(banners).encode())
+    structure.write(_root(config) / f"banners-{k}.json", json.dumps(banners))
     old = _ledger(config, "refused.jsonl")
-    store.write(_root(config) / "refused.jsonl", (old + structure._lines(refused)).encode())
+    structure.write(
+        _root(config) / "refused.jsonl", old + "".join(json.dumps(r, sort_keys=True) + "\n" for r in refused)
+    )
     return {
         "action": "submit",
         "rows": len(rows),
         "accepted": len(accepted),
         "refused": len(refused),
         "by_rule": dict(Counter(r["rule"] for r in refused)),
-        "moves": len(moves),
-        "batch": f"names-{k}",
+        **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
+        "stream": structure.stream(built) if built["moves"] else "",
         "banners": f".unbake/recipe/name/banners-{k}.json",
-        "next": "recipe apply" if moves else "recipe name next",
+        "next": "recipe apply" if built["moves"] else "recipe name next",
     }
 
 
@@ -434,7 +421,7 @@ def banners(config: Config, params: Json) -> Json:
             line = _banner(name, item["doc"], f"{vram:08X}" if vram is not None else "", version)
             text = text[: start.start()] + line + text[start.start() :]
         target = _root(config) / "banners" / (unit.replace("/", "__"))
-        store.write(target, text.encode())
+        structure.write(target, text)
         out.append(str(target.relative_to(config.project.root)))
     return {
         "action": "banners",

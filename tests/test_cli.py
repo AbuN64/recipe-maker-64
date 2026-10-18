@@ -4,7 +4,8 @@ import json
 from contextlib import contextmanager
 
 import pytest
-from unbake import config as unbake_config
+from r1_fake_api import fake_api  # noqa: F401
+from unbake import api
 from unbake.contracts import Finding, Refusal
 
 from recipemaker import cli, work
@@ -16,33 +17,19 @@ RESULTS = {
         "headers": {"before": 7, "after": 6},
         "boundaries": [{"left": "f3", "right": "f4", "signals": ["padding", "calls"]}],
         "moves": 2,
-        "path": ".unbake/recipe/structure/moves.jsonl",
+        "patch": "diff --git a/x b/x\n",
+        "files": ["x"],
+        "path": ".unbake/recipe/patches/patch-1.diff",
         "next": "recipe apply",
     },
-    "apply": {
-        "batch": "span_1000",
-        "moves": 2,
-        "applied": 1,
-        "refused": [
-            {
-                "move": {"op": "member", "subject": "f2", "target": "code_1"},
-                "key": "move.not_exact",
-                "reason": "unit differs",
-            }
-        ],
-        "units": {"before": 5, "after": 4},
-        "headers": {"before": 7, "after": 6},
-        "files": ["Makefile"],
-        "message": "move: 1 moves",
-        "remaining": 0,
-        "next": "git add -A && recipe apply",
-    },
+    "apply": {"patch": "patch-1.diff", "left": 0, "changed": ["Makefile"], "next": "recipe structure"},
     "name": {
         "action": "next",
         "step": "N2",
         "pack": ".unbake/recipe/name/pack-1.json",
         "targets": 7,
         "moves": 4,
+        "path": ".unbake/recipe/patches/patch-2.diff",
         "next": "recipe apply",
     },
     "style": {
@@ -62,9 +49,7 @@ RESULTS = {
         "regions": 12,
         "why": "a twin exists",
         "twin": "func_b in src/b.c (de)",
-        "withheld": [],
         "aims": [],
-        "evidence": "3 of 4 touched addresses covered by landed code",
         "idle_minutes": 15,
         "stall_tries": 4,
         "next": "recipe work func_a",
@@ -96,7 +81,6 @@ RESULTS = {
         "compiled": False,
         "stalled": 2,
         "regions": {"matched": 9, "total": 12, "gained": 2},
-        "permuter": "permuter: not run (the candidate does not compile or holds M2C_ text)",
         "stall_tries": 4,
         "minutes_left": 9.0,
         "score": {"eu": 0.0},
@@ -151,7 +135,7 @@ def test_a_failed_try_says_it_does_not_compile_with_the_budget_left():
 def test_try_text_says_why_the_score_is_not_exact():
     text = cli.render("try", RESULTS["try"])
     assert "why: built is 16 bytes longer than the target\nwhy: size 64 != 48\nfile:" in text
-    assert "regions matching 9 of 12 (+2)\npermuter: not run (the candidate" in text
+    assert "regions matching 9 of 12 (+2)\n" in text
 
 
 def test_a_try_that_does_not_compile_prints_the_compilers_own_message():
@@ -159,20 +143,14 @@ def test_a_try_that_does_not_compile_prints_the_compilers_own_message():
     assert "compiler: src/f.c:15: called object is not a function" in got
 
 
-def test_a_result_exact_for_some_versions_says_the_others_are_withheld_on_landing():
-    got = cli.render("try", {**RESULTS["try"], "score": {"de": 1.0, "eu": 0.8}})
-    assert got.splitlines()[0] == "exact for de; eu withheld on landing"
-
-
 def test_next_text_says_which_twin_it_has_or_none():
     assert "twin: func_b in src/b.c (de)" in cli.render("next", RESULTS["next"])
     assert "twin: none" in cli.render("next", {**RESULTS["next"], "twin": "none"})
-    assert "withheld: eu, eu-x" in cli.render("next", {**RESULTS["next"], "withheld": ["eu", "eu-x"], "aims": ["de"]})
 
 
 def test_work_text_is_the_landing_result_score_file_brief_budget_and_wall_time_without_the_rungs():
     assert cli.render("work", RESULTS["work"]).splitlines() == [
-        "saved as nonmatching eu 96.8% (commit c0ffee)",
+        "saved as nonmatching eu 96.8% (c0ffee)",
         "result: fuzzy",
         "score: eu 96.8%",
         "twin: func_b in src/b.c (de)",
@@ -180,7 +158,7 @@ def test_work_text_is_the_landing_result_score_file_brief_budget_and_wall_time_w
         "file: /work/project/c.c",
         "brief: /work/project/b.md",
         "budget: 3 tries without progress left, 14 idle minutes left",
-        "wall: 171 s (--seconds bounds the permuter only)",
+        "wall: 171 s",
         "next: recipe try func_a",
     ]
 
@@ -194,32 +172,13 @@ def test_work_text_counts_the_placeholders_left_by_class_most_first():
 def test_try_says_landed_only_for_an_exact_landing_and_saved_as_nonmatching_for_a_fuzzy_one():
     exact = cli.render("try", {**RESULTS["try"], "result": "exact", "compiled": True, "landed": "abc"})
     fuzzy = cli.render("try", {**RESULTS["try"], "result": "fuzzy", "compiled": True, "saved": "def"})
-    assert "landed (commit abc)" in exact and "saved" not in exact
-    assert "saved as nonmatching eu 0.0% (commit def)" in fuzzy and "landed" not in fuzzy
-
-
-def test_the_stage_tree_and_cache_lines_stay_off_the_terminal_unless_asked(wired, monkeypatch, capsys):
-    monkeypatch.setitem(cli._VERBS, "status", lambda config, params: dict(RESULTS["status"]))
-    monkeypatch.setattr(cli.human, "attach", lambda stream, tty: None)  # the live stage lines are unbake's own
-    monkeypatch.setattr(cli.human, "summary", lambda records: ["slow: x", "cache: y"])
-    assert cli.main(["--host", "/work/host.toml", "status"]) == 0
-    assert capsys.readouterr().err == ""
-    assert cli.main(["--host", "/work/host.toml", "status", "--stages"]) == 0
-    assert capsys.readouterr().err == "slow: x\ncache: y\n"
-
-
-@pytest.fixture(autouse=True)
-def finished(monkeypatch):
-    """The configs the command runner handed to the cache's end-of-command bookkeeping."""
-    ended = []
-    monkeypatch.setattr(cli.store, "finish_command", ended.append)
-    return ended
+    assert "landed (abc)" in exact and "saved" not in exact
+    assert "saved as nonmatching eu 0.0% (def)" in fuzzy and "landed" not in fuzzy
 
 
 @pytest.fixture
 def wired(fakes, monkeypatch):
-    monkeypatch.setattr(unbake_config, "load", lambda root, host: fakes.config)
-    monkeypatch.setattr(cli.effort, "bind", lambda c: None)
+    monkeypatch.setattr(api, "load", lambda root, host: fakes.config)
     return fakes
 
 
@@ -238,9 +197,7 @@ def test_main_json_prints_one_object_with_ok_true(wired, monkeypatch, capsys):
     assert cli.main(["--host", "/work/host.toml", "status", "--json"]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["ok"] is True and body["open"] == 3
-    assert body["wall_s"] == round(
-        next(r.wall_seconds for r in cli.effort.closed() if r.kind == "command")
-    )  # from effort
+    assert isinstance(body["wall_s"], int)
 
 
 def test_a_refusal_exits_one_and_prints_its_reason_and_one_next_line(wired, monkeypatch, capsys):
@@ -302,7 +259,7 @@ def test_a_refusal_never_sends_the_agent_back_to_the_command_it_refused(wired, m
 def test_the_landing_is_the_first_line_of_work_and_try():
     for verb in ("work", "try"):
         done = {**RESULTS[verb], "result": "exact", "compiled": True, "landed": "abc", "saved": ""}
-        assert cli.render(verb, done).splitlines()[0] == "landed (commit abc)"
+        assert cli.render(verb, done).splitlines()[0] == "landed (abc)"
 
 
 def test_a_failure_after_a_landing_still_says_landed_first_and_ends_in_a_concrete_next(wired, monkeypatch, capsys):
@@ -312,7 +269,7 @@ def test_a_failure_after_a_landing_still_says_landed_first_and_ends_in_a_concret
     monkeypatch.setitem(cli._VERBS, "try", late)
     assert cli.main(["--host", "/work/host.toml", "try", "func_a"]) == 3
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == "landed (commit abc1234)" and "KeyError" in "\n".join(lines) and lines[-1] == "next: recipe next"
+    assert lines[0] == "landed (abc1234)" and "KeyError" in "\n".join(lines) and lines[-1] == "next: recipe next"
 
 
 def test_an_internal_error_before_any_landing_ends_in_a_skip_command_for_the_item(wired, monkeypatch, capsys):
@@ -325,17 +282,10 @@ def test_status_names_the_top_declaration_conflicts():
     assert "debt: gX blocks 2 items, 3 spellings" in cli.render("status", RESULTS["status"]).splitlines()
 
 
-def test_next_text_prints_the_evidence_line_under_the_why_line():
-    lines = cli.render("next", RESULTS["next"]).splitlines()
-    assert lines[lines.index("why: a twin exists") + 1] == "evidence: 3 of 4 touched addresses covered by landed code"
-
-
-def test_structure_prints_only_json_lines_to_stdout_and_the_summary_with_one_next_line_to_stderr(
+def test_structure_prints_one_patch_object_to_stdout_and_the_summary_with_one_next_line_to_stderr(
     wired, monkeypatch, capsys
 ):
-    stream = (
-        '{"op": "member", "subject": "f1", "target": "code_1"}\n{"op": "source", "subject": "c", "target": "a.c"}\n'
-    )
+    stream = json.dumps({"patch": RESULTS["structure"]["patch"], "files": ["x"], "moves": 2}) + "\n"
     seen = []
 
     def structure(config, params):
@@ -345,22 +295,29 @@ def test_structure_prints_only_json_lines_to_stdout_and_the_summary_with_one_nex
     monkeypatch.setitem(cli._VERBS, "structure", structure)
     assert cli.main(["--host", "/work/host.toml", "structure", "--segment", "span_1000"]) == 0
     out, err = capsys.readouterr()
-    assert [json.loads(line)["op"] for line in out.splitlines()] == ["member", "source"]
+    assert json.loads(out) == {"patch": "diff --git a/x b/x\n", "files": ["x"], "moves": 2}
     assert err.splitlines()[-1] == "next: recipe apply" and err.count("next:") == 1 and "proposed 2 moves" in err
     assert seen[0]["segment"] == "span_1000" and str(seen[0]["host"]) == "/work/host.toml"
 
 
-def test_structure_json_prints_one_object_without_the_moves(wired, monkeypatch, capsys):
+def test_structure_json_prints_one_object_with_the_patch_and_without_the_stream(wired, monkeypatch, capsys):
     monkeypatch.setitem(cli._VERBS, "structure", lambda c, p: {**RESULTS["structure"], "stream": "{}\n"})
     assert cli.main(["--host", "/work/host.toml", "structure", "--json"]) == 0
     body = json.loads(capsys.readouterr().out)
-    assert body["ok"] is True and body["moves"] == 2 and "stream" not in body and body["modules"]["after"] == 6
+    assert body["ok"] is True and body["moves"] == 2 and "stream" not in body and body["patch"].startswith("diff")
 
 
-def test_apply_text_ends_with_one_next_line_and_names_each_refused_move():
+def test_apply_text_ends_with_one_next_line_and_names_the_patch():
     text = cli.render("apply", RESULTS["apply"])
-    assert text.splitlines()[-1] == f"next: {RESULTS['apply']['next']}" and text.count("next:") == 1
-    assert "refused f2: move.not_exact unit differs" in text and "segment span_1000: 1 of 2 moves applied" in text
+    assert text.splitlines()[-1] == "next: recipe structure" and text.count("next:") == 1
+    assert "applied patch-1.diff, 0 patches left" in text
+
+
+def test_apply_takes_an_optional_patch_and_gets_the_host(wired, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setitem(cli._VERBS, "apply", lambda c, p: (seen.append(p), dict(RESULTS["apply"]))[1])
+    assert cli.main(["--host", "/work/host.toml", "apply", "x.diff"]) == 0
+    assert seen[0]["patch"] == "x.diff" and str(seen[0]["host"]) == "/work/host.toml"
 
 
 def test_a_move_refusal_renders_its_own_sentence_and_fix(wired, monkeypatch, capsys):
@@ -380,8 +337,8 @@ def test_the_parser_lists_the_naming_and_style_verbs():
 
 def test_name_submit_and_banners_texts_end_in_one_next_line():
     submit = {"action": "submit", "rows": 5, "accepted": 3, "refused": 2, "by_rule": {"banned": 2}, "moves": 4}
-    text = cli.render("name", {**submit, "batch": "names-1", "next": "recipe apply"})
-    assert "3 of 5 names accepted as 4 moves in names-1" in text and "refused 2: banned 2" in text
+    text = cli.render("name", {**submit, "path": "p.diff", "next": "recipe apply"})
+    assert "3 of 5 names accepted as 4 moves in p.diff" in text and "refused 2: banned 2" in text
     assert text.splitlines()[-1] == "next: recipe apply" and text.count("next:") == 1
     banners = cli.render(
         "name", {"action": "banners", "files": ["a.c"], "skipped": 1, "next": "unbake submit --bulk a.c"}
@@ -406,32 +363,6 @@ def test_style_exits_one_when_the_ratchet_rose_and_zero_otherwise(wired, monkeyp
     monkeypatch.setitem(cli._VERBS, "style", lambda c, p: {**RESULTS["style"], "rose": {}})
     assert cli.main(["--host", "/work/host.toml", "style", "--census", "src/a.c"]) == 0
     assert capsys.readouterr().out.splitlines()[-1] == "next: recipe status"
-
-
-@pytest.mark.parametrize("outcome", ["ok", "refused", "crash"])
-def test_every_loaded_command_ends_with_exactly_one_cache_finish(wired, finished, monkeypatch, outcome):
-    def verb(config, params):
-        if outcome == "refused":
-            raise Refusal(Finding("recipe.dirty", "x"))
-        if outcome == "crash":
-            raise RuntimeError("boom")
-        return dict(RESULTS["status"])
-
-    monkeypatch.setitem(cli._VERBS, "status", verb)
-    cli.main(["--host", "/work/host.toml", "status"])
-    assert finished == [wired.config]
-
-
-def test_the_tui_ends_with_one_cache_finish_too(wired, finished, monkeypatch):
-    monkeypatch.setattr(cli.tui, "run", lambda config: 0)
-    assert cli.main(["--host", "/work/host.toml", "tui"]) == 0
-    assert finished == [wired.config]
-
-
-def test_a_command_that_never_loaded_a_config_finishes_nothing(finished, monkeypatch):
-    monkeypatch.delenv("UNBAKE_HOST", raising=False)
-    cli.main(["status"])
-    assert finished == []
 
 
 def test_every_verb_runs_inside_the_lifecycle_guard_so_a_dead_caller_ends_it(wired, monkeypatch):

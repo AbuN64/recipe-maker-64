@@ -84,7 +84,7 @@ def tracked(monkeypatch):
         found = [p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file() and ".unbake" not in p.parts]
         return SimpleNamespace(stdout="\n".join(found).encode())
 
-    monkeypatch.setattr(style.process, "git", git)
+    monkeypatch.setattr(style.host, "git", git)
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +95,7 @@ def inline_pool(monkeypatch):
         jobs.append(len(items))
         return [function(i) for i in items]
 
-    monkeypatch.setattr(style.pool, "map", fake)
+    monkeypatch.setattr(style.api, "pool_map", fake)
     return jobs
 
 
@@ -214,7 +214,7 @@ def test_the_parse_cache_parses_a_file_content_once(tmp_path, inline_pool):
 def test_a_listing_without_paths_comes_from_git(tmp_path, monkeypatch):
     config = project(tmp_path, {**FILES, "notes.txt": "x"})
     ran = SimpleNamespace(stdout=b"include/game/main/actor.h\nsrc/game/main/actor/actor_spawn.c\n")
-    monkeypatch.setattr(style.process, "git", lambda *a: ran)
+    monkeypatch.setattr(style.host, "git", lambda *a: ran)
     assert run(config)["files"] == 2
 
 

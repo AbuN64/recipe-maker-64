@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from importlib import resources
 
-from unbake import effort
+from unbake import api
 from unbake.contracts import Finding, Json, Refusal
 
 
@@ -16,7 +16,7 @@ def resource(name: str) -> bytes:
 
 def table(name: str) -> Json:
     """A packaged TOML file, read once per command."""
-    return effort.memo(("recipe.table", name), lambda: tomllib.loads(resource(name).decode()))
+    return api.memo(("recipe.table", name), lambda: tomllib.loads(resource(name).decode()))
 
 
 def advice(name: str) -> str:
@@ -24,10 +24,15 @@ def advice(name: str) -> str:
     return str(table("knowledge/errors.toml")["text"][name])
 
 
-def m2c_target(toolchain: str) -> str:
-    """The m2c target of the compiler card that lists `toolchain`."""
+def compiler(toolchain: str) -> Json:
+    """The compiler card that lists `toolchain`."""
     for card in resources.files("recipemaker").joinpath("knowledge/compilers").iterdir():
         row = tomllib.loads(card.read_text(encoding="utf-8"))
         if toolchain in row["toolchains"]:
-            return str(row["m2c_target"])
+            return row
     raise Refusal(Finding("adapter.unknown", f"toolchain {toolchain} has no compiler card"))
+
+
+def m2c_target(toolchain: str) -> str:
+    """The m2c target of the compiler card that lists `toolchain`."""
+    return str(compiler(toolchain)["m2c_target"])

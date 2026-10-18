@@ -162,7 +162,7 @@ def program(monkeypatch, sources, callers):
     )
     monkeypatch.setattr(index, "get", lambda snap: get)
     monkeypatch.setattr(index, "asm", lambda snap, name: sources[name])
-    monkeypatch.setattr(rungs.layout, "unit_of", lambda snap, name: None)
+    monkeypatch.setattr(rungs.world, "unit_of", lambda snap, name: None)
     project = SimpleNamespace(root=Path("/nonexistent"), names_from="us")
     return SimpleNamespace(
         digest=str(id(sources)), config=SimpleNamespace(project=project), layout=SimpleNamespace(members={})

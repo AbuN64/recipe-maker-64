@@ -1,4 +1,4 @@
-"""Twin rung: the same function already decompiled in another version, renamed for this one."""
+"""Twin rung: a landed function of the same shape in this tree, renamed for the open one."""
 
 from __future__ import annotations
 
@@ -6,11 +6,10 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from unbake import config as configuration
-from unbake import effort, infer, layout
-from unbake.contracts import Snapshot, UnitSpec
+from unbake import api
+from unbake.contracts import Snapshot
 
-from recipemaker import cparse, draft, index
+from recipemaker import cparse, draft, host, index, world
 
 
 @dataclass(frozen=True)
@@ -23,37 +22,22 @@ class Twin:
     names: Mapping[str, str]  # counterpart name -> name in this version
 
 
-def _decompiled(snapshot: Snapshot, member: str) -> UnitSpec | None:
-    unit = layout.unit_of(snapshot, member)
-    kinds = configuration.load_resource("units.toml")["kind"]
-    return unit if unit is not None and kinds[unit.kind]["decompiled"] else None
-
-
-def _directions(snapshot: Snapshot) -> list[tuple[str, str]]:
-    return [(a, b) for a in sorted(snapshot.versions) for b in sorted(snapshot.versions) if a != b]
-
-
-def pairs(snapshot: Snapshot, directions: list[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
-    """infer.pairs, kept in the content cache: the counterpart maps are a pure function of the snapshot."""
-    return index.persisted(snapshot, "recipe.pairs", lambda: infer.pairs(snapshot, directions), extra=directions)
+def _decompiled(snapshot: Snapshot, member: str) -> world.Unit | None:
+    return world.unit_of(snapshot, member)
 
 
 def find(snapshot: Snapshot, member: str) -> Twin | None:
-    item = snapshot.layout.members.get(member)
+    """A landed function with the same mnemonic sequence: one tree holds every version, so a twin is a clone."""
+    item = world.of(snapshot).members.get(member)
     if item is None or item.kind != "function":
         return None
-    with effort.stage("recipe.twin"):
+    with host.stage("recipe.twin"):
         version = item.reference(snapshot.config.project.names_from)
-        directions = [d for d in _directions(snapshot) if d[0] == version]
-        found = pairs(snapshot, directions)
-        for (a, b), mapping in found.items():
-            other = mapping.get(member)
-            unit = _decompiled(snapshot, other) if other else None
-            if other is None or other == member or unit is None:
-                continue
-            names = {y: x for x, a_, y, b_ in infer.correspondences(snapshot) if (a_, b_) == (a, b)}
-            return Twin(member, other, a, b, unit.path, {**names, other: member})
-        return _clone(snapshot, member, version)
+        for other in _alike(snapshot, member):
+            unit = _decompiled(snapshot, other) if other != member else None
+            if unit is not None:
+                return Twin(member, other, version, version, unit.path, {other: member})
+        return None
 
 
 def _alike(snapshot: Snapshot, member: str) -> list[str]:
@@ -61,54 +45,25 @@ def _alike(snapshot: Snapshot, member: str) -> list[str]:
     return next((sorted(g) for g in index.get(snapshot).shapes.values() if member in g), [])
 
 
-def _clone(snapshot: Snapshot, member: str, version: str) -> Twin | None:
-    """A landed function of the same shape in this version: the seed when no other version has the function."""
-    for other in _alike(snapshot, member):
-        unit = _decompiled(snapshot, other) if other != member else None
-        if unit is not None:
-            return Twin(member, other, version, version, unit.path, {other: member})
-    return None
-
-
 def alike(snapshot: Snapshot, member: str) -> list[str]:
     """The open functions with the same shape as `member`."""
     return [m for m in _alike(snapshot, member) if m != member and _decompiled(snapshot, m) is None]
 
 
-def _wanting(snapshot: Snapshot, member: str) -> bool:
-    """Open, or landed with some versions withheld: the members a twin is for."""
-    unit = layout.unit_of(snapshot, member)
-    return _decompiled(snapshot, member) is None or bool(unit and unit.withheld)
-
-
 def ready(snapshot: Snapshot) -> frozenset[str]:
-    """The members `find` finds a twin for, by the same two rules; one pass per snapshot digest."""
-    return effort.memo(
-        ("twin.ready", snapshot.digest),
-        lambda: index.persisted(snapshot, "recipe.twin-ready", lambda: _ready(snapshot)),
-    )
+    """The open functions `find` finds a twin for; one pass per snapshot digest."""
+    return api.memo(("twin.ready", snapshot.digest), lambda: _ready(snapshot))
 
 
 def _ready(snapshot: Snapshot) -> frozenset[str]:
-    with effort.stage("recipe.twin-ready"):
-        found = pairs(snapshot, _directions(snapshot))
-        cloned = (
+    with host.stage("recipe.twin-ready"):
+        members = world.of(snapshot).members
+        return frozenset(
             m
             for group in index.get(snapshot).shapes.values()
             for m in group
+            if m in members and members[m].kind == "function" and _decompiled(snapshot, m) is None
             if any(_decompiled(snapshot, x) for x in group if x != m)
-        )
-        names = snapshot.config.project.names_from
-        mapped = (
-            x
-            for (a, _), mapping in found.items()
-            for x, y in mapping.items()
-            if x != y and x in snapshot.layout.members and snapshot.layout.members[x].reference(names) == a
-            if _decompiled(snapshot, y)
-        )
-        members = snapshot.layout.members
-        return frozenset(
-            m for m in [*mapped, *cloned] if m in members and members[m].kind == "function" and _wanting(snapshot, m)
         )
 
 

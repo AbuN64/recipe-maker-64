@@ -1,60 +1,39 @@
-"""The boundary with unbake: only its public API, only the runtime area, only its process and pool machinery."""
+"""The boundary with unbake: only `unbake.api` and the records, only the runtime area, one process starter, and the
+one module that runs unbake's commands."""
 
 import ast
 import re
-from importlib import resources
 from pathlib import Path
 
 import pytest
+from unbake import api as unbake_api
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "recipemaker"
 FILES = sorted(SRC.glob("*.py"))
-SHAPES = {"contracts"}  # records and protocols, not functions
-WRITERS = {"draft.py": 1, "crack.py": 2}  # the moved code's own writes, all under .unbake (scratch and work files)
+WRITERS = {"draft.py": 1, "host.py": 1, "structure.py": 1}  # the candidate file, the atomic write, the saved patch
 
 
-def api() -> dict[str, set[str]]:
-    """Module -> public names from the Public API table of unbake's shipped CONTRACTS.md."""
-    text = resources.files("unbake.resources").joinpath("CONTRACTS.md").read_text(encoding="utf-8")
-    table: dict[str, set[str]] = {}
-    for line in text.splitlines():
-        match = re.match(r"\| (\w+) \| (.+) \|$", line)
-        if match and "`" in match[2]:
-            table[match[1]] = set(re.findall(r"`(\w+)\(", match[2]))
-    return table
-
-
-def unbake_uses(path: Path) -> list[tuple[str, str, int]]:
-    """(module, attribute, line) for every `alias.attr` where alias is an unbake module imported by this file."""
+def api_uses(path: Path) -> list[tuple[str, int]]:
+    """(attribute, line) for every `api.attr` of a file that imports `unbake.api`."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    aliases: dict[str, str] = {}
-    found: list[tuple[str, str, int]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "unbake":
-            aliases.update({a.asname or a.name: a.name for a in node.names})
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("unbake."):
-            found += [(node.module.split(".")[1], a.name, node.lineno) for a in node.names]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in aliases:
-            found.append((aliases[node.value.id], node.attr, node.lineno))
-    return found
-
-
-def test_the_api_table_was_read():
-    table = api()
-    assert "compare" in table and "run" in table["compare"] and len(table) > 20
+    aliases = {
+        a.asname or a.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and n.module == "unbake"
+        for a in n.names
+        if a.name == "api"
+    }
+    return [
+        (n.attr, n.lineno)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliases
+    ]
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
-def test_r1_only_names_in_the_public_api_table_are_used(path):
-    table = api()
-    bad = []
-    for module, name, line in unbake_uses(path):
-        if module in SHAPES or module not in table:
-            continue
-        if name.startswith("_") or name not in table[module]:
-            bad.append(f"{path.name}:{line} {module}.{name}")
-    assert bad == []
+def test_r1_only_names_unbake_api_exports_are_used(path):
+    exported = set(unbake_api.__all__)
+    assert [f"{path.name}:{line} api.{name}" for name, line in api_uses(path) if name not in exported] == []
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
@@ -65,12 +44,12 @@ def test_r1_no_private_name_is_imported_from_unbake(path):
         for n in ast.walk(tree)
         if isinstance(n, ast.ImportFrom) and (n.module or "").startswith("unbake")
         for a in n.names
-        if a.name.startswith("_") and a.name != "_view"
+        if a.name.startswith("_")
     ]
     assert private == []
 
 
-def test_r3_files_are_written_only_through_the_store_except_the_moved_scratch_writes():
+def test_r3_files_are_written_only_through_host_write_except_the_named_writes():
     found = {}
     for path in FILES:
         text = path.read_text(encoding="utf-8")
@@ -81,39 +60,41 @@ def test_r3_files_are_written_only_through_the_store_except_the_moved_scratch_wr
 
 
 def test_r3_no_tracked_project_path_is_named_as_a_write_target():
-    text = "".join(p.read_text(encoding="utf-8") for p in FILES if p.name != "work.py")
-    assert not re.search(r"store\.write\([^)]*[\"'](?:src|include)/", text)
+    text = "".join(p.read_text(encoding="utf-8") for p in FILES)
+    assert not re.search(r"host\.write\([^)]*[\"'](?:src|include)/", text)
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
-def test_r4_processes_and_workers_come_only_from_unbake(path):
+def test_r4_processes_start_only_in_host(path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     banned = {"subprocess", "multiprocessing", "concurrent", "os.system"}
     names = [a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names] + [
         (n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
     ]
-    allowed = {"tui.py": {"curses", "subprocess"}}.get(path.name, set())
+    allowed = {"tui.py": {"curses", "subprocess"}, "host.py": {"subprocess"}}.get(path.name, set())
     assert [n for n in names if n in banned and n not in allowed] == []
 
 
-def test_only_ladder_and_work_import_compare_and_land_for_verdicts():
-    users = {
-        p.name for p in FILES if any(m in ("compare", "land") for m, _n, _l in unbake_uses(p) if _n not in ("Finding",))
-    }
-    assert users <= {"ladder.py", "work.py", "crack.py", "draft.py"}  # crack and draft only bind and measure
+def test_only_judge_and_structure_run_unbake_commands():
+    users = {p.name for p in FILES if re.search(r'"-m", "unbake"|with_name\("unbake"\)', p.read_text(encoding="utf-8"))}
+    assert users <= {"judge.py", "structure.py"}
 
 
 def test_no_literal_worker_count_in_a_pool_or_slot_call():
     for path in FILES:
         text = path.read_text(encoding="utf-8")
-        assert not re.search(r"(?:pool\.(?:map|gather)|\"-j\"|slots)\([^)]*\b\d+\b", text), path.name
+        assert not re.search(r"(?:pool_map|\"-j\"|slots)\([^)]*\b\d+\b", text), path.name
 
 
-def test_the_fakes_replace_only_names_the_api_table_lists():
+def test_the_fakes_replace_recipemaker_seams_or_api_exports():
     from fakes import SEAMS
 
-    table = api()
-    assert [f"{m.__name__}.{n}" for m, n, _ in SEAMS if n not in table[m.__name__.split(".")[-1]]] == []
+    bad = [
+        f"{m.__name__}.{n}"
+        for m, n, _ in SEAMS
+        if not m.__name__.startswith("recipemaker.") and not (m is unbake_api and n in unbake_api.__all__)
+    ]
+    assert bad == []
 
 
 @pytest.mark.parametrize(
@@ -170,7 +151,11 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 # Raised to 10840 for perfect-decomp (owner 2026-10-15): structure on the map's object-edge verdicts and
 # evidence rows, and flags.py (one flag set per object: the lattice through one score --variants, options, splits).
 # Then to 10920 for the project naming style (config.toml [naming]): the folders and file names recipe assigns.
-HARD_CAP = 10920  # raw lines of recipe maker Python
+# Raised to 11700 for the cutover to unbake's public api (2026-10-17): world.py (the tree as members and modules),
+# judge.py (verdicts through unbake's commands), headers.py and cpp.py (the header reads unbake no longer offers)
+# replace what Recipe Maker imported from unbake's internals; the permuter, partial landings, cross-version twins and
+# types.toml reads left with the old layout.
+HARD_CAP = 11700  # raw lines of recipe maker Python
 
 
 def test_line_budget():
@@ -185,8 +170,8 @@ def test_no_job_or_key_handed_to_the_pool_is_a_lambda():
         return (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ("map", "gather")
-            and getattr(node.func.value, "id", "") == "pool"
+            and node.func.attr == "pool_map"
+            and getattr(node.func.value, "id", "") == "api"
         )
 
     for path in FILES:

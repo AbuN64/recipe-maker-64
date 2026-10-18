@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import pickle
 import re
 from bisect import bisect_right
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from unbake import effort, headers, infer, pool, store, types, versions
-from unbake.contracts import Finding, Json, Refusal, Snapshot, digest
+from unbake import api
+from unbake.contracts import Finding, Refusal, Snapshot, digest
 
-from recipemaker import cparse, ledger
+from recipemaker import cparse, headers, host, ledger, world
 
 CALL = re.compile(r"\bjal\s+([\w.$]+)")
 _MNEMONIC = re.compile(r"^\s*/\*[^*]*\*/\s+([a-z][\w.]*)", re.M)
 REFERENCE = re.compile(r"%(?:hi|lo)\(([\w.$+]+)\)")
 _IMMEDIATE = re.compile(r"[\s,](-?0x[0-9A-Fa-f]+|-?\d+)\s*(?:$|[,(])", re.M)
 _TYPE = re.compile(r"(?:extern\s+)?(?:const\s+)?(?:struct\s+)?(\w+)")
+_ACCESS = re.compile(r"^\s*/\*[^*]*\*/\s+([a-z][\w.]*)\s[^\n]*%lo\(([\w.$]+)(?:\s*\+\s*(0x[0-9A-Fa-f]+|\d+))?\)", re.M)
+_ADDRESS = re.compile(r"_([0-9A-Fa-f]{8})$")
 
 
 Uses = tuple[tuple[str, str, int], ...]  # (function, mnemonic, byte offset into the symbol)
@@ -31,8 +34,8 @@ class Index:
         self.snapshot = snapshot
 
     def _once(self, name: str, build: Callable[[Snapshot], Any]) -> Any:
-        with effort.stage(f"recipe.{name}"):
-            return effort.memo((f"recipe.{name}", self.snapshot.digest), lambda: build(self.snapshot))
+        with host.stage(f"recipe.{name}"):
+            return api.memo((f"recipe.{name}", self.snapshot.digest), lambda: build(self.snapshot))
 
     @property
     def declarations(self) -> dict[str, tuple[str, int, str]]:  # name -> (path, line, text) from `headers.catalog`
@@ -74,10 +77,10 @@ class Index:
 
 
 def _sources(snapshot: Snapshot) -> list[tuple[str, str]]:
-    """The digest of each header and types.toml, read once per snapshot."""
-    return effort.memo(
+    """The digest of each header, read once per snapshot."""
+    return api.memo(
         ("recipe.sources", snapshot.digest),
-        lambda: [(p, digest(snapshot.peek(p))) for p in [*headers.sources(snapshot), "types.toml"]],
+        lambda: [(p, digest(snapshot.peek(p))) for p in headers.sources(snapshot)],
     )
 
 
@@ -86,31 +89,67 @@ def key(snapshot: Snapshot, kind: str, *, extra: object = (), sources: bool = Fa
     version's ROM and facts, the headers when `sources`), the extra key and the digest of the installed unbake and
     recipemaker code. The snapshot digest is left out: it carries unbake's code_identity, which differs from one
     `recipe` process to the next."""
-    facts = [(v.id, v.rom_sha256, versions.facts_digest(v)) for _, v in sorted(snapshot.versions.items())]
     text = _sources(snapshot) if sources else []
-    config = snapshot.config.digest
-    return digest((kind, snapshot.layout.digest, config, facts, text, extra, store.identity().partition(";")[0]))
+    return digest((kind, snapshot.digest, text, extra, _code()))
+
+
+def _code() -> str:
+    """The digest of the installed recipemaker code, so a new build never reads an old build's entries."""
+    folder = Path(__file__).parent
+    return api.memo(
+        ("recipe.code", str(folder)), lambda: digest([p.read_bytes().hex() for p in sorted(folder.glob("*.py"))])
+    )
 
 
 def persisted[T](
     snapshot: Snapshot, kind: str, produce: Callable[[], T], *, extra: object = (), sources: bool = False
 ) -> T:
     """A value that is a pure function of the project, kept in the host content cache so the next command skips it."""
-    return store.cached_object(snapshot.config, kind, key(snapshot, kind, extra=extra, sources=sources), produce)
+    blob = api.cached(
+        snapshot.config, kind, key(snapshot, kind, extra=extra, sources=sources), lambda: pickle.dumps(produce())
+    )
+    return cast("T", pickle.loads(blob))
 
 
 def _join_key(shapes: list[set[tuple[int, int, str]]]) -> str:
     return digest(shapes)
 
 
-def _scan(item: tuple[str, str, str]) -> tuple[str, str]:
-    """The function's shape: a digest of its mnemonics, calls, references by first appearance and immediates."""
+Scan = tuple[str, str, tuple[str, ...], tuple[tuple[str, str, int], ...]]  # name, shape, calls, accesses
+
+
+def _scan(item: tuple[str, str, str]) -> Scan:
+    """What one function's assembly shows: its shape (a digest of its mnemonics, calls, references by first
+    appearance and immediates), the functions it calls and each %lo access (mnemonic, symbol, offset)."""
     path, name, _ = item
-    text = Path(path).read_text(errors="replace")
+    try:
+        text = Path(path).read_text(errors="replace")
+    except FileNotFoundError:
+        return name, "", (), ()
     calls, references = CALL.findall(text), REFERENCE.findall(text)
     seen: dict[str, int] = {}
     evidence = (calls, [seen.setdefault(r, len(seen)) for r in references], _IMMEDIATE.findall(text))
-    return name, digest((_MNEMONIC.findall(text), evidence)) if any(evidence) else ""
+    shape = digest((_MNEMONIC.findall(text), evidence)) if any(evidence) else ""
+    accesses = tuple((m[1], m[2], int(m[3], 0) if m[3] else 0) for m in _ACCESS.finditer(text))
+    return name, shape, tuple(dict.fromkeys(calls)), accesses
+
+
+def _scans(snapshot: Snapshot) -> list[Scan]:
+    """Every function of the names version scanned, kept in the content cache."""
+    return persisted(snapshot, "recipe.scans", lambda: _scan_all(snapshot))
+
+
+def _scan_all(snapshot: Snapshot) -> list[Scan]:
+    config = snapshot.config
+    version = config.project.names_from
+    record = snapshot.versions[version]
+    facts = digest((record.rom_sha256, sorted(record.symbols.items())))
+    items = [
+        (str(world.asm_path(config, version, name)), name, facts)
+        for name, member in sorted(world.of(snapshot).members.items())
+        if member.kind == "function" and any(p.version == version for p in member.placements)
+    ]
+    return list(api.pool_map(config, "recipe.scan", _scan, items, digest))
 
 
 def _evidence(snapshot: Snapshot, names: set[str]) -> list[tuple[str, str]]:
@@ -125,7 +164,7 @@ def _evidence(snapshot: Snapshot, names: set[str]) -> list[tuple[str, str]]:
 def _identities(snapshot: Snapshot) -> tuple[ledger.Identity, ...]:
     config = snapshot.config
     views = tuple(cparse.load(snapshot))
-    pairs = pool.map(config, "recipe.joins", ledger.shared_pairs, [ledger.view_shapes(views)], _join_key)[0]
+    pairs = api.pool_map(config, "recipe.joins", ledger.shared_pairs, [ledger.view_shapes(views)], _join_key)[0]
     return tuple(ledger.identities(views, _evidence(snapshot, {v.name for v in views}), pairs))
 
 
@@ -173,25 +212,17 @@ def resolve(snapshot: Snapshot, text: str) -> ledger.Result:
 
 
 def _shapes(snapshot: Snapshot) -> dict[str, tuple[str, ...]]:
-    config = snapshot.config
-    version = config.project.names_from
-    facts = versions.facts_digest(snapshot.versions[version])
-    items = [
-        (str(versions.asm_path(config, version, name)), name, facts)
-        for name, member in sorted(snapshot.layout.members.items())
-        if member.kind == "function" and any(p.version == version for p in member.placements)
-    ]
     shapes: dict[str, list[str]] = {}
-    for name, shape in pool.map(config, "recipe.scan", _scan, items, digest):
+    for name, shape, _, _ in _scans(snapshot):
         if shape:
             shapes.setdefault(shape, []).append(name)
     return {k: tuple(v) for k, v in shapes.items()}
 
 
 def _callers(snapshot: Snapshot) -> dict[str, tuple[str, ...]]:
-    """Per function the functions of the reference version that call it, from unbake's cached scan."""
+    """Per function the functions of the names version that call it."""
     callers: dict[str, list[str]] = {}
-    for name, _, called, *_ in infer.scan(snapshot)[snapshot.config.project.names_from]:
+    for name, _, called, _ in _scans(snapshot):
         for target in called:
             callers.setdefault(target, []).append(name)
     return {k: tuple(v) for k, v in callers.items()}
@@ -205,23 +236,29 @@ def _extents(snapshot: Snapshot) -> dict[str, int]:
 
 
 def _uses(snapshot: Snapshot) -> dict[str, Uses]:
-    """Per symbol the functions that read or write it directly, with the mnemonic and offset, from unbake's scan."""
+    """Per symbol the functions that read or write it through %lo, with the mnemonic and the offset into the symbol
+    that holds the address."""
     version = snapshot.config.project.names_from
     symbols = snapshot.versions[version].symbols
     order = sorted(set(symbols.values()))
     names = {address: name for name, address in sorted(symbols.items(), reverse=True)}
     found: dict[str, list[tuple[str, str, int]]] = {}
-    for name, *_, use in infer.scan(snapshot)[version]:
-        for address, _, mnemonic, how, _ in use["accesses"]:
-            at = order[bisect_right(order, address) - 1] if how != "taken" and address >= order[0] else None
-            if at is not None and names.get(at):
-                found.setdefault(names[at], []).append((name, mnemonic, address - at))
+    for name, _, _, accesses in _scans(snapshot):
+        for mnemonic, base, offset in accesses:
+            spelled = symbols.get(base)
+            label = _ADDRESS.search(base)
+            address = spelled if spelled is not None else int(label[1], 16) if label else None
+            if address is None or not order or address + offset < order[0]:
+                continue
+            at = order[bisect_right(order, address + offset) - 1]
+            if names.get(at):
+                found.setdefault(names[at], []).append((name, mnemonic, address + offset - at))
     return {k: tuple(v) for k, v in found.items()}
 
 
 def reference(snapshot: Snapshot, member: str) -> str:
     """Use names_from if the member holds it, else its lexically first holder, as unbake's Member.reference does."""
-    item = snapshot.layout.members.get(member)
+    item = world.of(snapshot).members.get(member)
     if item is None or not item.placements:
         raise Refusal(Finding("types.usage", f"{member} is in no version of this layout", unit=member))
     return item.reference(snapshot.config.project.names_from)
@@ -229,21 +266,13 @@ def reference(snapshot: Snapshot, member: str) -> str:
 
 def asm(snapshot: Snapshot, member: str, version: str = "") -> str:
     """The assembly of `member` in `version`, else in its reference version."""
-    version = version or snapshot.layout.members[member].reference(snapshot.config.project.names_from)
-    return versions.asm_path(snapshot.config, version, member).read_text(errors="replace")
+    version = version or world.of(snapshot).members[member].reference(snapshot.config.project.names_from)
+    return world.asm_path(snapshot.config, version, member).read_text(errors="replace")
 
 
 def source(snapshot: Snapshot, path: str) -> str:
     """The text of a project file in the snapshot, "" when it has none."""
     return (snapshot.peek(path) or b"").decode(errors="replace")
-
-
-def usage(snapshot: Snapshot, member: str) -> Json:
-    """Read usage in names_from when held, else the member's lexically first version; refuse no versions by name."""
-    version = reference(snapshot, member)
-    return effort.memo(
-        ("recipe.usage", snapshot.digest, member, version), lambda: types.usage(snapshot, member, version)
-    )
 
 
 def get(snapshot: Snapshot) -> Index:

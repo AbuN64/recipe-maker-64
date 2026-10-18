@@ -11,10 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from unbake import layout, report, store
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import state, work
+from recipemaker import host, state, work, world
 
 Row = dict[str, Any]
 VIEWS = ("Queue", "Item", "Status")
@@ -38,11 +37,10 @@ class Live:
         self.config = config
 
     def _snapshot(self) -> Any:
-        return layout.capture(self.config)
+        return world.capture(self.config)
 
     def queue(self) -> list[Row]:
-        snapshot = self._snapshot()
-        rows = [dict(r) for r in report.items(snapshot, {})[:LIMIT]]
+        rows = [dict(r) for r in work.items(self.config)[:LIMIT]]
         for row in rows:
             tried = state.attempts(self.config, row["member"])
             row["last"] = tried[-1].outcome if tried else ""
@@ -65,7 +63,7 @@ class Live:
         return "".join(work._asm(self._snapshot(), item).splitlines(keepends=True)[:ASM_LINES])
 
     def candidate_path(self, item: str) -> Path:
-        return self.config.project.root / ".unbake/recipe/work" / f"{store.stem(item)}.c"
+        return self.config.project.root / ".unbake/recipe/work" / f"{host.stem(item)}.c"
 
     def edit(self, item: str) -> None:
         subprocess.run([*shlex.split(os.environ.get("EDITOR") or "vi"), str(self.candidate_path(item))], check=False)

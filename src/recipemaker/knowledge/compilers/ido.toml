@@ -3,6 +3,7 @@ label = "Silicon Graphics style compiler, optimising, one pass per phase"
 source = "original"
 toolchains = ["ido-5.3", "ido-7.1"]
 m2c_target = "mips-ido-c"
+supported_options = ["-O1", "-O2", "-O3"]
 
 tells = [
   "functions open with a stack adjustment even for leaf code when a local is addressed",

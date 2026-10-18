@@ -2,78 +2,44 @@
 
 import re
 from bisect import bisect_right
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from pycparser import CParser, c_ast, c_generator
 from pycparser.c_parser import ParseError
-from unbake import effort, headers, layout, recipes, store, types
-from unbake import view as _view
-from unbake.contracts import Finding, Refusal, Snapshot, UnitSpec, digest
+from unbake.contracts import Finding, Refusal, Snapshot, digest
 
-from recipemaker import cparse
+from recipemaker import cparse, cpp, headers, host
 
 
 def signature(snapshot: Snapshot, names: Sequence[str]) -> dict[str, str]:
-    """The prototype types.toml holds for each name that has one: authored, declared or a landed definition."""
-    rows = types.load(snapshot)["function"]
-    return {n: rows[n]["signature"] for n in names if n in rows}
-
-
-def _type_map(snapshot: Snapshot, declared: Container[str] = ()) -> str:
-    """The prototypes and declarations types.toml derived, for names no header in `declared` declares: a draft
-    includes the header's declaration, so m2c must read that one and never a second that disagrees with it."""
-    with effort.stage("types.context"):
-        doc = types.load(snapshot)
-        return "\n".join(
-            [
-                doc["function"][name]["signature"] + ";"
-                for name in sorted(doc["function"])
-                if doc["function"][name]["evidence"] != "authored" and name not in declared
-            ]
-            + [
-                doc["global"][name]["declaration"]
-                for name in sorted(doc["global"])
-                if doc["global"][name]["evidence"] != "authored" and name not in declared
-            ]
-        )
+    """The prototype a project header declares for each function name that has one, without its semicolon."""
+    catalog = headers.catalog(snapshot)
+    return {n: catalog[n][2].removesuffix(";") for n in names if n in catalog and "(" in catalog[n][2]}
 
 
 def declarations(snapshot: Snapshot, names: Sequence[str]) -> dict[str, str]:
-    with effort.stage("types.declarations"):
-        doc = types.load(snapshot)
-        sigs = signature(snapshot, [n for n in names if n not in doc["global"]])
-        return {
-            name: sigs[name] + ";" if name in sigs else doc["global"][name]["declaration"]
-            for name in names
-            if name in sigs or name in doc["global"]
-        }
+    """The header declaration of each name that has one."""
+    catalog = headers.catalog(snapshot)
+    return {n: catalog[n][2] for n in names if n in catalog}
 
 
 def context(snapshot: Snapshot, version: str) -> Path:
     """The preprocessed header context file m2c reads for `version`, built once and named by its content."""
-    with effort.stage("headers.context"):
+    with host.stage("headers.context"):
         catalog = headers.catalog(snapshot)
-        extra = _type_map(snapshot, catalog)
-        path = f"build/context/{version}-{digest(extra)[:16]}.c"
         source = "".join(f'#include "{p.removeprefix("include/")}"\n' for p in headers.sources(snapshot))
-        output = snapshot.config.project.root / path
+        folder = snapshot.config.project.root / "build/context"
         try:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            store.write(output, source.encode())
-            # a plain snapshot reads the file just written, so the view key never carries the snapshot digest
-            proposed = layout.overlay(snapshot, {path: source.encode()}) if snapshot.overlays else snapshot
-            unit = UnitSpec(path, "c", "", (), snapshot.config.project.toolchain, {"add": [], "omit": []})
-            recipe = recipes.resolve(snapshot.config, unit, unit.options)
-            result = _view.get(proposed, unit, version, recipe, lines=False)
-            output = output.with_name(f"{version}-{digest((result.key, extra))[:16]}.i")  # named by its content
+            text = cpp.run(snapshot.config, "build/context/context.c", source, version)
+            output = folder / f"{version}-{digest(text)[:16]}.i"  # named by its content
             if not output.exists():
-                text = _agree(_neutralise(result.text), catalog).rstrip("\n") + "\n"
-                kept, dropped = _parseable(text, extra)
-                store.write(output, (text + kept).encode())
-                store.write(output.with_suffix(".dropped"), "\n".join(dropped).encode())  # lines C cannot read
+                text = _agree(_neutralise(text), catalog).rstrip("\n") + "\n"
+                _parseable(text)
+                host.write(output, text.encode())
         except (Refusal, OSError) as error:
-            raise Refusal(Finding("draft.context", reason=str(error), path=path)) from error
+            reason = error.findings[0].reason if isinstance(error, Refusal) else str(error)
+            raise Refusal(Finding("draft.context", reason=reason, path="build/context")) from error
         return output
 
 
@@ -131,18 +97,8 @@ def _agree(text: str, catalog: Mapping[str, tuple[str, int, str]]) -> str:
     return "".join(out)
 
 
-def _parseable(text: str, extra: str) -> tuple[str, list[str]]:
+def _parseable(text: str) -> None:
     try:
-        ast = CParser().parse(headers.normal(text))
+        CParser().parse(headers.normal(text))
     except ParseError as error:
         raise Refusal(Finding("draft.context", reason=f"the project headers do not parse: {error}")) from error
-    names = {n.name for n in ast.ext if isinstance(n, c_ast.Typedef)}
-    parser, lines, dropped = CParser(), [], []
-    for line in extra.splitlines():  # each line on its own, after stubs of just the typedef names it uses
-        words = dict.fromkeys(w for w in re.findall(r"\b[A-Za-z_]\w*\b", line) if w in names)
-        try:
-            parser.parse(headers.normal("".join(f"typedef int {w};\n" for w in words) + line + "\n"))
-            lines.append(line)
-        except ParseError:
-            dropped.append(line)
-    return "\n".join(lines) + ("\n" if lines else ""), dropped

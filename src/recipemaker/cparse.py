@@ -9,8 +9,10 @@ from dataclasses import dataclass, replace
 
 from pycparser import CParser, c_ast
 from pycparser.c_parser import ParseError
-from unbake import headers, pool
+from unbake import api
 from unbake.contracts import Finding, Refusal, Snapshot, digest
+
+from recipemaker import headers
 
 SCALARS = {
     **dict.fromkeys(("s8", "u8", "char", "void"), 1),
@@ -229,8 +231,8 @@ def _scan_row(row: tuple[str, str]) -> Parsed:
 
 
 def landed_sources(snapshot: Snapshot) -> list[str]:
-    """The landed C sources: nonmatching saves under src/fuzzy are not facts about the project."""
-    return [p for p in headers.sources(snapshot, "src", ".c") if not p.startswith("src/fuzzy/")]
+    """The C sources of the tree."""
+    return headers.sources(snapshot, "src", ".c")
 
 
 def load(snapshot: Snapshot) -> list[Layout]:
@@ -238,7 +240,7 @@ def load(snapshot: Snapshot) -> list[Layout]:
     config = snapshot.config
     paths = [*headers.sources(snapshot), *landed_sources(snapshot)]
     rows = [(path, snapshot.read(path).decode(errors="replace")) for path in paths]
-    scanned = pool.map(config, "recipe.cparse", _scan_row, rows, digest)
+    scanned = api.pool_map(config, "recipe.cparse", _scan_row, rows, digest)
     parsed = {path: found for (path, _), found in zip(rows, scanned, strict=True)}
     return _layouts(parsed)
 

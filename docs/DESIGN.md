@@ -1,12 +1,12 @@
 # AbuRecipeMaker64 design (revision 2)
 
 Status: proposal, 2026-10-09. Against unbake `main` 2f20387 (7,486 lines) and recipe maker branch `build` f6c57f7.
-Companions: `CORE-STRIP.md` (the unbake strip), `EXECUTION.md` (how it gets built), `SUMMARY.md` (owner page).
+Companions: `EXECUTION.md` (how it gets built), `SUMMARY.md` (owner page).
 Command `recipe`, package `recipemaker`.
 
 ## 0. Binding premises
 
-1. unbake is correct as it is. It loses every creative part (full strip, CORE-STRIP). No new unbake APIs. Objective behaviour stays identical.
+1. unbake is correct as it is. It loses every creative part. No new unbake APIs. Objective behaviour stays identical.
 2. recipe maker depends on unbake and imports its objective modules and machinery. Nothing is copied or reinvented. The creative modules move into recipe maker nearly verbatim.
 3. Verdicts come only from unbake (`compare.run`, `land.submit`, `land.drain`). recipe maker never writes tracked project files.
 4. Development tests are mocked at unbake's function seams. One profiled end-to-end pass runs at the end. The benchmark gate runs there.
@@ -376,7 +376,7 @@ The build order, lanes, branches and perf checks live in the maintainer's execut
 | P1 Code | All recipe maker code (moves first, then new modules). | `bin/lint` clean, imports resolve, no tests written yet. |
 | P2 Tests | Lean seam tests, then one full suite run. | `bin/test` green, under 30 s. |
 | P3 Gate | One profiled end-to-end pass and the benchmark gate. The grinder switches to `recipe`. | Gate passes warm and cold. |
-| P4 Strip | The unbake strip (CORE-STRIP) and the two owner migrations. | unbake suite green, caps enforced. |
+| P4 Strip | The unbake strip and the two owner migrations. | unbake suite green, caps enforced. |
 | P5 Driver | optional `llm.py`. | Exact per hour at least that of the external agent at equal slots. |
 
 ### Benchmark gate (in P3)
@@ -399,7 +399,7 @@ From revision 1 (2026-10-09), all holding under the full strip:
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | Subsystem labels leave unbake | Done by CORE-STRIP 2.9. Needs the `layout.toml` migration (239 `subsystem =` lines, Q3). |
+| 1 | Subsystem labels leave unbake | Done by the unbake strip. Needs the `layout.toml` migration (239 `subsystem =` lines, Q3). |
 | 2 | unbake caps hard 7,000, soft 6,500 | About 6,560 after the strip: under hard, 60 over soft (warns only). |
 | 3 | recipe maker caps 3,800 Python (raised from 3,500 on 2026-10-10), 3,000 knowledge | About 3,250 planned. See Q2 for tables. |
 | 4 | LLM driver late, one slot | P5. |
@@ -411,7 +411,7 @@ From revision 1 (2026-10-09), all holding under the full strip:
 Round 2 (2026-10-09, owner said yes to all):
 - **Q1** Merge patches ride with the next C landing that needs them. unbake already lands header edits with a C unit and re-proves every includer. No new verb and no hand commits.
 - **Q2** Moved machine tables (`gbi.toml`) do not count against the 3,000-line knowledge cap.
-- **Q3** The supervisor runs the two migrations when the strip ships: the 239 `subsystem =` lines of `layout.toml` as one approved supervisor commit, and the `m2c`/`permuter` lines of the host config (CORE-STRIP 2.9, 2.10).
+- **Q3** The supervisor runs the two migrations when the strip ships: the 239 `subsystem =` lines of `layout.toml` as one approved supervisor commit, and the `m2c`/`permuter` lines of the host config.
 - **E1** The grinder pauses for the step 8 gate (about 2 hours).
 - **E2** Lane B does the unbake strip, then the knowledge half.
 

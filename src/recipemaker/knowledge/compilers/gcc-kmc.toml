@@ -3,6 +3,7 @@ label = "GNU C 2.7.x for the console, third-party build"
 source = "original"
 toolchains = ["gcc-2.7.2-kmc"]
 m2c_target = "mips-gcc-c"
+supported_options = ["-O1", "-O2", "-O3", "-fno-strength-reduce", "-fno-expensive-optimizations", "-fno-schedule-insns2", "-mgp32", "-mfp32", "-mfp64", "-funsigned-char", "-fno-defer-pop", "-ffast-math", "-fno-delayed-branch", "-fforce-addr", "-fno-thread-jumps", "-fno-rerun-cse-after-loop", "-fno-cse-follow-jumps", "-fno-cse-skip-blocks"]
 
 tells = [
   "register moves are written as an addu with the zero register",

@@ -1,103 +1,63 @@
 """Cracking ladder unit tests: no native tools, repositories, ROMs or network."""
 
 import json
-from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import fixture
 import pytest
-from unbake.contracts import (
-    Config,
-    Host,
-    LayoutMap,
-    Member,
-    Placement,
-    Project,
-    Recipe,
-    Refusal,
-    Snapshot,
-    UnitSpec,
-    Version,
-)
+from unbake.contracts import Config, Host, Project, Refusal, Version
 
-from recipemaker import crack
+from recipemaker import crack, judge
+from recipemaker.world import Group, Layout, Member, Placement
 
 MEMBER = "func_80000400"
 SOURCE = b"int func_80000400(void) { return 0; }\n"
-RECIPE = Recipe("gcc-test", ("-DTEST",), ("-O2",), (), "1" * 64)
 DRAIN = {"running": False, "landed": [], "refused": []}
 
 
 @pytest.fixture
 def lane(tmp_path, monkeypatch):
     project = Project(
-        tmp_path,
-        "fixture",
-        "fixture",
-        "Fixture",
-        ("a", "b"),
-        "a",
-        "gcc-test",
-        {k: [] for k in ("cppflags", "cflags", "asflags", "gnu_asflags")},
-        {},
-        {"a": (), "b": ()},
-        {},
-        {},
-        "0" * 64,
+        tmp_path, "fixture", "Fixture", "gcc-test", "a", (), (), (), (), None, None, ("a", "b"), {}, {}, "0" * 64
     )
     host = Host(
-        2,
-        2,
-        1 << 30,
-        1 << 30,
-        tmp_path / "cache",
-        1 << 30,
-        tmp_path / "tools",
-        {},
-        None,
-        2,
-        2,
-        0.8,
-        2,
-        ("test", "test@example.invalid"),
-        {},
-        "0" * 64,
-    )
+        2, 2, 1 << 30, 1 << 30, tmp_path / "cache", 1 << 30, tmp_path / "tools", {}, None, 2, 2, 0.8, 2,
+        ("test", "test@example.invalid"), {}, "0" * 64,
+    )  # fmt: skip
     config = Config(project, host, "0" * 64)
     places = tuple(Placement(v, ".text", 0x1000, 0x1008, 0x80000400) for v in ("a", "b"))
-    member = Member(MEMBER, "function", "asm", "main", places)
-    group = fixture.group("main", "main", (MEMBER,))
-    mapping = LayoutMap({"main": group}, {MEMBER: member}, {}, "0" * 64, (), {})
+    layout = Layout(
+        {"src/main.c": Group("src/main.c", "main", (MEMBER,), False, "src/main.c")},
+        {MEMBER: Member(MEMBER, "function", "src/main.c", places, False)},
+        {},
+        {},
+    )
     versions = {v: Version(v, tmp_path / f"{v}.z64", "0" * 64, "", "", {}, ()) for v in ("a", "b")}
-    snapshot = Snapshot(config, "0" * 40, mapping, versions, {}, "0" * 64)
+    snapshot = SimpleNamespace(config=config, commit="0" * 40, versions=versions, overlays={}, digest="0" * 64)
+    snapshot.layout = layout
     rows = []
-    # slots come from a private pool: a unit test never waits on the host's live one (a busy host made it wait)
-    (tmp_path / "run").mkdir()
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    monkeypatch.setattr(crack.effort, "stage", Mock(side_effect=lambda name: nullcontext()))
     monkeypatch.setattr(crack.twin, "find", lambda snap, member: None)
-    monkeypatch.setattr(crack.store, "rows", Mock(side_effect=lambda cfg, stream: list(rows)))
-    monkeypatch.setattr(crack.store, "append", Mock(side_effect=lambda cfg, stream, row: rows.append(row)))
-    monkeypatch.setattr(crack.draft.report, "split_slot", Mock(return_value=None))
-    monkeypatch.setattr(crack.process, "run", Mock(side_effect=AssertionError("unmocked native invocation")))
-    monkeypatch.setattr(crack.process, "git", Mock(side_effect=AssertionError("git forbidden")))
+    monkeypatch.setattr(crack.host, "rows", Mock(side_effect=lambda cfg, stream: list(rows)))
+    monkeypatch.setattr(crack.host, "append", Mock(side_effect=lambda cfg, stream, row: rows.append(row)))
+    monkeypatch.setattr(crack.host, "run", Mock(side_effect=AssertionError("unmocked native invocation")))
+    monkeypatch.setattr(
+        crack.world, "asm_path", lambda cfg, version, member: cfg.project.root / f"asm/{version}/{member}.s"
+    )
     return snapshot, rows
 
 
 def _proof(score, version="a", symptoms=None, member=MEMBER):
-    return replace(
-        fixture.proof(
-            f".unbake/recipe/work/{MEMBER}.c",
-            member,
-            version,
-            score == 1,
-            missing=() if score == 1 else ("bytes",),
-            score=score,
-            symptoms=symptoms,
-        ),
-        recipe=RECIPE.digest,
+    return fixture.proof(
+        f".unbake/recipe/work/{MEMBER}.c",
+        member,
+        version,
+        score == 1,
+        missing=() if score == 1 else ("bytes",),
+        score=score,
+        symptoms=symptoms,
     )
 
 
@@ -112,32 +72,21 @@ def _candidate(snapshot):
     return path
 
 
-def _measurement(snapshot, monkeypatch, proofs=None):
-    unit = UnitSpec(f".unbake/recipe/work/{MEMBER}.c", "c", "main", (MEMBER,), "gcc-test", {})
-    monkeypatch.setattr(crack.compare, "bind", Mock(return_value=(unit, snapshot)))
-    monkeypatch.setattr(crack.compare, "measure", Mock(return_value=proofs or (_proof(0.5), _proof(0.4, "b"))))
-    monkeypatch.setattr(
-        crack.compare,
-        "measure_many",
-        lambda snap, unit, variants: (crack.compare.measure(snap, unit, v, None) for v in variants),
-    )  # one at a time, as consumed
-    monkeypatch.setattr(
-        crack.versions, "asm_path", lambda cfg, version, member: cfg.project.root / f"asm/{version}/{member}.s"
-    )
+def _measurement(snapshot, monkeypatch, proofs=None, diff=("measured diff",)):
+    found = tuple(proofs or (_proof(0.5), _proof(0.4, "b")))
+    score = Mock(return_value=judge.Verdict(found, all(p.exact for p in found), diff))
+    monkeypatch.setattr(crack.judge, "score", score)
     for version in ("a", "b"):
-        asm = crack.versions.asm_path(snapshot.config, version, MEMBER)
-        asm.parent.mkdir(parents=True)
+        asm = crack.world.asm_path(snapshot.config, version, MEMBER)
+        asm.parent.mkdir(parents=True, exist_ok=True)
         asm.write_text("jal callee\nlui $t0, %hi(global)\naddiu $t0, $t0, %lo(global)\njal callee\n")
-    monkeypatch.setattr(crack.versions, "rom_bytes", Mock(return_value=b"target!!"))
-    monkeypatch.setattr(crack.store, "cached", Mock(return_value=b"built!!!extra"))
-    monkeypatch.setattr(crack.symptoms, "diff", Mock(return_value="measured diff"))
     monkeypatch.setattr(crack.signatures, "signature", Mock(return_value={MEMBER: "int f(void)"}))
     monkeypatch.setattr(
         crack.signatures,
         "declarations",
         Mock(return_value={"callee": "void callee(void);", "global": "extern int global;"}),
     )
-    return unit
+    return score
 
 
 @pytest.mark.parametrize(
@@ -169,32 +118,28 @@ def test_feedback_outcomes(lane, scores, facts, before, outcome):
         assert proofs[0].symptoms == ({} if scores[0] == 1 else facts)
 
 
-def test_feedback_records_attempt(lane):
+def test_feedback_records_attempt_and_a_screen_records_none(lane):
     snapshot, rows = lane
     proofs = [_proof(0.8), _proof(0.4, "b")]
+    crack.feedback(snapshot, MEMBER, "screen", proofs, "", "text", record=False)
+    assert rows == []
     attempt = crack.feedback(snapshot, MEMBER, "draft", proofs, "retain this technique", "text")
-    assert rows == [json_roundtrip(asdict(attempt))]
-    crack.store.append.assert_called_once_with(snapshot.config, f"recipe-attempts/{MEMBER}", rows[0])
+    assert rows == [json.loads(json.dumps(asdict(attempt)))]
+    crack.host.append.assert_called_once_with(snapshot.config, f"recipe-attempts/{MEMBER}", rows[0])
     assert attempt.note == "retain this technique"
     assert datetime.fromisoformat(attempt.time).utcoffset().total_seconds() == 0
     assert crack.state.attempts(snapshot.config, MEMBER) == [attempt]
 
 
-def json_roundtrip(body):
-
-    return json.loads(json.dumps(body))
-
-
-def test_packet_names_the_target_score_diff_and_types(lane, monkeypatch):
+def test_packet_names_the_target_score_the_worst_versions_diff_and_types(lane, monkeypatch):
     snapshot, _ = lane
     _candidate(snapshot)
-    _measurement(snapshot, monkeypatch)
+    score = _measurement(snapshot, monkeypatch)
     packet = crack.packet(snapshot, MEMBER)
     assert packet["target"]["a"] == {"asm": f"asm/a/{MEMBER}.s", "size": 8}
     assert packet["best"]["score"] == {"a": 0.5, "b": 0.4} and packet["best"]["errors"] == []
-    assert packet["diff"] == "measured diff" and packet["why"] == ["all versions: bytes"]
-    crack.symptoms.diff.assert_called_once_with(b"built!!!extra", b"target!!", 0x80000400)
-    crack.versions.rom_bytes.assert_called_once_with(snapshot.versions["b"], 0x1000, 0x1008)
+    assert packet["diff"] == "measured diff" and packet["worst"] == "b" and packet["why"] == ["all versions: bytes"]
+    assert score.call_count == 2 and score.call_args.kwargs == {"version": "b"}  # the worst version's diff
     crack.signatures.declarations.assert_called_once_with(snapshot, ["callee", "global"])
     assert packet["types"] == {"signature": "int f(void)", "declarations": ["void callee(void);", "extern int global;"]}
 
@@ -209,15 +154,15 @@ def test_packet_names_the_compiler_errors_of_a_candidate_that_does_not_compile(l
 
 def test_packet_requires_candidate(lane, monkeypatch):
     snapshot, _ = lane
-    bind = Mock(side_effect=AssertionError("candidate must be checked before binding"))
-    monkeypatch.setattr(crack.compare, "bind", bind)
+    score = Mock(side_effect=AssertionError("candidate must be checked before measuring"))
+    monkeypatch.setattr(crack.judge, "score", score)
     with pytest.raises(Refusal) as caught:
         crack.packet(snapshot, MEMBER)
     (finding,) = caught.value.findings
     assert finding.key == "land.request"
     assert finding.reason == f"{MEMBER} has no candidate"
     assert finding.action == f"recipe work {MEMBER}"
-    bind.assert_not_called()
+    score.assert_not_called()
 
 
 def test_packet_of_a_candidate_that_did_not_link_has_no_diff(lane, monkeypatch):
@@ -225,106 +170,19 @@ def test_packet_of_a_candidate_that_did_not_link_has_no_diff(lane, monkeypatch):
     _candidate(snapshot)
     unlinked = replace(_proof(0.0), built_sha256="")
     _measurement(snapshot, monkeypatch, proofs=(unlinked,))
-    crack.store.cached.side_effect = AssertionError("an unlinked candidate has no built bytes to read")
     assert crack.packet(snapshot, MEMBER)["diff"] == ""
-    crack.symptoms.diff.assert_not_called()
 
 
 def test_packet_reads_assembly_only_from_a_version_holding_the_member(lane, monkeypatch):
     snapshot, _ = lane
     member = replace(snapshot.layout.members[MEMBER], placements=snapshot.layout.members[MEMBER].placements[1:])
-    snapshot = replace(snapshot, layout=replace(snapshot.layout, members={MEMBER: member}))
+    snapshot.layout = replace(snapshot.layout, members={MEMBER: member})
     _candidate(snapshot)
     _measurement(snapshot, monkeypatch, proofs=(_proof(0.4, "b"),))
-    asm = crack.versions.asm_path(snapshot.config, "b", MEMBER)
-    asm.write_text("jal callee\n")
-    crack.versions.asm_path(snapshot.config, "a", MEMBER).write_text("jal wrong\n")
+    crack.world.asm_path(snapshot.config, "b", MEMBER).write_text("jal callee\n")
+    crack.world.asm_path(snapshot.config, "a", MEMBER).write_text("jal wrong\n")
     assert list(crack.packet(snapshot, MEMBER)["target"]) == ["b"]
     assert "callee" in crack.signatures.declarations.call_args.args[1]
-
-
-SOURCE_TEXT = '#include "a.h"\nint other(void) { return 1; }\nint func_80000400(void) {\n    return 0;\n}\n'
-EXPANDED = "typedef int s32;\nint other(void) { return 1; }\nint func_80000400(void) {\n    return 0;\n}\n"
-
-
-def permuter(lane, monkeypatch, tmp_path, run):
-    """Everything crack.permute touches, faked; `run(argv, work)` plays the permuter."""
-    snapshot, _ = lane
-    unit = UnitSpec("src/f.c", "c", "main", (MEMBER,), "gcc-test", {})
-    snapshot = replace(snapshot, overlays={"src/f.c": SOURCE_TEXT.encode()})
-    work = tmp_path / "scratch"
-    work.mkdir()
-    seen = {}
-
-    def view_get(snap, spec, version, recipe, *, lines=True):
-        seen["lines"] = lines
-        return Mock(text=EXPANDED)
-
-    def process_run(name, argv, cwd, **kwargs):
-        seen["runs"] = seen.get("runs", 0) + 1
-        seen["base"] = (work / "base.c").read_text()
-        return run(argv, work)
-
-    monkeypatch.setattr(crack.view, "get", view_get)
-    monkeypatch.setattr(crack.store, "work", lambda cfg: nullcontext(work))
-    assembler = Mock()
-    assembler.return_value.assemble.side_effect = lambda asm, recipe, include, out: out.write_bytes(seen["object"])
-    seen["object"] = b"object"
-    seen["script"] = "#!/bin/sh\n"
-    seen["memo"] = {}
-
-    def cached(cfg, kind, key, produce):
-        assert kind == "recipe.permute"
-        if key not in seen["memo"]:
-            seen["memo"][key] = produce()
-        return seen["memo"][key]
-
-    monkeypatch.setattr(crack.store, "cached", cached)
-    monkeypatch.setattr(crack.adapters, "assembler", assembler)
-    monkeypatch.setattr(crack.adapters, "script", lambda cfg, recipe, version: seen["script"])
-    monkeypatch.setattr(crack.versions, "asm_path", lambda cfg, v, m: work / "t.s")
-    monkeypatch.setattr(crack.state, "tool", lambda name: work / "permuter")
-    monkeypatch.setattr(crack.process, "run", process_run)
-    return snapshot, unit, seen
-
-
-def test_the_permuter_gets_the_unit_preprocessed_not_the_raw_source(lane, monkeypatch, tmp_path):
-    def run(argv, work):
-        return fixture.native_result(argv, None)  # killed at the deadline, having found nothing
-
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, run)
-    assert crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0) is None
-    assert "func_80000400" in seen["base"] and "other" not in seen["base"] and seen["lines"] is False
-    assert "#include" not in seen["base"]
-
-
-def test_only_the_function_comes_back_spliced_into_the_unit_as_it_was_written(lane, monkeypatch, tmp_path):
-    def run(argv, work):
-        out = work / "output-12-1"
-        out.mkdir()
-        (out / "source.c").write_text(EXPANDED.replace("return 0;", "return 2 - 2;"))
-        return fixture.native_result(argv, None)
-
-    snapshot, unit, _ = permuter(lane, monkeypatch, tmp_path, run)
-    got = crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0).decode()
-    assert got == SOURCE_TEXT.replace("return 0;", "return 2 - 2;")  # the include line stays, nothing is expanded
-
-
-def test_a_permuter_that_exits_with_an_error_is_refused_with_its_last_line(lane, monkeypatch, tmp_path):
-    def run(argv, work):
-        return fixture.native_result(
-            argv, 1, b"Loading...\n", b"Traceback (most recent call last):\nCalledProcessError: cpp\n"
-        )
-
-    snapshot, unit, _ = permuter(lane, monkeypatch, tmp_path, run)
-    with pytest.raises(Refusal) as caught:
-        crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    assert caught.value.findings[0].reason == "CalledProcessError: cpp"
-
-
-def test_a_permuter_that_exits_zero_having_found_nothing_is_no_gain_not_a_failure(lane, monkeypatch, tmp_path):
-    snapshot, unit, _ = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, 0))
-    assert crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0) is None
 
 
 def test_packet_says_in_words_how_much_longer_the_build_is_and_how_the_frame_differs(lane, monkeypatch):
@@ -347,7 +205,6 @@ def test_a_difference_every_version_shares_prints_once_and_one_only_some_have_na
         replace(_proof(0.4), version="b", missing=("size 64 != 48", "5 bytes differ")),
     )
     _measurement(snapshot, monkeypatch, proofs=proofs)
-    monkeypatch.setattr(crack.symptoms, "merge", lambda _: {})
     assert crack.packet(snapshot, MEMBER)["why"] == [
         "all versions: size 64 != 48",
         "a: 3 bytes differ",
@@ -359,36 +216,9 @@ def test_a_matching_text_section_with_a_differing_rodata_is_named_not_pointed_at
     snapshot, _ = lane
     _candidate(snapshot)
     proof = replace(_proof(0.9996), missing=("bytes differ in .rodata at +0x10: 3f800000 != 40000000",), symptoms={})
-    _measurement(snapshot, monkeypatch, proofs=(proof,))
-    monkeypatch.setattr(crack.symptoms, "diff", lambda *a: "")
+    _measurement(snapshot, monkeypatch, proofs=(proof,), diff=())
     got = crack.packet(snapshot, MEMBER)
     assert got["diff"] == "" and got["why"] == ["all versions: bytes differ in .rodata at +0x10: 3f800000 != 40000000"]
-
-
-def test_the_packet_names_the_twin_and_what_differs_between_its_version_and_this_one(lane, monkeypatch):
-    from types import SimpleNamespace
-
-    snapshot, _ = lane
-    _candidate(snapshot)
-    _measurement(snapshot, monkeypatch)
-    found = SimpleNamespace(counterpart=MEMBER, unit="src/b.c", version="a", other_version="b")
-    monkeypatch.setattr(crack.twin, "find", lambda snap, member: found)
-    monkeypatch.setattr(crack.layout, "unit_of", lambda snap, member: UnitSpec("src/b.c", "c", "main", (), "gcc-b", {}))
-    rows = {"gcc-test": ("-O2",), "gcc-b": ("-O1",)}
-    monkeypatch.setattr(
-        crack.recipes,
-        "resolve",
-        lambda cfg, unit, o: SimpleNamespace(
-            toolchain=unit.toolchain, cppflags=(), cflags=rows[unit.toolchain], asflags=()
-        ),
-    )
-    monkeypatch.setattr(crack.symptoms, "diff", Mock(return_value="-lw a\n+lw b"))
-    macros = {"a": ("-DVERSION_A",), "b": ("-DVERSION_B",)}
-    project = replace(snapshot.config.project, version_macros=macros)
-    snapshot = replace(snapshot, config=replace(snapshot.config, project=project))
-    got = crack.packet(snapshot, MEMBER)["twin"]
-    assert (got["function"], got["file"], got["version"]) == (MEMBER, "src/b.c", "b") and got["diff"] == "-lw a\n+lw b"
-    assert got["flags"]["cflags"] == [("-O2",), ("-O1",)] and got["flags"]["toolchain"] == ["gcc-test", "gcc-b"]
 
 
 def _diff(*pairs):
@@ -430,7 +260,7 @@ def test_a_candidate_that_does_not_compile_still_gets_the_regions_of_the_target_
     _candidate(snapshot)
     broken = replace(_proof(0.0), built_sha256="", missing=("compile.error: 'x' undeclared",))
     _measurement(snapshot, monkeypatch, proofs=(broken,))
-    asm = crack.versions.asm_path(snapshot.config, "a", MEMBER)
+    asm = crack.world.asm_path(snapshot.config, "a", MEMBER)
     asm.write_text(
         "/* 0 80000400 27BDFFE8 */  addiu $sp, $sp, -0x18\n/* 4 80000404 10800002 */  beqz $a0, .L1\n"
         "/* 8 80000408 00000000 */  nop\n/* C 8000040C 0C000100 */  jal callee\n/* 10 80000410 00000000 */  nop\n"
@@ -466,94 +296,3 @@ def test_a_load_delay_nop_only_the_target_has_is_a_toolchain_signature_and_a_mat
     assert crack.load_delay(both) == ""
     reverse = " 80000000: lw $v1, 0($a0)\n+80000004: nop\n-80000004: addiu $a1, $a1, 1\n"
     assert "build has a nop" in crack.load_delay(reverse)
-
-
-def test_the_permuter_gets_its_j_from_the_held_share_of_the_host_budget(lane, monkeypatch, tmp_path):
-    held = []
-
-    @contextmanager
-    def cores(host, work=0):
-        held.append(host)
-        yield 3
-
-    def run(argv, work):
-        held.append(argv[argv.index("-j") + 1])
-        return fixture.native_result(argv, None)
-
-    snapshot, unit, _ = permuter(lane, monkeypatch, tmp_path, run)
-    monkeypatch.setattr(crack.pool, "cores", cores)
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    assert held == [snapshot.config.host, "3"]
-
-
-def test_the_same_candidate_permuted_twice_runs_the_permuter_once(lane, monkeypatch, tmp_path):
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, None))
-    for _ in range(2):
-        assert crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0) is None
-    assert seen["runs"] == 1
-
-
-def test_a_found_variant_is_stored_and_returned_without_a_second_run(lane, monkeypatch, tmp_path):
-    def run(argv, work):
-        out = work / "output-12-1"
-        out.mkdir()
-        (out / "source.c").write_text(EXPANDED.replace("return 0;", "return 2 - 2;"))
-        return fixture.native_result(argv, None)
-
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, run)
-    first = crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    for entry in (tmp_path / "scratch").glob("output-*"):  # the work directory of the second call starts empty
-        for child in entry.iterdir():
-            child.unlink()
-        entry.rmdir()
-    assert crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0) == first and seen["runs"] == 1
-
-
-def test_a_changed_script_object_or_budget_runs_the_permuter_again(lane, monkeypatch, tmp_path):
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, None))
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    seen["script"] = "#!/bin/sh\n# other flags\n"
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    seen["object"] = b"other object"
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 6.0)
-    assert seen["runs"] == 4
-
-
-def test_a_changed_base_runs_the_permuter_again(lane, monkeypatch, tmp_path):
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, None))
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    monkeypatch.setattr(crack.view, "get", lambda *a, **k: Mock(text=EXPANDED.replace("return 0;", "return 1;")))
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    assert seen["runs"] == 2
-
-
-def test_a_permuter_that_failed_is_not_remembered(lane, monkeypatch, tmp_path):
-    snapshot, unit, seen = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, 1))
-    for _ in range(2):
-        with pytest.raises(Refusal):
-            crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    assert seen["runs"] == 2
-
-
-def test_a_candidate_whose_diff_is_not_an_order_or_register_miss_is_refused_with_the_reason(lane, monkeypatch):
-    snapshot, _ = lane
-    packet = {"permutable": False, "regions": [{"kind": "match"}, {"kind": "missing call"}]}
-    monkeypatch.setattr(crack, "packet", lambda snap, member: packet)
-    assert crack.permutable(snapshot, MEMBER).startswith("diff class missing call; only order or register")
-    packet["permutable"] = True
-    assert crack.permutable(snapshot, MEMBER) == ""
-
-
-def test_the_permuter_holds_one_slot_per_worker_it_runs_never_the_whole_share(lane, monkeypatch, tmp_path):
-    asked = []
-
-    @contextmanager
-    def cores(host, work=0):
-        asked.append(work)
-        yield min(work or 11, 11)
-
-    snapshot, unit, _ = permuter(lane, monkeypatch, tmp_path, lambda argv, work: fixture.native_result(argv, None))
-    monkeypatch.setattr(crack.pool, "cores", cores)
-    crack.permute(snapshot.config, snapshot, unit, MEMBER, RECIPE, 5.0)
-    assert asked == [crack.PERMUTERS] and crack.PERMUTERS < 11

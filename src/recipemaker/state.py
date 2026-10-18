@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-from unbake import store
 from unbake.contracts import Config, Finding, Json, Refusal
+
+from recipemaker import host
 
 SKIP_REASONS = ("m2c-failed", "split-symbol", "type-unresolved", "jump-table", "needs-header-change", "budget", "other")
 
@@ -145,7 +146,7 @@ def _root(config: Config) -> Path:
 
 
 def _path(config: Config, item: str) -> Path:
-    return _root(config) / "leases" / f"{store.stem(item)}.json"
+    return _root(config) / "leases" / f"{host.stem(item)}.json"
 
 
 def _load(path: Path) -> Lease | None:
@@ -156,7 +157,7 @@ def _load(path: Path) -> Lease | None:
 
 
 def _write(config: Config, lease: Lease) -> None:
-    store.write(_path(config, lease.item), json.dumps(asdict(lease), sort_keys=True).encode())
+    host.write(_path(config, lease.item), json.dumps(asdict(lease), sort_keys=True).encode())
 
 
 def lease(config: Config, item: str) -> Lease | None:
@@ -189,7 +190,7 @@ def worst(score: Json) -> float:
 
 def take(config: Config, item: str, now: float) -> Lease:
     """Lease `item` to this session; a lease another session holds live is never granted."""
-    with store.exclusive(config, "recipe", wait=True):
+    with host.exclusive(config, "recipe", wait=True):
         current = lease(config, item)
         live = current is not None and current.expires > now
         if current is not None and live and current.session != session():
@@ -216,13 +217,13 @@ def held(config: Config, item: str, now: float) -> Lease:
 
 def leases(config: Config, now: float) -> list[Lease]:
     folder = _root(config) / "leases"
-    found = (_load(folder / name) for name in sorted(store.listing(config, "recipe/leases")))
+    found = (_load(folder / name) for name in sorted(host.listing(config, "recipe/leases")))
     return [x for x in found if x is not None and x.expires > now]
 
 
 def _extend(config: Config, item: str, now: float, progressed: bool | None) -> Lease:
     """Renew the held lease; `progressed` None leaves the stall count, else a gain refunds it and none counts a try."""
-    with store.exclusive(config, "recipe", wait=True):
+    with host.exclusive(config, "recipe", wait=True):
         current = held(config, item, now)
         tries = current.tries if progressed is None else 0 if progressed else current.tries + 1
         renewed = replace(current, tries=tries, expires=_expiry(now))
@@ -241,7 +242,7 @@ def renew(config: Config, item: str, now: float) -> Lease:
 
 
 def release(config: Config, item: str) -> None:
-    with store.exclusive(config, "recipe", wait=True):
+    with host.exclusive(config, "recipe", wait=True):
         current = lease(config, item)
         if current is not None:
             _write(config, Lease(item, "", current.started, 0.0, 0))
@@ -270,7 +271,7 @@ def skip(
         raise Refusal(Finding("recipe.reason", f"{reason} is not a skip reason", action=action))
     held_now = lease(config, item)
     row = {"time": now, "session": session(), "item": item, "reason": reason, "note": note, "best_score": best}
-    store.append(
+    host.append(
         config,
         "recipe/skips",
         {**row, "tries": held_now.tries if held_now else 0, "deps": deps, "blockers": blockers or {}},
@@ -279,7 +280,7 @@ def skip(
 
 
 def _latest_skips(config: Config) -> dict[str, Json]:
-    return {row["item"]: row for row in store.rows(config, "recipe/skips")}
+    return {row["item"]: row for row in host.rows(config, "recipe/skips")}
 
 
 def skipped(config: Config, now: float, deps: Mapping[str, str] | None = None) -> frozenset[str]:
@@ -305,20 +306,20 @@ def unblocked(config: Config, declared: Mapping[str, str]) -> frozenset[str]:
 
 
 def attempts(config: Config, member: str) -> list[Attempt]:
-    rows = store.rows(config, f"recipe-attempts/{store.stem(member)}")
+    rows = host.rows(config, f"recipe-attempts/{host.stem(member)}")
     return [Attempt(**{k: v for k, v in row.items() if k in Attempt.__dataclass_fields__}) for row in rows]
 
 
 def record(config: Config, item: str, now: float, word: str, score: Json, **more: Any) -> None:
     empty = {"error_class": "", "autofix": "", "name": "", "auto_fixes": [], "regions": []}
     row = {"time": now, "session": session(), "item": item, "result": word, "score": score, **empty, **more}
-    store.append(config, "recipe/tries", row)
+    host.append(config, "recipe/tries", row)
 
 
 def status(config: Config, now: float) -> Json:
     today = stamp(now)[:10]
-    tries = [r for r in store.rows(config, "recipe/tries") if stamp(r["time"])[:10] == today]
-    skips = store.rows(config, "recipe/skips")
+    tries = [r for r in host.rows(config, "recipe/tries") if stamp(r["time"])[:10] == today]
+    skips = host.rows(config, "recipe/skips")
     done = Counter(r["result"] for r in tries)
     exact = done["exact"]
     live = [

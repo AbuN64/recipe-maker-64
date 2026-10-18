@@ -2,22 +2,39 @@
 
 from __future__ import annotations
 
+import pickle
 import re
 import time
 from collections import Counter
 from itertools import takewhile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from unbake import compare, effort, layout, pool, process, report, store
+from unbake import api
 from unbake.contracts import Config, Finding, Json, Proof, Refusal, Snapshot, digest
 
-from recipemaker import brief, crack, declare, draft, errors, index, ladder, ledger, look, regions, state, twin
+from recipemaker import (
+    brief,
+    crack,
+    declare,
+    draft,
+    errors,
+    host,
+    index,
+    judge,
+    ladder,
+    ledger,
+    look,
+    regions,
+    state,
+    twin,
+    world,
+)
 
 _DEBT = 3  # declaration conflicts status names
 _ALIKE = 8  # open functions of the same shape named after a landing
 _PROBES = 30  # open items next compiles a draft of before it leases one it knows cannot compile
-_TRACKED = ("src", "include", "layout.toml", "symbols.toml", "types.toml")
+_TRACKED = ("src", "include", "config.toml", "versions")
 
 
 class AfterLanding(Exception):
@@ -34,7 +51,7 @@ def _now() -> float:
 
 def _asm(snapshot: Snapshot, item: str) -> str:
     """The reference version's assembly of a function; a data item has none."""
-    if snapshot.layout.members[item].kind != "function":
+    if world.of(snapshot).members[item].kind != "function":
         return ""
     return index.asm(snapshot, item)
 
@@ -47,11 +64,17 @@ def _deps(snapshot: Snapshot, item: str) -> str:
 
 
 def _sdk(snapshot: Snapshot, member: str) -> bool:
-    return bool(group := snapshot.layout.members[member].group) and snapshot.layout.groups[group].sdk
+    return bool(group := world.of(snapshot).members[member].group) and world.of(snapshot).groups[group].sdk
+
+
+def items(config: Config) -> list[Json]:
+    """unbake's ordered work list, read once per tree."""
+    snapshot = world.capture(config)
+    return api.memo(("work.items", snapshot.digest), lambda: judge.items(config))
 
 
 def _is_open(snapshot: Snapshot, item: str) -> bool:
-    return item in {r["member"] for r in report.items(snapshot, {})}
+    return item in {r["member"] for r in items(snapshot.config)}
 
 
 def _proofs(rows: list[Json]) -> list[Proof]:
@@ -82,7 +105,7 @@ def _undraftable(job: tuple[Snapshot, str]) -> str:
     snapshot, member = job
 
     def probe() -> str:
-        out = snapshot.config.project.root / ".unbake/recipe/probe" / f"{store.stem(member)}.c"
+        out = snapshot.config.project.root / ".unbake/recipe/probe" / f"{host.stem(member)}.c"
         try:
             return draft.create(snapshot, member, out)
         except Refusal as refusal:
@@ -91,11 +114,21 @@ def _undraftable(job: tuple[Snapshot, str]) -> str:
     return index.persisted(snapshot, "recipe.draftable", probe, extra=member, sources=True)
 
 
+class _Absent(Exception):
+    """The probe is not in the cache."""
+
+
 def _verdict(config: Config, snapshot: Snapshot, member: str) -> str | None:
     """The cached answer of a probe ("" compiles, else why not), None when the project never probed the member."""
     key = index.key(snapshot, "recipe.draftable", extra=member, sources=True)
-    found, why = store.loads(store.get(config, "recipe.draftable", key))
-    return why if found else None
+
+    def absent() -> bytes:
+        raise _Absent
+
+    try:
+        return cast("str | None", pickle.loads(api.cached(config, "recipe.draftable", key, absent)))
+    except _Absent:
+        return None
 
 
 def _compilable(
@@ -119,7 +152,9 @@ def _compilable(
         if not batch:
             break
         asked = [r["member"] for r in batch if known[r["member"]] is None]
-        answers = iter(pool.map(config, "recipe.probe", _undraftable, [(snapshot, m) for m in asked]) if asked else [])
+        answers = iter(
+            api.pool_map(config, "recipe.probe", _undraftable, [(snapshot, m) for m in asked]) if asked else []
+        )
         why = [known[r["member"]] if known[r["member"]] is not None else next(answers) for r in batch]
         good = next((n for n, reason in enumerate(why) if not reason), len(batch))
         failed += batch[:good]
@@ -132,7 +167,7 @@ def _compilable(
 
 def next_item(config: Config, params: Json) -> Json:
     now, rules = _now(), state.settings()
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     if params.get("kind") == "declaration":
         return declare.next_item(config, snapshot, now)
     wanted_kind, wanted_twin = params.get("kind"), params.get("twin")
@@ -140,18 +175,18 @@ def next_item(config: Config, params: Json) -> Json:
     ready = twin.ready(snapshot)
     cap = params.get("max_size") or float("inf")
     sign = 1 if params.get("order") == "small" else -1
-    reported = effort.memo(("work.items", snapshot.digest), lambda: report.items(snapshot, {}))
-    if lost := [r for r in reported if r["member"] not in snapshot.layout.members]:
+    reported = items(config)
+    if lost := [r for r in reported if r["member"] not in world.of(snapshot).members]:
         raise Refusal(
             Finding("recipe.unknown-member", f"the layout lacks a reported member: {lost[0]}", action="recipe status")
         )
-    rows = [
-        r
+    rows: list[dict[str, Any]] = [
+        dict(r)
         for r in reported
         if wanted_kind in (None, r["kind"]) and r["size"] <= cap and r["member"] not in taken
         if wanted_twin in (None, "yes" if r["member"] in ready else "no")
     ]
-    deps = {item: _deps(snapshot, item) for item in state.skipped(config, now) if item in snapshot.layout.members}
+    deps = {item: _deps(snapshot, item) for item in state.skipped(config, now) if item in world.of(snapshot).members}
     again = state.unblocked(config, {name: found[2] for name, found in index.get(snapshot).declarations.items()})
     hidden = state.skipped(config, now, deps) - again
     rows = [row for row in rows if row["member"] not in hidden]
@@ -197,26 +232,13 @@ def next_item(config: Config, params: Json) -> Json:
         "regions": len(regions.split(_asm(snapshot, row["member"]))) if row["kind"] == "function" else 0,
         "why": why,
         "twin": f"{found.counterpart} in {found.unit} ({found.other_version})" if found else "none",
-        "withheld": list(unit.withheld) if (unit := layout.unit_of(snapshot, row["member"])) else [],
-        "aims": sorted(
-            {p.version for p in snapshot.layout.members[row["member"]].placements} - set(unit.withheld if unit else ())
-        ),
-        "evidence": _evidence(snapshot, row["member"]),
+        "aims": sorted({p.version for p in world.of(snapshot).members[row["member"]].placements}),
         "draft_failed": uncompilable,
         "lease_until": state.stamp(lease.expires),
         "idle_minutes": rules.idle_minutes,
         "stall_tries": rules.stall_tries,
         "next": f"recipe work {row['member']}",
     }
-
-
-def _evidence(snapshot: Snapshot, item: str) -> str:
-    """How many of the addresses a function touches landed code already reads or spells."""
-    if snapshot.layout.members[item].kind != "function":
-        return ""
-    rows = index.usage(snapshot, item)["addresses"]
-    covered = sum(bool(r["landed_readers"] or r["spellings"]) for r in rows)
-    return f"{covered} of {len(rows)} touched addresses covered by landed code"
 
 
 def _blockers(snapshot: Snapshot, item: str) -> dict[str, str]:
@@ -234,11 +256,11 @@ def _blockers(snapshot: Snapshot, item: str) -> dict[str, str]:
 
 
 def _skip_for(config: Config, item: str, reason: str, why: str, now: float) -> Json:
-    snapshot = layout.capture(config)
-    deps = _deps(snapshot, item) if item in snapshot.layout.members else ""
+    snapshot = world.capture(config)
+    deps = _deps(snapshot, item) if item in world.of(snapshot).members else ""
     blockers = _blockers(snapshot, item) if reason in ("needs-header-change", "type-unresolved") else {}
     if reason == "other" and "toolchain" in why:  # the evidence rides in the note so the pins can be batched
-        packet = crack.packet(snapshot, item) if item in snapshot.layout.members else {"why": []}
+        packet = crack.packet(snapshot, item) if item in world.of(snapshot).members else {"why": []}
         why = "; ".join([why, *(w for w in packet["why"] if "MIPS-I load delays" in w)])
     state.skip(config, item, reason, why, _best(config, item), now, deps, blockers)
     return {"item": item, "result": "skipped", "reason": reason, "why": why, "next": "recipe next"}
@@ -246,7 +268,7 @@ def _skip_for(config: Config, item: str, reason: str, why: str, now: float) -> J
 
 def work(config: Config, params: Json) -> Json:
     item, now = params["item"], _now()
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     if params.get("kind") == "declaration" or not _is_open(snapshot, item):
         if row := next((r for r in declare.conflicts(config, snapshot) if r["name"] == item), None):
             return declare.take(config, snapshot, row, now)
@@ -272,10 +294,10 @@ def work(config: Config, params: Json) -> Json:
 
 def _landed(config: Config, snapshot: Snapshot, item: str) -> None:
     """Refuse an item that is no longer open, naming the commit that added it to its source."""
-    unit = layout.unit_of(snapshot, item)
-    if unit is None or item not in snapshot.layout.members:
+    unit = world.unit_of(snapshot, item)
+    if unit is None or item not in world.of(snapshot).members:
         return
-    log = process.git(config, "log", "-1", "--format=%h", f"-S{item}", "--", unit.path).stdout.decode().strip()
+    log = host.git(config, "log", "-1", "--format=%h", f"-S{item}", "--", unit.path).stdout.decode().strip()
     raise Refusal(Finding("recipe.landed", f"{item} is already landed (commit {log})", unit=item, action="recipe next"))
 
 
@@ -286,10 +308,9 @@ def _commits(drain: Json | None, item: str) -> tuple[str, str]:
 
 
 def _work(config: Config, params: Json, lease: state.Lease, now: float) -> Json:
-    item, rules = lease.item, state.settings()
-    seconds = float(params.get("seconds") or rules.permute_seconds)  # the budget is the default, never a ceiling
+    item = lease.item
     try:
-        outcome = ladder.run(config, item, seconds=seconds, submit=not params.get("no_submit"))
+        outcome = ladder.run(config, item, submit=not params.get("no_submit"))
     except Refusal as refusal:
         found = refusal.findings[0]
         if found.key == "member.split-delay-slot":
@@ -315,7 +336,7 @@ def _summary(
     config: Config, params: Json, lease: state.Lease, now: float, outcome: ladder.Outcome, landed: str, saved: str
 ) -> Json:
     item, rules = lease.item, state.settings()
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     follow = f"read the brief, edit the file, then run: recipe try {item}"
     drain = outcome.drain or {}
     refused = [f for body in drain.get("refused", []) if body["member"] == item for f in body["findings"]]
@@ -336,8 +357,7 @@ def _summary(
         seed = f"resumed seed holds {len({n for _, _, _, n, _ in hits})} refusable lines ({what}): lines {lines}"
     unresolved = list(dict.fromkeys(f"{u.base} at 0x{u.offset:X}" for u in outcome.left))
     classes = dict(Counter(u.why for u in outcome.left if u.why))  # the census: what keeps each placeholder
-    partial = bool(landed and outcome.held)
-    finished = (outcome.exact and bool(landed or params.get("no_submit"))) or partial
+    finished = outcome.exact and bool(landed or params.get("no_submit"))
     if finished:
         state.release(config, item)
     form = outcome.exact and any(k in ("recipe.cast", "recipe.unused") for k, *_ in hits)
@@ -348,7 +368,7 @@ def _summary(
         if form
         else f"recipe try {item}"
         if outcome.exact
-        or (snapshot.layout.members[item].kind == "function" and max(outcome.score.values(), default=0) >= 1)
+        or (world.of(snapshot).members[item].kind == "function" and max(outcome.score.values(), default=0) >= 1)
         else f"{follow}; if no declared record has these members, stop with: recipe skip {item} --reason "
         f'type-unresolved --note "{", ".join(unresolved[:8])}"'
         if unresolved
@@ -362,7 +382,7 @@ def _summary(
             {"name": r.name, "result": r.result, "score": round(r.score, 4), "note": r.note} for r in outcome.rungs
         ],
         "result": "open"
-        if snapshot.layout.members[item].kind == "data"
+        if world.of(snapshot).members[item].kind == "data"
         else "refused"
         if reason
         else "exact"
@@ -373,7 +393,6 @@ def _summary(
         "score": {v: round(s, 4) for v, s in outcome.score.items()},
         "landed": landed,
         "saved": saved,
-        "held": dict(outcome.held) if landed else {},
         "alike": _alike(snapshot, item, landed),
         "refused": reason,
         "seed": seed,
@@ -402,7 +421,7 @@ def _prepare(config: Config, item: str, last: Json | None) -> list[str]:
     if not path.is_file():
         reason = f"{item} has no candidate file"
         raise _refuse(item, "recipe.no-candidate", reason, f"recipe work {item}", "run work first")
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     text = path.read_text(encoding="utf-8")
     done: list[str] = []
     if last and last.get("autofix"):
@@ -419,7 +438,7 @@ def _prepare(config: Config, item: str, last: Json | None) -> list[str]:
         extra = brief.neighbours(snapshot, key, what)
         raise _refuse(item, key, f"the candidate holds {what} (lines {lines}){extra}", action, why)
     if done:
-        store.write(path, text.encode())
+        host.write(path, text.encode())
     return done
 
 
@@ -428,40 +447,8 @@ def _finding(row: Json) -> Finding:
 
 
 def _prove(config: Config, item: str, path: Path) -> Json:
-    """unbake proves and submits the candidate; it withholds the inexact versions when at least one is exact."""
-    options: dict[str, Any] = {"flag": [], "omit_flag": [], "toolchain": None, "out": None}
-    result = compare.run(config, {"file": str(path), "function": item, "note": "", "withhold": True, **options})
-    return {**result, "held": ladder.withheld(_proofs(result["proofs"])) if result.get("submitted") else {}}
-
-
-def _marked(config: Config, item: str, path: Path, seconds: float) -> list[str]:
-    """A candidate with PERM_ marks is permuted instead of measured; the best variant replaces the file."""
-    if path.is_file() and "PERM_" in path.read_text(encoding="utf-8"):
-        output = crack.permute_file(config, path, item, seconds)
-        if output is not None:
-            store.write(path, output)
-            return ["the permuter replaced the PERM_ marks with its best variant"]
-    return []
-
-
-def _near(config: Config, item: str, path: Path, result: Json, seconds: float) -> tuple[Json, list[str], str]:
-    """Permute a compiling candidate that differs only in order or registers; the third value is why not."""
-    text = path.read_text(encoding="utf-8")
-    broken = any(errors.unbuilt(m) for p in result["proofs"] for m in p["missing"])
-    if result["exact"] or broken or "M2C_" in text:
-        return result, [], "already exact" if result["exact"] else "the candidate does not compile or holds M2C_ text"
-    refused = crack.permutable(layout.capture(config), item)
-    if refused:
-        return result, [], refused
-    output = crack.permute_file(config, path, item, seconds)
-    if output is None or output.decode(errors="replace") == text:
-        return result, [], ""
-    store.write(path, output)
-    again = _prove(config, item, path)
-    if again["exact"] or min(again["score"].values()) > min(result["score"].values()):
-        return again, ["the permuter improved the candidate"], ""
-    store.write(path, text.encode())
-    return result, [], ""
+    """unbake proves the candidate in every version and submits it when it is exact."""
+    return judge.compare(config, draft.measured(path), item)
 
 
 def _regression(item: str, text: str, result: Json, last: Json | None) -> str:
@@ -482,7 +469,7 @@ def _regression(item: str, text: str, result: Json, last: Json | None) -> str:
 
 def _tracked(config: Config) -> dict[str, str]:
     """Each tracked path git shows changed, with a digest of its content: other writers' work is the baseline."""
-    changed = process.git(config, "status", "--porcelain", "--", *_TRACKED).stdout.decode(errors="replace")
+    changed = host.git(config, "status", "--porcelain", "--", *_TRACKED).stdout.decode(errors="replace")
     root = config.project.root
     paths = [line[3:].strip() for line in changed.splitlines() if line.strip()]
     return {p: digest((root / p).read_bytes()) if (root / p).is_file() else "" for p in paths}
@@ -499,7 +486,7 @@ def try_(config: Config, params: Json) -> Json:
     item = params["item"]
     lease = state.lease(config, item)
     if lease is None and not declare.is_item(config, item):
-        snapshot = layout.capture(config)
+        snapshot = world.capture(config)
         if not _is_open(snapshot, item):
             _landed(config, snapshot, item)
     if lease is None or lease.session != state.session():
@@ -513,36 +500,26 @@ def try_(config: Config, params: Json) -> Json:
     baseline = _tracked(config)
     if declare.is_item(config, item):
         return declare.run(config, item, now)
-    tries = [r for r in store.rows(config, "recipe/tries") if r["item"] == item]
+    tries = [r for r in host.rows(config, "recipe/tries") if r["item"] == item]
     path = ladder.candidate_path(config, item)
-    fixes = _marked(config, item, path, rules.permute_seconds)
-    fixes += _prepare(config, item, tries[-1] if tries else None)
+    fixes = _prepare(config, item, tries[-1] if tries else None)
     before = _best(config, item)
     result = _prove(config, item, path)
     if not any(_commits(result.get("drain") or {}, item)) and (wrote := _wrote(config, baseline, path)):
         why = "a candidate may change only its own file; another writer's changes are never a reason to refuse"
         reason = f"this try changed a tracked project file other than the candidate: {config.project.root / wrote}"
         raise _refuse(item, "recipe.dirty", reason, f"git -C {config.project.root} diff -- {wrote}", why)
-    marked = bool(fixes) and fixes[0].startswith("the permuter replaced")
-    result, near, why = _near(config, item, path, result, rules.permute_seconds)
-    fixes += near
-    reached = state.percent(state.worst(result["score"]))
-    permuter = (
-        f"permuter: not run ({why})"
-        if why and not marked
-        else f"permuter: ran {rules.permute_seconds:g} s, best {reached}"
-    )
     landed, saved = _commits(result.get("drain") or {}, item)
     candidate = path.read_text(encoding="utf-8")
     last = next((r for r in reversed(tries) if not r.get("restored")), None)
     reason = _regression(item, candidate, result, last)
     kept = last["text"] if reason and last else candidate
     try:
-        out = _report(config, item, path, result, fixes, tries, before, now, permuter, kept, bool(reason))
+        out = _report(config, item, path, result, fixes, tries, before, now, kept, bool(reason))
     except Exception as exc:
         raise _late(config, item, landed, saved, exc) from exc
     if reason:
-        store.write(path, kept.encode("utf-8"))
+        host.write(path, kept.encode("utf-8"))
         out["restored"] = f"{reason}; the file is back to the previous content"
     return out
 
@@ -556,15 +533,6 @@ def _canonical(config: Config, snapshot: Snapshot, name: str) -> list[str]:
     return [*out, *(f"declared: {p}:{n} {t}" for p, n, t in row["spellings"] if (p, n, t) != row["definition"])]
 
 
-def _withheld(snapshot: Snapshot, item: str, proofs: list[Proof], held: Json) -> list[str]:
-    """Per version a landing withheld: its score and the first target (-) and built (+) lines that differ."""
-    out = []
-    for p in (p for p in proofs if p.member == item and p.version in held and p.built_sha256):
-        first = [x for x in crack.built_diff(snapshot, item, p).splitlines() if x[:1] in "-+" and x[1:3] != x[:1] * 2]
-        out.append(f"{p.version} withheld at {state.percent(p.score)}, first difference: {' / '.join(first[:2])}")
-    return out
-
-
 def _report(
     config: Config,
     item: str,
@@ -574,22 +542,18 @@ def _report(
     tries: list[Json],
     before: float,
     now: float,
-    permuter: str,
     text: str,
     restored: bool,
 ) -> dict[str, Any]:
     rules = state.settings()
     proofs = _proofs(result["proofs"])
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     crack.feedback(snapshot, item, "creative", proofs, "", path.read_text(encoding="utf-8"))
     drain = result.get("drain") or {}
     refused = [_finding(f) for body in drain.get("refused", []) for f in body["findings"]]
     exact = bool(result["exact"]) and not refused
     landed, saved = _commits(drain, item)
-    held = result.get("held") or {}
     packet: dict[str, Any] = {"why": [], "regions": []} if exact else dict(crack.packet(snapshot, item))
-    if landed and held:  # the landed source is what the packet measured: its regions say nothing about the others
-        packet = {**packet, "regions": [], "diff": "", "why": _withheld(snapshot, item, proofs, held)}
     areas = packet["regions"]
     matched = sum(r["kind"] == "match" for r in areas)
     last = next((r["regions"] for r in reversed(tries) if r.get("regions")), None)
@@ -602,7 +566,7 @@ def _report(
         lease = state.count_try(config, item, now, more or state.worst(result["score"]) > before)
     gaps = [_finding(g) for g in result["gaps"]]
     missing = [m for p in proofs for m in p.missing]
-    done = exact or bool(landed and held)
+    done = exact
     landing = brief.refusals(refused) if result["exact"] else []
     compiled = not any(errors.unbuilt(m) for m in missing)
     found = [*gaps, *refused] if compiled else []
@@ -644,9 +608,7 @@ def _report(
         "auto_fixes": fixes,
         "landed": landed,
         "saved": saved,
-        "held": held if landed else {},
         "alike": _alike(snapshot, item, landed),
-        "permuter": permuter,
         "regions": {"matched": matched, "total": len(areas), "gained": matched - last[0] if last else None},
         "file": str(path),
         "why": packet["why"],
@@ -684,7 +646,7 @@ def skip(config: Config, params: Json) -> Json:
 
 def look_(config: Config, params: Json) -> Json:
     mine = [x.item for x in state.leases(config, _now()) if x.session == state.session()]
-    members = layout.capture(config).layout.members
+    members = world.of(world.capture(config)).members
     found = dict(look.look(config, params["name"], next((i for i in mine if members[i].kind == "function"), "")))
     if mine:
         state.renew(config, mine[0], _now())
@@ -693,10 +655,10 @@ def look_(config: Config, params: Json) -> Json:
 
 
 def status(config: Config, params: Json) -> Json:
-    snapshot = layout.capture(config)
+    snapshot = world.capture(config)
     body = dict(state.status(config, _now()))
     body["head"] = snapshot.commit[:9]
-    body["open"] = len(report.items(snapshot, {}))
+    body["open"] = len(items(config))
     body["twin_ready"] = len(twin.ready(snapshot))
     body["debt"] = [
         {"name": r["name"], "blocks": len(r["items"]), "spellings": len(r["spellings"])}

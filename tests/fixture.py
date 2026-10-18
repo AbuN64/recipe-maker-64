@@ -1,4 +1,4 @@
-"""Test support: schema-3 projects, host files and small native-shaped values. Tests `import fixture`."""
+"""Test support: schema-4 projects, host files and small native-shaped values. Tests `import fixture`."""
 
 from __future__ import annotations
 
@@ -11,26 +11,12 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from itertools import pairwise
 from pathlib import Path
-from string import Template
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
-from unbake.contracts import Config, Group, Json, NativeResult, Proof, Submission, digest
+from unbake.contracts import Config, Json, Proof
 
 from recipemaker.state import Attempt
-
-
-def group(
-    name: str,
-    segment: str,
-    members: Sequence[str],
-    evidence: str = "authored",
-    signals: Sequence[str] = (),
-    sdk: bool = False,
-) -> Group:
-    """A Group record whose first unit and module header sit at the neutral paths."""
-    return Group(name, segment, tuple(members), evidence, tuple(signals), sdk, f"src/{name}.c", f"include/{name}.h")
-
 
 VRAM_BASE, ROM_BASE, PAGE = 0x80000400, 0x1000, 0x1000
 TOOLS = (
@@ -87,28 +73,17 @@ def project(
     names_from: str = "a",
     functions: Placed,
     data: Placed = MappingProxyType({}),
-    units: Sequence[Json] = (),
-    groups: Sequence[Json] | None = None,
     headers: Mapping[str, str] = MappingProxyType({}),
     sources: Mapping[str, str] = MappingProxyType({}),
     symbols: Mapping[str, Mapping[str, int]] = MappingProxyType({}),
-    fuzzy: Sequence[Json] = (),
-    cartridge_id: Mapping[str, str] = MappingProxyType({}),
-    region: Mapping[str, str] = MappingProxyType({}),
-    description: Mapping[str, str] = MappingProxyType({}),
 ) -> Path:
-    """Write a committed schema-3 project under tmp/project; headers go under include/, sources under src/.
-
-    fuzzy rows are written as [[fuzzy]]; cartridge_id, region and description map version id -> value.
-    """
+    """Write a committed schema-4 project under tmp/project: one segment per version, a symbol_addrs.txt per version,
+    headers under include/ and sources under src/."""
     root = tmp / "project"
     root.mkdir(parents=True)
-    from unbake import config as configuration
-
-    table: dict[str, Any] = {}
-    named: dict[str, dict] = {}
+    blocks = []
     for vid in versions:
-        placed = sorted(_place(functions, "asm", vid) + _place(data, "data", vid))
+        placed = sorted(_place(functions, "func", vid) + _place(data, "data", vid))
         for (a_rom, _, a_name, a_blob), (b_rom, _, b_name, _) in pairwise(placed):
             if a_rom + len(a_blob) > b_rom:
                 raise ValueError(f"{a_name} overlaps {b_name} in {vid}")
@@ -116,54 +91,18 @@ def project(
         rom = bytearray(-(-end // PAGE) * PAGE)
         for at, _, _, blob in placed:
             rom[at : at + len(blob)] = blob
-        _write(root / f"roms/{vid}.z64", bytes(rom))
-        subs: list[Any] = [[at, kind, name] for at, kind, name, _ in placed] + [[end]]
-        segment = {"name": "main", "type": "code", "start": ROM_BASE, "vram": VRAM_BASE, "subsegments": subs}
-        document = {"name": vid, "sha1": hashlib.sha1(rom).hexdigest(), "segments": [segment]}  # JSON is valid YAML
-        _write(root / f"versions/{vid}/Game.yaml", json.dumps(document, indent=1) + "\n")
+        _write(root / f"roms/baserom.{vid}.z64", bytes(rom))
         rows = symbols.get(vid) or {name: VRAM_BASE + at - ROM_BASE for at, _, name, _ in placed}
-        for n, a in rows.items():
-            named.setdefault(n, {"kind": "function" if n in functions else "data"})[vid] = a
-        table[vid] = {
-            "baserom": f"roms/{vid}.z64",
-            "baserom_sha1": hashlib.sha1(rom).hexdigest(),
-            "split": f"versions/{vid}/Game.yaml",
-            "symbols": f"versions/{vid}/symbol_addrs.txt",
-            "macros": [f"VERSION_{vid.upper()}"],
-        }
-        for key, values in (("cartridge_id", cartridge_id), ("region", region), ("description", description)):
-            if vid in values:
-                table[vid][key] = values[vid]
-    from unbake import symbols as symbol_table
-
-    _write(root / "symbols.toml", symbol_table.dump(named).decode())
-    for vid in versions:
-        _write(root / f"versions/{vid}/symbol_addrs.txt", symbol_table.render(named, vid).decode())
-    info = {"id": "fixture", "name": "fixture", "title": "Fixture", "versions": list(versions)}
-    info["names_from"] = names_from
-    info |= {"toolchain": "gcc-test"}
-    build = {key: [] for key in ("cppflags", "cflags", "asflags", "gnu_asflags")}
-    config = "schema = 3\n\n" + _table("project", info) + _table("build", build) + "[resident]\n\n"
-    config += "".join(_table(f"version.{vid}", row) for vid, row in table.items())
-    _write(root / "config.toml", config)
-    first = sorted(_place(functions, "asm", names_from))
-    default_group = {"name": "code_80000400", "segment": "main", "members": [name for _, _, name, _ in first]}
-    default_group |= {
-        "evidence": "authored",
-        "signals": [],
-        "subsystem": "",
-        "library": "",
-        "source": "src/code_80000400.c",
-        "header": "include/code_80000400.h",
-    }
-    empty = "" if units else "unit = []\n"  # the layout schema requires the key; a fresh project has no units
-    rows = _rows("group", [default_group] if groups is None else groups) + _rows("unit", units)
-    layout = f"schema = 5\n{empty}\n" + rows
-    _write(root / "layout.toml", layout + _rows("fuzzy", fuzzy))
-    _write(root / "types.toml", "schema = 1\n\n[function]\n\n[global]\n\n[struct]\n")
-    marks = configuration.load_resource("repo.toml")["readme"]
-    readme = Template(configuration.template("README.md.in"))
-    _write(root / "README.md", readme.substitute(title=info["title"], begin=marks["begin"], end=marks["end"]))
+        sizes = {name: (at, kind, len(blob)) for at, kind, name, blob in placed}
+        lines = []
+        for name, vram in sorted(rows.items(), key=lambda r: r[1]):
+            at, kind, size = sizes.get(name, (vram - VRAM_BASE + ROM_BASE, "data", 4))
+            lines.append(f"{name} = 0x{vram:08X}; // type:{kind} rom:0x{at:X} size:0x{size:X}")
+        _write(root / f"versions/{vid}/symbol_addrs.txt", "\n".join(lines) + "\n")
+        segment = f'{{ name = "main", rom = 0x{ROM_BASE:X}, vram = 0x{VRAM_BASE:X} }}'
+        blocks.append(f'[version.{vid}]\nsha1 = "{hashlib.sha1(rom).hexdigest()}"\nsegments = [{segment}]\n')
+    head = f'schema = 4\nname = "fixture"\ntitle = "Fixture"\ntoolchain = "gcc-test"\nnames_from = "{names_from}"\n'
+    _write(root / "config.toml", head + "\n" + "\n".join(blocks))
     for relative, text in headers.items():
         _write(root / "include" / relative, text)
     for relative, text in sources.items():
@@ -234,15 +173,9 @@ def elf_object(names: Sequence[str]) -> bytes:
     return header + strtab + symtab + shstr + b"".join(struct.pack(">10I", *r) for r in rows)
 
 
-def native_result(
-    argv: Sequence[str] = ("tool",),
-    exit: int | None = 0,
-    stdout: bytes = b"",
-    stderr: bytes = b"",
-    cpu: float = 0.0,
-    outputs: Mapping[str, Path] = MappingProxyType({}),
-) -> NativeResult:
-    return NativeResult(tuple(argv), "/", exit, None, stdout, stderr, 0.0, cpu, 0, dict(outputs))
+def native_result(exit: int | None = 0, stdout: bytes = b"", stderr: bytes = b"") -> SimpleNamespace:
+    """A finished process as `host.run` returns it."""
+    return SimpleNamespace(exit=exit, stdout=stdout, stderr=stderr)
 
 
 def proof(
@@ -263,20 +196,6 @@ def proof(
     sha = hashlib.sha256(f"{unit}:{member}:{version}".encode()).hexdigest()
     built = sha if exact else hashlib.sha256(sha.encode()).hexdigest()
     return Proof(unit, member, version, "recipe", sha, sha, built, sha, exact, tuple(missing), score, symptoms)
-
-
-def submission(**fields: Any) -> Submission:
-    """A complete Submission for tests; fields override the defaults."""
-    member, source_sha = fields.get("member", "func_80000400"), "0" * 64
-    values: dict[str, Any] = {"operation": "publish", "member": member, "function": None, "source_sha256": source_sha}
-    values |= {"overrides": {"add": [], "omit": []}, "base": "0" * 40, "origin": "submit", "note": ""}
-    values |= {"invocation": "test-invocation"}
-    values |= fields
-    values.setdefault("proofs", (proof(f"src/{member}.c", member, "a", True),))
-    id_basis = (values["member"], values["source_sha256"], values["overrides"], values["operation"])
-    values.setdefault("id", digest(id_basis))
-    values.setdefault("source", f".unbake/inbox/{values['id']}.c")
-    return Submission(**values)
 
 
 def attempt(**fields: Any) -> Attempt:

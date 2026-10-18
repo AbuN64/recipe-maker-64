@@ -11,10 +11,10 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from unbake import effort
+from unbake import api
 from unbake.contracts import Snapshot
 
-from recipemaker import index
+from recipemaker import index, world
 
 _LINE = re.compile(r"^\s*/\*[^*]*\*/\s+([a-z][\w.]*)\s*(.*?)\s*$")
 _BOUNDARY = re.compile(r"^\s*(?:\.L\w+:|glabel\s|\w+:)")
@@ -125,7 +125,7 @@ def tables(snapshot: Snapshot) -> tuple[dict[str, list[tuple[str, tuple[str, ...
     one indirect call reaches them all. And per symbol the tables holding a word of it, so a table only another table
     points at is reached through that one."""
     config = snapshot.config
-    functions = {n for n, m in snapshot.layout.members.items() if m.kind == "function"}
+    functions = {n for n, m in world.of(snapshot).members.items() if m.kind == "function"}
     out: dict[str, list[tuple[str, tuple[str, ...], int]]] = {}
     holders: dict[str, list[str]] = {}
     for path in sorted((config.project.root / "asm" / config.project.names_from / "data").rglob("*.s")):
@@ -221,18 +221,18 @@ def _code(snapshot: Snapshot, name: str) -> list[Row]:
         except (KeyError, OSError):
             return []
 
-    return effort.memo(("recipe.dispatch.code", snapshot.digest, name), read)
+    return api.memo(("recipe.dispatch.code", snapshot.digest, name), read)
 
 
 def flows(snapshot: Snapshot, node: Node) -> Flow:
     name, position = node
-    return effort.memo(
+    return api.memo(
         ("recipe.dispatch.flow", snapshot.digest, node), lambda: flow(_code(snapshot, name), position, name)
     )
 
 
 def _columns(snapshot: Snapshot) -> dict[str, list[tuple[str, tuple[str, ...], int]]]:
-    return effort.memo(("recipe.tables", snapshot.digest), lambda: tables(snapshot))[0]
+    return api.memo(("recipe.tables", snapshot.digest), lambda: tables(snapshot))[0]
 
 
 def _core(snapshot: Snapshot, seed: str) -> tuple[frozenset[str], int]:
@@ -427,8 +427,8 @@ def header(snapshot: Snapshot, nodes: Sequence[Node]) -> str:
 
     common: set[str] | None = None
     for name in dict.fromkeys(n for n, _ in nodes):
-        member = snapshot.layout.members.get(name)
-        module = snapshot.layout.groups.get(member.group) if member else None
+        member = world.of(snapshot).members.get(name)
+        module = world.of(snapshot).groups.get(member.group) if member else None
         declared = found.declarations.get(name)
         paths = [p for p in (declared[0] if declared else "", module.header if module else "") if p in table]
         for path in paths:

@@ -6,12 +6,10 @@ import re
 from collections.abc import Sequence
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any
 
-from unbake import layout, store
-from unbake.contracts import Finding, Json, Refusal, Snapshot
+from unbake.contracts import Finding, Json, Snapshot
 
-from recipemaker import crack, draft, errors, index, ladder, ledger, state
+from recipemaker import crack, draft, errors, host, index, ladder, state
 from recipemaker import regions as target
 from recipemaker.ledger import Left
 
@@ -74,22 +72,9 @@ def entry_artifacts(snapshot: Snapshot, packet: Json) -> list[str]:
         if extra and all(len(e) < len(mine) for e in others):
             out.append(
                 f"{version}: extra instructions at entry not present in other versions ({'; '.join(extra)}); "
-                f"land the others with {version} withheld"
+                f"wrap the difference in #if VERSION_{version.upper().replace('-', '_')}"
             )
     return out
-
-
-def _differs(twin: Json) -> list[str]:
-    """Facts only: what is not the same between the twin's version and this one."""
-    here, there = twin["macros"]
-    out = [f"version macros: this {' '.join(here)}, twin {' '.join(there)}"] * (here != there)
-    out += [f"unit {k}: this {a}, twin {b}" for k, (a, b) in twin["flags"].items() if a != b]
-    diff = twin["diff"].splitlines()
-    return out + (
-        ["target bytes, this version (-) against the twin's version (+):", *_cut(_paired(twin["diff"]), _DIFF)]
-        if diff
-        else []
-    )
 
 
 def _paired(diff: str) -> list[str]:
@@ -217,11 +202,7 @@ def data_facts(snapshot: Snapshot, member: str) -> list[str]:
     symbol = draft.data_symbol(snapshot, entry, version, places[0].vram)
     sections = ", ".join(f"{p.section} 0x{p.vram:08X}+0x{p.size:X}" for p in places)
     out = ["## Data", f"symbol: {symbol} ({version}); {sections}"]
-    try:
-        home = layout.unit_options(snapshot, member, b"")[0][0]
-        out.append(f"definition goes in {home.path} (group {home.group or 'none'})")
-    except Refusal as refusal:
-        out.append(f"placement: unbake has none: {refusal.findings[0].reason}")
+    out.append(f"definition goes in {entry.group}, in place of its INCLUDE_DATA line")
     out.append("bytes (offset, words, ASCII):")
     for at in range(0, min(len(raw), 16 * _DUMP), 16):
         row = raw[at : at + 16]
@@ -237,46 +218,6 @@ def data_facts(snapshot: Snapshot, member: str) -> list[str]:
     return out + [f"- {n}: {', '.join(dict.fromkeys(u))}" for n, u in list(users.items())[:_USERS]]
 
 
-def landed_facts(snapshot: Snapshot, member: str) -> list[str]:
-    """What landed code says about the addresses and arguments this function touches, from unbake's usage rows."""
-    use = index.usage(snapshot, member)
-    called = {a: n for n, a in snapshot.versions[index.reference(snapshot, member)].symbols.items()}
-    declared = index.get(snapshot).declarations
-    out: list[str] = []
-    seen: set[Any] = set()
-    for r in use["addresses"]:
-        name = r["names"][0] if r["names"] else called.get(r["address"], f"0x{r['address']:08X}")
-        if (span := r["span"]) and (span["start"], span["writer"]) not in seen:
-            seen.add((span["start"], span["writer"]))
-            unit = layout.unit_of(snapshot, span["writer"])
-            out.append(
-                f"{name}..+0x{span['size']:X} is written together by {span['writer']}"
-                f"{f' ({unit.path})' if unit else ''}: {span['stores']} stores, {span['fills']} fills"
-            )
-        if (r["spellings"] or r["landed_readers"]) and name not in declared and name not in seen:
-            seen.add(name)
-            readers = ", ".join(n for n, landed in r["readers"] if landed)
-            spelled = (
-                f"spelled `{'`, `'.join(dict.fromkeys(t for _, _, t in r['spellings']))}`"
-                if r["spellings"]
-                else "no landed spelling"
-            )
-            out.append(f"{name}: no header type; {spelled}; landed readers: {readers or 'none'}")
-        if len(types := {t for _, _, t in r["spellings"]}) > 1:
-            out.append(f"{name} is spelled {len(types)} ways: declaration item (recipe next --kind declaration)")
-    for arg, info in use["args"].items():
-        if not info["landed_callers"]:
-            continue
-        fits = ledger.rank(index.get(snapshot).identities, info["offsets"], None)[:3]
-        ranked = "; ".join(f"{n} ({c} of {len(info['offsets'])} offsets, 0x{size:X} bytes)" for n, c, size in fits)
-        callers = ", ".join(info["landed_callers"])
-        out.append(
-            f"{arg}: offsets {', '.join(map(hex, info['offsets']))}; landed callers: {callers}"
-            + (f"; types: {ranked}" if ranked else "")
-        )
-    return out[:_FACTS]
-
-
 def _sections(snapshot: Snapshot, packet: Json, fixes: Sequence[str], left: Sequence[Left]) -> list[str]:
     root = snapshot.config.project.root
     member = packet["member"]
@@ -287,13 +228,6 @@ def _sections(snapshot: Snapshot, packet: Json, fixes: Sequence[str], left: Sequ
     )
     source = root / packet["best"]["source"]
     lines += ["## Candidate", f"file: {source}", f"score: {scores(packet['best']['score'])}"]
-    unit = layout.unit_of(snapshot, member)
-    if unit and unit.withheld:
-        aims = ", ".join(sorted({p.version for p in snapshot.layout.members[member].placements} - set(unit.withheld)))
-        lines.append(
-            f"existing source {unit.path} is withheld in {', '.join(unit.withheld)}: fix it for them; "
-            f"a try aims to land exact for {aims}"
-        )
     lines.append("")
     if packet["kind"] == "data":
         lines += [*data_facts(snapshot, member), ""]
@@ -307,12 +241,12 @@ def _sections(snapshot: Snapshot, packet: Json, fixes: Sequence[str], left: Sequ
             "## Twin",
             f"{twin['function']} in {twin['file']} ({twin['version']}); read it: recipe look {twin['function']}",
         ]
-        lines += [*_differs(twin), ""]
+        lines += [""]
     if packet["regions"] or packet["diff"]:
         more = []
         if packet["diff"]:
             full = ladder.candidate_path(snapshot.config, member).with_suffix("") / "diff.txt"
-            store.write(full, packet["diff"].encode())
+            host.write(full, packet["diff"].encode())
             more = [f"full diff: {full}"] * (packet["diff"].count("\n") >= _DIFF)
         shown = (
             regions(packet["regions"], packet["worst"])
@@ -336,8 +270,6 @@ def _sections(snapshot: Snapshot, packet: Json, fixes: Sequence[str], left: Sequ
         lines += ["## Declarations the target assembly contradicts", *disagree, ""]
     types = packet["types"]
     lines += ["## Types", types["signature"] or "(no prototype known)", *types["declarations"], ""]
-    if packet["kind"] == "function" and (facts := landed_facts(snapshot, member)):
-        lines += ["## What landed code says", *[f"- {f}" for f in facts], ""]
     start = first_open(packet["regions"])
     lines += [
         f"next: start at {start}; edit the file, then run: recipe try {member}"
@@ -352,5 +284,5 @@ def write(snapshot: Snapshot, member: str, packet: Json, auto_fixes: Sequence[st
     if len(lines) > MAX_LINES:
         lines = [*lines[: MAX_LINES - 2], "... brief cut", lines[-1]]
     path = ladder.candidate_path(snapshot.config, member).with_suffix("") / "brief.md"
-    store.write(path, ("\n".join(lines) + "\n").encode())
+    host.write(path, ("\n".join(lines) + "\n").encode())
     return path

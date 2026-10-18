@@ -3,6 +3,7 @@ label = "GNU C 2.8.x for the console, vendor build"
 source = "original"
 toolchains = ["gcc-2.8.1-sn64"]
 m2c_target = "mips-gcc-c"
+supported_options = ["-O1", "-O2", "-O3", "-fno-strength-reduce", "-fno-expensive-optimizations", "-fno-schedule-insns2", "-mgp32", "-mfp32", "-mfp64", "-funsigned-char", "-fno-defer-pop", "-ffast-math", "-fno-delayed-branch", "-fforce-addr", "-fno-thread-jumps", "-fno-rerun-cse-after-loop", "-fno-cse-follow-jumps", "-fno-cse-skip-blocks"]
 
 tells = [
   "double-width float registers are used when the 64-bit float option is on, changing which registers pair up",

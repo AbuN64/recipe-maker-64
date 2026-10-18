@@ -183,16 +183,13 @@ def test_indexing_a_pointer_to_a_scalar_global_is_refused_but_index_zero_is_not(
     assert errors.banned("void f(void) {\n    s32 *p;\n    p = &T;\n    p[2] = 1;\n}\n", declared) == []
 
 
-def test_an_undeclared_name_gets_the_extern_line_from_types_toml_when_it_knows_the_name(fakes, monkeypatch):
-    from unbake import types as unbake_types
-
-    doc = {"global": {"gCount": {"declaration": "extern s32 gCount;"}}, "function": {}}
-    monkeypatch.setattr(unbake_types, "load", lambda snap: doc)
+def test_an_undeclared_name_gets_the_extern_line_from_the_header_that_declares_it(fakes, monkeypatch):
+    declared = {"gCount": ("include/count.h", 3, "extern s32 gCount;")}
     monkeypatch.setattr(
-        index, "get", lambda s: SimpleNamespace(declarations={}, identities=(), callers={}, shapes={}, extents={})
+        index, "get", lambda s: SimpleNamespace(declarations=declared, identities=(), callers={}, shapes={}, extents={})
     )
     known = errors.translate(fakes.snapshot, "x = gCount;\n", ["src/f.c:3: `gCount' undeclared"], [])
-    assert known.fix == "add `extern s32 gCount;` before its first use; the type is from types.toml"
+    assert known.fix == "add `extern s32 gCount;` before its first use; the type is from include/count.h"
     other = errors.translate(fakes.snapshot, "x = gOther;\n", ["src/f.c:3: `gOther' undeclared"], [])
     assert (
         other.fix == "add an extern declaration of gOther before its first use; "
@@ -215,9 +212,6 @@ def test_perm_marks_are_banned_like_m2c_text_so_they_never_land():
 
 
 def test_an_undeclared_standard_macro_says_to_include_its_header_never_extern(fakes, monkeypatch):
-    from unbake import types as unbake_types
-
-    monkeypatch.setattr(unbake_types, "load", lambda snap: {"global": {}, "function": {}})
     monkeypatch.setattr(
         index, "get", lambda s: SimpleNamespace(declarations={}, identities=(), callers={}, shapes={}, extents={})
     )
@@ -228,9 +222,6 @@ def test_an_undeclared_standard_macro_says_to_include_its_header_never_extern(fa
 
 
 def test_a_declaration_conflict_points_at_the_candidates_own_prototype_not_the_compiled_line(fakes, monkeypatch):
-    from unbake import types as unbake_types
-
-    monkeypatch.setattr(unbake_types, "load", lambda snap: {"global": {}, "function": {}})
     monkeypatch.setattr(
         index, "get", lambda s: SimpleNamespace(declarations={}, identities=(), callers={}, shapes={}, extents={})
     )
