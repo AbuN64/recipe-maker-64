@@ -100,7 +100,9 @@ def project(
             lines.append(f"{name} = 0x{vram:08X}; // type:{kind} rom:0x{at:X} size:0x{size:X}")
         _write(root / f"versions/{vid}/symbol_addrs.txt", "\n".join(lines) + "\n")
         segment = f'{{ name = "main", rom = 0x{ROM_BASE:X}, vram = 0x{VRAM_BASE:X} }}'
-        blocks.append(f'[version.{vid}]\nsha1 = "{hashlib.sha1(rom).hexdigest()}"\nsegments = [{segment}]\n')
+        blocks.append(
+            f'[version.{vid}]\nsha1 = "{hashlib.sha1(rom).hexdigest()}"\nsize = {len(rom)}\nsegments = [{segment}]\n'
+        )
     head = f'schema = 4\nname = "fixture"\ntitle = "Fixture"\ntoolchain = "gcc-test"\nnames_from = "{names_from}"\n'
     _write(root / "config.toml", head + "\n" + "\n".join(blocks))
     for relative, text in headers.items():
