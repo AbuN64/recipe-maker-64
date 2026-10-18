@@ -1,6 +1,10 @@
-"""`recipe name`: evidence packs for an outside naming pass, then rows validated against the style and the map, turned
-into one file patch (symbol, module, source and header renames) that `recipe apply` applies. Catalog names (N0) and
-tag-named subsystems (N2) need no model. No name is accepted without evidence a reader can check in map.json."""
+"""`recipe name`: evidence packs for an outside naming pass, then rows validated against the style and the evidence,
+turned into one file patch (symbol, module, source and header renames) that `recipe apply` applies. Tag-named
+subsystems (N2) need no model. No name is accepted without evidence a reader can check.
+
+The evidence is the structure document (`structure.evidence`: modules, segments, members, placements, units) plus the
+calls and loads of the extracted assembly of each member's version (`api.asm_path`). Unbake produces no string,
+catalog-name or header-graph facts, so there is no catalog step (N0), no string evidence and no type renames."""
 
 from __future__ import annotations
 
@@ -12,13 +16,17 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from unbake import api
-from unbake.contracts import Config, Json
+from unbake.contracts import Config, Json, Refusal
 
 from recipemaker import state, structure, style, table
 
-_ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2, "type": 2}
-_EVIDENCE = re.compile(r"^(callee|caller|tag) (\S+)$|^string '(.*)'$", re.S)
+_ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
+_EVIDENCE = re.compile(r"^(callee|caller|tag) (\S+)$")
+# `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
+_CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
+_LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
 _CARD_LIMIT = 12
+Graph = dict[str, tuple[list[str], list[str]]]
 
 
 def _root(config: Config) -> Path:
@@ -29,17 +37,54 @@ def _bytes(member: Json, version: str) -> int:
     return next((p["rom_end"] - p["rom_start"] for p in member["placements"] if p["version"] == version), 0)
 
 
-class Map:
-    """The map document as the name rules read it: members, modules, folders and callers by current name."""
+def _directory(config: Config, version: str, names: Iterable[str]) -> str:
+    """The folder of a segment's extracted assembly, from the first member unbake can place; "" when none can."""
+    for name in names:
+        try:
+            return str(PurePosixPath(api.asm_path(config, version, name)).parent)
+        except Refusal:
+            continue
+    return ""
 
-    def __init__(self, config: Config, doc: Json) -> None:
+
+def reads(config: Config, doc: Json) -> Graph:
+    """Per function with extracted assembly the members it calls and the members whose address it loads, in order of
+    first use. A member is named in one version (`func_X_de`), so its assembly and its callees' names are that
+    version's; a function without assembly has no entry."""
+    root = config.project.root
+    known = {m["name"] for m in doc["members"]}
+    by_segment: dict[tuple[str, str], list[str]] = {}
+    for m in doc["members"]:
+        if m["kind"] == "function" and m["placements"]:
+            by_segment.setdefault((m["placements"][0]["version"], m["segment"]), []).append(m["name"])
+    graph: Graph = {}
+    for (version, _), names in by_segment.items():
+        folder = _directory(config, version, names)
+        for name in names if folder else ():
+            file = root / folder / f"{name}.s"
+            if not file.is_file():
+                continue
+            text = file.read_text(encoding="utf-8", errors="replace")
+            found = ([x for x in dict.fromkeys(rx.findall(text)) if x in known and x != name] for rx in (_CALL, _LOAD))
+            graph[name] = (next(found), next(found))
+    if not graph and by_segment:
+        raise state.stop("recipe.name", "no extracted assembly to read calls from", action="extract the base ROMs")
+    return graph
+
+
+class Map:
+    """The evidence as the name rules read it: members, modules, folders, calls and callers by current name."""
+
+    def __init__(self, config: Config, doc: Json, graph: Graph) -> None:
         self.root, self.doc = config.project.root, doc
         self.members: dict[str, Json] = {m["name"]: m for m in doc["members"]}
         self.modules: dict[str, dict[str, Any]] = {m["name"]: dict(m) for m in doc["modules"]}
+        self.calls = {n: c for n, (c, _) in graph.items()}
+        self.loads = {n: ld for n, (_, ld) in graph.items()}
         self.callers: dict[str, list[str]] = {}
-        for m in doc["members"]:
-            for target in (*m["calls"], *m["loads"]):
-                self.callers.setdefault(target, []).append(m["name"])
+        for name in graph:
+            for target in (*self.calls[name], *self.loads[name]):
+                self.callers.setdefault(target, []).append(name)
         self._gbi: dict[str, bool] = {}
         self.alias: dict[str, str] = {}  # a module renamed by an accepted row: old name to new name
         self.taken: set[str] = {*self.members, *self.modules}
@@ -76,48 +121,36 @@ class Map:
 
     def tag_of(self, callee: str) -> str:
         """The subsystem word an SDK callee name gives: its prefix followed by an upper-case letter or underscore."""
-        name = self.members.get(callee, {}).get("sdk_name") or callee
         for prefix, word in table("knowledge/style.toml")["tags"].items():
-            if re.match(re.escape(prefix) + r"(?:[A-Z_0-9]|$)", name):
+            if re.match(re.escape(prefix) + r"(?:[A-Z_0-9]|$)", callee):
                 return str(word)
         return ""
 
     def tags(self, names: Iterable[str]) -> Counter[str]:
         found: Counter[str] = Counter()
         for name in names:
-            found.update(t for t in (self.tag_of(c) for c in self.members[name]["calls"]) if t)
+            found.update(t for t in (self.tag_of(c) for c in self.calls.get(name, ())) if t)
             found.update([table("knowledge/style.toml")["gbi"]["tag"]] * self.gbi(name))
         return found
 
     def users(self, target: str, kind: str) -> list[str]:
-        """The members whose evidence speaks for a target: itself, a folder's or module's functions, a type's users."""
+        """The members whose evidence speaks for a target: itself, or a folder's or module's members."""
         if kind in ("function", "global", "static"):
             return [target] * (target in self.members)
         if kind == "subsystem":
             return [m for mod in self.modules if self.folder(mod) == target for m in self.modules[mod]["members"]]
-        if kind == "module":
-            return list(self.modules.get(target, {}).get("members", ()))
-        headers = [h for h in self.doc["headers"] if target in h["declares"]]
-        mods = {m for h in headers for m in h["modules"]}
-        units = {u["path"]: u["members"] for u in self.doc["units"]}
-        return sorted(
-            {m for h in headers for p in h["included_by"] for m in units.get(p, ())}
-            | {m for mod in mods for m in self.modules[mod]["members"]}
-        )
+        return list(self.modules.get(target, {}).get("members", ()))
 
     def verifies(self, item: str, names: Sequence[str]) -> bool:
         found = _EVIDENCE.match(item)
         if not found:
             return False
-        if found[3] is not None:
-            return any(found[3] in s for n in names for s in self.members[n]["strings"])
         kind, value = found[1], found[2]
         if kind == "tag":
             return self.tags(names)[value] > 0
         if kind == "caller":
             return any(value in self.callers.get(n, ()) for n in names)
-        sdk = {self.members[c].get("sdk_name") for n in names for c in self.members[n]["calls"] if c in self.members}
-        return any(value in self.members[n]["calls"] for n in names) or value in sdk
+        return any(value in self.calls.get(n, ()) for n in names)
 
 
 def _exists(ctx: Map, row: Json) -> str:
@@ -126,8 +159,6 @@ def _exists(ctx: Map, row: Json) -> str:
         return "" if any(ctx.folder(m) == target for m in ctx.modules) else "no folder has this name"
     if kind == "module":
         return "" if target in ctx.modules else "no module has this name"
-    if kind == "type":
-        return "" if ctx.users(target, kind) else "no header declares this type"
     want = "function" if kind == "function" else "data"
     found = ctx.members.get(target)
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
@@ -161,10 +192,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "shape", "a row needs kind, target, name, evidence and doc"
     if reason := _exists(ctx, row):
         return "target", reason
-    if kind != "type" and not style.neutral(target):
+    if not style.neutral(target):
         return "named", f"{target} already has a name"
-    if kind == "function" and ctx.members[target].get("sdk_name"):
-        return "catalog", f"{target} is an SDK function: its name is the catalog name"
     rule, reason = _form(ctx, row)
     if rule:
         return rule, reason
@@ -175,18 +204,14 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "evidence", "a name needs at least one evidence item"
     users = ctx.users(target, kind)
     if missing := [e for e in evidence if not ctx.verifies(e, users)]:
-        return "unverifiable", f"map.json does not show: {missing[0]}"
+        return "unverifiable", f"the assembly does not show: {missing[0]}"
     return "", ""
 
 
 def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
-    """The moves of an accepted row, with the map's paths and names brought forward for the rows after it."""
+    """The moves of an accepted row, with the evidence's paths and names brought forward for the rows after it."""
     kind, target, name = row["kind"], row["target"], row["name"]
     ctx.taken.add(name)
-    if kind == "type":  # a struct, union or typedef: renamed, or folded into the type that holds the name
-        for header in ctx.doc["headers"]:
-            header["declares"] = [name if d == target else d for d in header["declares"]]
-        return [{"op": "type", "subject": target, "target": name}]
     if kind not in ("subsystem", "module"):
         return [{"op": "symbol", "subject": target, "target": name}]
     out: list[dict[str, str]] = []
@@ -240,17 +265,14 @@ def _number(config: Config) -> int:
 def _card(ctx: Map, kind: str, target: str, version: str) -> Json:
     names = ctx.users(target, kind)
     members = [ctx.members[n] for n in names]
-    calls = Counter(c for m in members for c in m["calls"] if c not in names)
-    shown = [ctx.members[c].get("sdk_name") or c if c in ctx.members else c for c, _ in calls.most_common(_CARD_LIMIT)]
+    calls = Counter(c for n in names for c in ctx.calls.get(n, ()) if c not in names)
     card: dict[str, Any] = {
         "target": target,
         "kind": kind,
         "size": sum(_bytes(m, version) for m in members),
-        "callees": shown,
-        "sdk_callees": sorted({ctx.members[c]["sdk_name"] for c in calls if ctx.members.get(c, {}).get("sdk_name")}),
-        "strings": sorted({s for m in members for s in m["strings"]})[:_CARD_LIMIT],
+        "callees": [c for c, _ in calls.most_common(_CARD_LIMIT)],
         "tags": dict(ctx.tags(names)),
-        "loads": sorted({d for m in members for d in m["loads"]})[:_CARD_LIMIT],
+        "loads": sorted({d for n in names for d in ctx.loads.get(n, ())})[:_CARD_LIMIT],
     }
     outside = Counter(c for n in names for c in ctx.callers.get(n, ()) if c not in names)
     card["callers"] = [c for c, _ in outside.most_common(_CARD_LIMIT)]
@@ -270,7 +292,7 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         folders = {f for m in ctx.modules if (f := ctx.folder(m)).startswith("sys_") and style.neutral(f)}
         return [("subsystem", f) for f in sorted(folders)]
     if step == "N1":  # leaf numeric functions many subsystems call
-        leaf = [n for n, m in neutral.items() if m["kind"] == "function" and not m["calls"]]
+        leaf = [n for n, m in neutral.items() if m["kind"] == "function" and n in ctx.calls and not ctx.calls[n]]
         spread = {n: {ctx.folder_of(c) for c in ctx.callers.get(n, ())} for n in leaf}
         return [("function", n) for n in sorted(leaf) if len(spread[n]) >= 5]
     if step == "N3":  # public API: called from another subsystem, by fan-in
@@ -291,7 +313,7 @@ def _auto(ctx: Map) -> list[Json]:
     claimed: set[str] = set()
     for _, folder in _targets(ctx, "N2"):
         names = [n for n in ctx.users(folder, "subsystem") if n in ctx.members]
-        calls = [c for n in names for c in ctx.members[n]["calls"] if ctx.folder_of(c) != folder]
+        calls = [c for n in names for c in ctx.calls.get(n, ()) if ctx.folder_of(c) != folder]
         tags, external = ctx.tags(names), len(calls) + sum(ctx.gbi(n) for n in names)
         if not tags or not external:
             continue
@@ -307,24 +329,15 @@ def _auto(ctx: Map) -> list[Json]:
 
 
 def next_(config: Config, params: Json) -> Json:
-    """`recipe name next --step`: N0 and tag-named N2 become a batch of moves at once, the rest an evidence pack."""
+    """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack."""
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
-    ctx, moves, pick, path = Map(config, doc), [], [], None
-    if step == "N0":
-        claims: dict[str, list[str]] = {}  # catalog name -> the neutral members the catalog gives it to
-        for n, m in sorted(ctx.members.items()):
-            if m.get("sdk_name") and m["sdk_name"] not in ctx.taken and style.neutral(n):
-                claims.setdefault(m["sdk_name"], []).append(n)
-        # one name, one function: a name two members claim stays neutral on both and is recorded in the ledger
-        moves = [{"op": "symbol", "subject": n[0], "target": t} for t, n in claims.items() if len(n) == 1]
-        twice = [{"name": t, "members": n} for t, n in sorted(claims.items()) if len(n) > 1]
-        structure.write(_root(config) / "n0-ledger.jsonl", "".join(json.dumps(r) + "\n" for r in twice))
-    else:
-        done: set[str] = set()
-        for row in _auto(ctx) if step == "N2" else []:
-            if not judge(ctx, row)[0]:
-                moves, done = [*moves, *_moves(ctx, row)], done | {row["target"]}
-        pick = [t for t in _targets(Map(config, doc), step) if t[1] not in done][: int(params["count"])]
+    graph = reads(config, doc)
+    ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
+    for row in _auto(ctx) if step == "N2" else []:
+        if not judge(ctx, row)[0]:
+            moves, done = [*moves, *_moves(ctx, row)], done | {row["target"]}
+    pick = [t for t in _targets(Map(config, doc, graph), step) if t[1] not in done][: int(params["count"])]
+    path = None
     answer = ""
     if pick:
         k, rules = _number(config), table("knowledge/style.toml")
@@ -337,6 +350,7 @@ def next_(config: Config, params: Json) -> Json:
     return {
         "action": "next",
         "step": step,
+        "read": len(graph),
         "pack": str(path.relative_to(config.project.root)) if path else None,
         "targets": len(pick),
         **{k: built[k] for k in ("patch", "files", "moves", "path")},
@@ -352,7 +366,7 @@ def submit(config: Config, params: Json) -> Json:
     if not path.is_file():
         raise state.stop("recipe.name", f"{path} does not exist", action="recipe name next")
     doc = structure.evidence(config, params["host"])
-    ctx = Map(config, doc)
+    ctx = Map(config, doc, reads(config, doc))
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -397,7 +411,7 @@ def _banner(name: str, doc: str, vram: str, version: str) -> str:
 def banners(config: Config, params: Json) -> Json:
     """`recipe name banners`: candidate sources with the id banner above each renamed function, for `submit --bulk`."""
     doc = structure.evidence(config, params["host"])
-    ctx, version = Map(config, doc), doc["names_from"]
+    ctx, version = Map(config, doc, {}), doc["names_from"]
     wanted = [
         b for p in sorted(_root(config).glob("banners-*.json")) for b in json.loads(p.read_text(encoding="utf-8"))
     ]

@@ -14,8 +14,7 @@ RESULTS = {
     "structure": {
         "modules": {"before": 3, "after": 6},
         "units_estimate": {"before": 5, "after": 6},
-        "headers": {"before": 7, "after": 6},
-        "boundaries": [{"left": "f3", "right": "f4", "signals": ["padding", "calls"]}],
+        "boundaries": [{"left": "f3", "right": "f4", "signals": ["padding"]}],
         "moves": 2,
         "patch": "diff --git a/x b/x\n",
         "files": ["x"],

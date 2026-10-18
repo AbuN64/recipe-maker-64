@@ -171,27 +171,23 @@ def _facts(text: str) -> Json:
 
 
 class Context:
-    """What `.unbake/map.json` says about banners and versions, read only when a file has banners or version notes."""
+    """What the project's versions say about banners: their names and, per symbol, the VRAM in each. The symbol tables
+    (`api.symbols`) are read once, and only when a file has a banner address."""
 
     def __init__(self, config: Config) -> None:
-        self.path = config.project.root / ".unbake/map.json"
+        self.config = config
         self.versions: set[str] = set(config.project.versions)
-        self._vram: dict[str, dict[str, str]] | None = None
+        self._tables: dict[str, Any] | None = None
 
     def known(self) -> set[str]:
-        self.placed("")
         return self.versions
 
     def placed(self, name: str) -> dict[str, str] | None:
-        """Per version the VRAM of a member as hex, or None when the map does not know the member."""
-        if self._vram is None:
-            self._vram = {}
-            if self.path.is_file():
-                document = json.loads(self.path.read_text(encoding="utf-8"))
-                self.versions |= set(document["versions"])
-                for m in document["members"]:
-                    self._vram[m["name"]] = {p["version"]: f"{p['vram']:08X}" for p in m["placements"]}
-        return self._vram.get(name)
+        """Per version the VRAM of a symbol as hex, or None when no version has the symbol."""
+        if self._tables is None:
+            self._tables = {v: api.symbols(self.config, v) for v in sorted(self.versions)}
+        found = {v: f"{syms[name][0]:08X}" for v, syms in self._tables.items() if name in syms}
+        return found or None
 
 
 def _words(path: str) -> list[str]:

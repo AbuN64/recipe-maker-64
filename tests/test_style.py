@@ -63,16 +63,26 @@ def project(tmp_path, files):
     for name, text in files.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(text)
-    (tmp_path / ".unbake").mkdir(exist_ok=True)
-    (tmp_path / ".unbake/map.json").write_text(
-        json.dumps(
-            {
-                "versions": ["us"],
-                "members": [{"name": "Actor_Spawn", "placements": [{"version": "us", "vram": 0x80001000}]}],
-            }
-        )
-    )
     return SimpleNamespace(project=SimpleNamespace(root=tmp_path, versions=("us",)))
+
+
+SYMBOLS = {
+    "us": {"Actor_Spawn": (0x80001000, 0x1000, 0x40, "func")},
+    "eu": {"Actor_Spawn": (0x80001200, 0x1200, 0x40, "func")},
+}
+
+
+@pytest.fixture(autouse=True)
+def symbols(monkeypatch):
+    """`api.symbols` per version, and the versions it was asked for."""
+    asked = []
+
+    def fake(config, version):
+        asked.append(version)
+        return SYMBOLS.get(version, {})
+
+    monkeypatch.setattr(style.api, "symbols", fake)
+    return asked
 
 
 @pytest.fixture(autouse=True)
@@ -163,10 +173,21 @@ def test_header_order_guard_include_order_and_banner_rules(tmp_path):
     assert details == {"Actor_Old above Actor_New"}  # the address has no placement, so it is not judged
 
 
-def test_a_banner_address_must_equal_the_map(tmp_path):
+def test_a_banner_address_must_equal_the_symbol_table_of_its_version(tmp_path, symbols):
     files = {"src/game/main/actor/actor_spawn.c": CLEAN_SOURCE.replace("80001000", "80001004")}
     got = run(project(tmp_path, files))
     assert [(f["rule"], f["detail"]) for f in got["findings"]] == [("banner-address", "Actor_Spawn us 80001004")]
+    assert symbols == ["us"]  # the tables of the configured versions, read once
+
+
+def test_a_banner_of_another_version_is_judged_by_that_versions_table(tmp_path):
+    source = CLEAN_SOURCE.replace("us 80001000", "eu 80001200")
+    config = project(tmp_path, {"src/game/main/actor/actor_spawn.c": source})
+    config.project.versions = ("us", "eu")
+    assert run(config)["findings"] == []
+    wrong = CLEAN_SOURCE.replace("us 80001000", "eu 80001000")
+    (tmp_path / "src/game/main/actor/actor_spawn.c").write_text(wrong)
+    assert [f["detail"] for f in run(config)["findings"]] == ["Actor_Spawn eu 80001000"]
 
 
 def test_a_version_word_must_be_a_configured_version(tmp_path):

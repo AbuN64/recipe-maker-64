@@ -7,7 +7,7 @@ unprefixed = ["math"]
 banned = ["Do", "Stuff", "Thing", "Misc", "Helper", "Func", "Temp", "Unknown"]
 bare_verbs = ["Handle", "Process", "Run", "Manage"]
 allow = ["main"]
-evidence_forms = ["callee NAME", "caller NAME", "string 'TEXT'", "tag WORD"]
+evidence_forms = ["callee NAME", "caller NAME", "tag WORD"]
 
 [names]
 subsystem = '^[a-z][a-z0-9]{1,11}$'

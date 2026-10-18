@@ -1,4 +1,5 @@
-"""recipe name: catalog and tag names need no model, a pack carries checkable evidence, submit refuses by rule."""
+"""recipe name: tag names need no model, a pack carries checkable evidence, submit refuses by rule, and the calls and
+loads come from the extracted assembly."""
 
 import json
 import subprocess
@@ -6,25 +7,32 @@ from types import SimpleNamespace
 
 import pytest
 from r1_fake_api import fake_api  # noqa: F401
+from unbake.contracts import Finding, Refusal
 
 from recipemaker import naming, structure
 
 VRAM = 0x80001000
+GRAPH = {  # name -> (calls, loads), what `naming.reads` finds in the assembly
+    # sys_A calls two input functions of four external calls: half, so the folder is named by its tag
+    "func_80001010": (["osContStartReadData", "osContGetReadData", "func_80001020", "func_80700000"], ["D_80002000"]),
+    "func_80001020": (["func_80700000"], []),
+    # sys_B: one input call of three external ones stays for the pack
+    "func_80003010": (["osContStartReadData", "func_80001020", "func_80004010"], []),
+    # actor is named already
+    "func_80004010": (["func_80004020"], ["D_80005000"]),
+    "func_80004020": ([], []),
+    "func_80004030": (["func_80004020"], []),
+    "Actor_Update": (["func_80004020"], []),
+    "osContStartReadData": ([], []),
+    "osContGetReadData": ([], []),
+    "alSeqpPlay": ([], []),
+    "func_80700000": ([], []),
+}
 
 
-def member(name, calls=(), loads=(), strings=(), module="", kind="function", unit=None, **more):
+def member(name, module="", kind="function", unit=None, segment="main"):
     place = {"version": "us", "section": ".text", "rom_start": 0x1000, "rom_end": 0x1040, "vram": VRAM}
-    return {
-        "name": name,
-        "kind": kind,
-        "module": module,
-        "unit": unit,
-        "placements": [place],
-        "calls": list(calls),
-        "loads": list(loads),
-        "strings": list(strings),
-        **more,
-    }
+    return {"name": name, "kind": kind, "module": module, "unit": unit, "segment": segment, "placements": [place]}
 
 
 def module(name, folder, members):
@@ -40,36 +48,19 @@ def module(name, folder, members):
 
 def document():
     members = [
-        # sys_A calls two input functions of three external calls: 66%, so the folder is named by its tag
-        member(
-            "func_80001010",
-            ["func_80900000", "func_80900010", "func_80001020", "func_80700000"],
-            ["D_80002000"],
-            ["PAUSE"],
-            "code_80001000",
-            unit="src/a.c",
-        ),
-        member("func_80001020", ["func_80700000"], [], [], "code_80001000", unit="src/a.c"),
+        member("func_80001010", "code_80001000", unit="src/a.c"),
+        member("func_80001020", "code_80001000", unit="src/a.c"),
         member("D_80002000", kind="data", module="code_80001000"),
-        # sys_B: one input call of three external ones stays for the pack
-        member(
-            "func_80003010",
-            ["func_80900000", "func_80001020", "func_80004010"],
-            [],
-            ["Mix"],
-            "code_80003000",
-            unit="src/b.c",
-        ),
-        # actor is named already
-        member("func_80004010", ["func_80004020"], ["D_80005000"], ["alive"], "code_80004000", unit="src/c.c"),
-        member("func_80004020", [], [], [], "code_80004000", unit="src/c.c"),
-        member("func_80004030", ["func_80004020"], [], [], "code_80004000", unit="src/c.c"),
+        member("func_80003010", "code_80003000", unit="src/b.c"),
+        member("func_80004010", "code_80004000", unit="src/c.c"),
+        member("func_80004020", "code_80004000", unit="src/c.c"),
+        member("func_80004030", "code_80004000", unit="src/c.c"),
         member("D_80005000", kind="data", module="code_80004000"),
-        member("Actor_Update", ["func_80004020"], [], [], "code_80004000", unit="src/c.c"),
+        member("Actor_Update", "code_80004000", unit="src/c.c"),
         # the SDK region
-        member("func_80900000", module="code_80900000", sdk_name="osContStartReadData"),
-        member("func_80900010", module="code_80900000", sdk_name="osContGetReadData"),
-        member("func_80900020", module="code_80900000", sdk_name="alSeqpPlay"),
+        member("osContStartReadData", module="code_80900000"),
+        member("osContGetReadData", module="code_80900000"),
+        member("alSeqpPlay", module="code_80900000"),
         member("func_80700000", module="code_80700000"),
     ]
     return {
@@ -84,11 +75,10 @@ def document():
                 "actor",
                 ["func_80004010", "func_80004020", "func_80004030", "D_80005000", "Actor_Update"],
             ),
-            module("code_80900000", "lib_80900000", ["func_80900000", "func_80900010", "func_80900020"]),
+            module("code_80900000", "lib_80900000", ["osContStartReadData", "osContGetReadData", "alSeqpPlay"]),
             module("code_80700000", "math", ["func_80700000"]),
         ],
         "units": [],
-        "headers": [],
     }
 
 
@@ -96,6 +86,7 @@ def document():
 def project(tmp_path, monkeypatch):
     """The moves a verb hands to the patch builder are recorded in `ops`; the builder itself is tested below."""
     monkeypatch.setattr(structure, "evidence", lambda config, host=None: document())
+    monkeypatch.setattr(naming, "reads", lambda config, doc: dict(GRAPH))
     config = SimpleNamespace(project=SimpleNamespace(root=tmp_path), owners={}, ops=[], real=naming._patch)
 
     def spy(cfg, doc, moves):
@@ -115,30 +106,6 @@ def moves(project):
     return project.ops
 
 
-def test_n0_emits_the_catalog_names_as_symbol_moves_and_writes_no_pack(project):
-    got = run(project, "next", step="N0")
-    assert got["pack"] is None and got["moves"] == 3 and got["next"] == "recipe apply"
-    assert moves(project) == [
-        {"op": "symbol", "subject": "func_80900000", "target": "osContStartReadData"},
-        {"op": "symbol", "subject": "func_80900010", "target": "osContGetReadData"},
-        {"op": "symbol", "subject": "func_80900020", "target": "alSeqpPlay"},
-    ]
-    assert not list((project.project.root / ".unbake/recipe/name").glob("pack-*"))
-
-
-def test_n0_leaves_a_name_two_members_claim_neutral_on_both_and_records_it(project, monkeypatch):
-    doc = document()
-    doc["members"].append(member("func_80900030", module="code_80900000", sdk_name="osContStartReadData"))
-    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
-    run(project, "next", step="N0")
-    got = {m["subject"]: m["target"] for m in moves(project)}
-    assert sorted(got.values()) == ["alSeqpPlay", "osContGetReadData"] and len(got) == 2  # one move per name
-    ledger = (project.project.root / ".unbake/recipe/name/n0-ledger.jsonl").read_text().splitlines()
-    assert [json.loads(x) for x in ledger] == [
-        {"name": "osContStartReadData", "members": ["func_80900000", "func_80900030"]}
-    ]
-
-
 def test_n2_names_a_folder_when_one_tag_holds_half_the_external_calls(project):
     got = run(project, "next", step="N2")
     assert [m["op"] for m in moves(project)] == ["source", "header"]
@@ -148,10 +115,11 @@ def test_n2_names_a_folder_when_one_tag_holds_half_the_external_calls(project):
         "target": "src/game/main/input/code_80001000.c",
     }
     assert moves(project)[1]["target"] == "include/game/main/input/code_80001000.h"
-    assert got["moves"] == 2 and got["targets"] == 1  # 2 of 3 external calls are osCont: 66%
+    assert got["moves"] == 2 and got["targets"] == 1 and got["read"] == len(GRAPH)  # 2 of 4 external calls: half
     pack = json.loads((project.project.root / got["pack"]).read_text())
     assert [t["target"] for t in pack["targets"]] == ["sys_80003000"]  # 1 of 3 is only 33%: it goes to the model
-    assert pack["targets"][0]["strings"] == ["Mix"] and "answer" in pack and pack["banned"]
+    assert pack["targets"][0]["callees"][0] == "osContStartReadData" and "answer" in pack and pack["banned"]
+    assert "string" not in " ".join(pack["evidence_forms"])
 
 
 def test_a_pack_carries_the_evidence_of_a_public_function(project):
@@ -160,7 +128,8 @@ def test_a_pack_carries_the_evidence_of_a_public_function(project):
     assert [t["target"] for t in pack["targets"]] == ["func_80700000", "func_80004010"]  # by fan-in
     card = pack["targets"][1]
     assert card["callers"] == ["func_80003010"] and card["subsystem"] == "actor" and card["fan_in"] == 1
-    assert card["callees"] == ["func_80004020"] and card["strings"] == ["alive"] and card["loads"] == ["D_80005000"]
+    assert card["callees"] == ["func_80004020"] and card["loads"] == ["D_80005000"]
+    assert "strings" not in card and "sdk_callees" not in card
     assert pack["step"] == "N3" and got["next"].startswith("recipe name submit")
 
 
@@ -181,7 +150,7 @@ def test_submit_refuses_by_rule_with_exact_counts(project):
         row("func_80004020", "Actor_DoStuff", ["caller func_80004010"]),  # banned words
         row("func_80001020", "Actor_Spawn", ["caller func_80001010"]),  # duplicate of the first row, and unnamed folder
         row("D_80005000", "g_actorList", [], kind="global"),  # no evidence
-        row("func_80001010", "Input_ReadPad", ["string 'NOPE'"]),  # the folder has no name yet
+        row("func_80001010", "Input_ReadPad", ["callee osMissing"]),  # the folder has no name yet
         {"target": "func_80004030"},  # malformed
     ]
     got = submit(project, rows)
@@ -197,22 +166,23 @@ def test_submit_refuses_a_duplicate_and_unverifiable_evidence(project):
     rows = [
         row("func_80004010", "Actor_Spawn", ["callee func_80004020"]),
         row("func_80004030", "Actor_Spawn", ["callee func_80004020"]),
-        row("func_80004020", "Actor_Free", ["string 'NOPE'"]),
+        row("func_80004020", "Actor_Free", ["caller func_80001010"]),
         row("func_80004020", "Actor_Kill", ["callee osMissing"]),
         row("D_80005000", "g_actorList", ["caller func_80004010"], kind="global"),
         row("Actor_Update", "Actor_Tick", ["callee func_80004020"]),  # already has a name
-        row("func_80900020", "Audio_Play", ["tag audio"]),  # an SDK function keeps its catalog name
+        row("alSeqpPlay", "Audio_Play", ["tag audio"]),  # an SDK function keeps its name
+        row("func_80004030", "Actor_Spawn2", ["string 'Mix'"]),  # no string evidence exists
     ]
     got = submit(project, rows)
-    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 2, "named": 1, "catalog": 1}
+    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 3, "named": 2}
     assert got["accepted"] == 2 and [m["op"] for m in moves(project)] == ["symbol", "symbol"]
 
 
 def test_accepted_rows_become_moves_in_subsystem_module_symbol_order_with_banners(project):
     rows = [
-        row("func_80003010", "Audio_MixVoices", ["string 'Mix'"], doc="Mixes the voices."),
-        row("code_80003000", "audio_mixer", ["callee func_80900000"], kind="module"),
-        row("sys_80003000", "audio", ["string 'Mix'"], kind="subsystem"),
+        row("func_80003010", "Audio_MixVoices", ["callee func_80004010"], doc="Mixes the voices."),
+        row("code_80003000", "audio_mixer", ["callee osContStartReadData"], kind="module"),
+        row("sys_80003000", "audio", ["tag input"], kind="subsystem"),
     ]
     got = submit(project, rows)
     assert got["accepted"] == 3 and got["refused"] == 0
@@ -249,35 +219,93 @@ def test_banners_become_candidates_with_the_address_line(project, monkeypatch):
     assert run(project, "banners")["skipped"] == 0  # the source itself is unchanged, so the same candidate again
 
 
-def test_a_type_row_becomes_a_type_move_not_a_symbol_move(project, monkeypatch):
-    doc = document()
-    header = {"path": "include/c.h", "declares": ["Record_func_80004010"], "modules": ["code_80004000"]}
-    doc["headers"] = [{**header, "included_by": []}]
-    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+def test_a_type_row_is_refused_as_malformed_for_want_of_a_header_graph(project):
     got = submit(project, [row("Record_func_80004010", "ActorRecord", ["callee func_80004020"], kind="type")])
-    assert got["accepted"] == 1, got
-    assert moves(project) == [{"op": "type", "subject": "Record_func_80004010", "target": "ActorRecord"}]
-
-
-def test_n0_writes_a_patch_that_renames_the_symbol_in_symbol_addrs_and_the_sources(project, monkeypatch):
-    monkeypatch.setattr(naming, "_patch", project.real)
-    root = project.project.root
-    (root / "versions/us").mkdir(parents=True)
-    (root / "versions/us/symbol_addrs.txt").write_text("func_80900000 = 0x80900000; // type:func\n")
-    (root / "src").mkdir()
-    (root / "src/a.c").write_text("INCLUDE_ASM(main, func_80900000);\nvoid f(void) { func_80900000(); }\n")
-    got = run(project, "next", step="N0")
-    out = json.loads(got["stream"])
-    assert out["files"] == ["src/a.c", "versions/us/symbol_addrs.txt"] and out["moves"] == got["moves"] == 1
-    assert (root / got["path"]).read_text() == out["patch"] == got["patch"]
-    check = subprocess.run(["git", "-C", str(root), "apply", "--check", "-"], input=out["patch"].encode(), check=False)
-    assert check.returncode == 0 and "osContStartReadData" in out["patch"]
+    assert got["accepted"] == 0 and got["by_rule"] == {"shape": 1} and moves(project) == []
 
 
 def test_submit_prints_the_patch_of_the_accepted_renames(project, monkeypatch):
     monkeypatch.setattr(naming, "_patch", project.real)
     root = project.project.root
+    (root / "versions/us").mkdir(parents=True)
+    (root / "versions/us/symbol_addrs.txt").write_text("func_80004030 = 0x80004030; // type:func\n")
     (root / "src").mkdir()
     (root / "src/c.c").write_text("void func_80004030(void) {}\n")
     got = submit(project, [row("func_80004030", "Actor_Spawn", ["callee func_80004020"])])
-    assert got["accepted"] == 1 and got["files"] == ["src/c.c"] and "Actor_Spawn" in json.loads(got["stream"])["patch"]
+    out = json.loads(got["stream"])
+    assert got["accepted"] == 1 and got["files"] == ["src/c.c", "versions/us/symbol_addrs.txt"]
+    assert (root / got["path"]).read_text() == out["patch"] == got["patch"] and "Actor_Spawn" in out["patch"]
+    check = subprocess.run(["git", "-C", str(root), "apply", "--check", "-"], input=out["patch"].encode(), check=False)
+    assert check.returncode == 0
+
+
+ASM = """.include "macro.inc"
+glabel {name}
+    /* 1 80001010 27BDFFE0 */  addiu      $sp, $sp, -0x20
+    /* 2 80001014 3C02800E */  lui        $v0, %hi(D_80002000)
+    /* 3 80001018 8C42E7E8 */  lw         $v0, %lo(D_80002000+0x4)($v0)
+    /* 4 8000101C 0C099606 */  jal        func_80001020
+    /* 5 80001020 00000000 */   nop
+    /* 6 80001024 0C099606 */  jal        func_80001020
+    /* 7 80001028 0040F809 */  jalr       $v0
+    /* 8 8000102C 0C099606 */  jal        osMissing
+    /* 9 80001030 10400005 */  beqz       $v0, .Lauto_80001040
+    /* A 80001034 0C099606 */  jal        {name}
+  .Lauto_80001040:
+    /* C 8000103C 08084FE1 */  j          func_80700000
+    /* D 80001040 00000000 */   nop
+"""
+
+
+@pytest.fixture
+def assembly(tmp_path, monkeypatch):
+    """Extracted assembly of `main` under asm/us, and an `api.asm_path` that places what has a ROM address."""
+    folder = tmp_path / "asm/us/nonmatchings/main"
+    folder.mkdir(parents=True)
+    (folder / "func_80001010.s").write_text(ASM.format(name="func_80001010"))
+    (folder / "func_80001020.s").write_text('.include "macro.inc"\n    /* 1 2 3 */  jal        func_80700000\n')
+    unplaced = {"func_80004020"}
+
+    def asm_path(config, version, name):
+        if name in unplaced:
+            raise Refusal(Finding("symbols.unknown", f"{name} has no rom address in {version}"))
+        return f"asm/{version}/nonmatchings/main/{name}.s"
+
+    monkeypatch.setattr(naming.api, "asm_path", asm_path)
+    return SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+
+
+def test_reads_takes_calls_and_loads_of_known_members_from_the_assembly_of_their_own_version(assembly):
+    got = naming.reads(assembly, document())
+    assert got["func_80001010"] == (["func_80001020", "func_80700000"], ["D_80002000"])  # unknown, self, labels out
+    assert got["func_80001020"] == (["func_80700000"], [])
+    assert sorted(got) == ["func_80001010", "func_80001020"]  # no file, no entry; data members have none
+
+
+def test_reads_follows_a_member_to_the_assembly_of_the_version_that_names_it(assembly):
+    folder = assembly.project.root / "asm/eu/nonmatchings/main"
+    folder.mkdir(parents=True)
+    (folder / "func_80001010_eu.s").write_text("    /* 1 2 3 */  jal        func_80001020_eu\n")
+    doc = document()
+    for name in ("func_80001010_eu", "func_80001020_eu"):
+        other = member(name, "code_80001000", unit="src/a.c")
+        other["placements"][0]["version"] = "eu"
+        doc["members"].append(other)
+    got = naming.reads(assembly, doc)
+    assert got["func_80001010_eu"] == (["func_80001020_eu"], []) and "func_80001020_eu" not in got
+
+
+def test_reads_places_a_segment_by_the_first_member_unbake_can_place(assembly):
+    doc = document()
+    doc["members"].insert(0, member("func_80004020", "code_80004000", unit="src/c.c"))  # unplaced and first
+    assert "func_80001010" in naming.reads(assembly, doc)
+
+
+def test_reads_refuses_when_no_assembly_is_extracted(assembly, monkeypatch):
+    def none(config, version, name):
+        raise Refusal(Finding("symbols.unknown", name))
+
+    monkeypatch.setattr(naming.api, "asm_path", none)
+    with pytest.raises(Refusal) as refused:
+        naming.reads(assembly, document())
+    assert refused.value.findings[0].key == "recipe.name"
