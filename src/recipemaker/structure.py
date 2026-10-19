@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import posixpath
 import re
 import sys
+import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -27,6 +30,24 @@ from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
 LITERALS = "literals_"  # compiler-emitted read-only data a fact gives the file of its function: it moves with that file
+
+
+def say(text: str) -> None:
+    """One line on stderr for whoever watches the run (stdout carries the JSON)."""
+    sys.stderr.write(f"{text}\n")
+    sys.stderr.flush()
+
+
+@contextmanager
+def narrated(name: str) -> Iterator[None]:
+    """A stage of `recipe structure`, told on stderr in unbake's spelling (`LABEL started`, then `LABEL 1.2s 1.00
+    cores 0 jobs`) and recorded in unbake's stage tree, so a long run is never silent."""
+    label, began, spent = f"structure > {name}", time.monotonic(), sum(os.times()[:4])
+    say(f"{label} started")
+    with recipe_host.stage(f"structure.{name}"):
+        yield
+    wall = time.monotonic() - began
+    say(f"{label} {wall:.1f}s {(sum(os.times()[:4]) - spent) / max(wall, 1e-9):.2f} cores 0 jobs")
 
 
 def _refusal(document: Json) -> Refusal:
@@ -50,14 +71,18 @@ def _unbake(config: Config, host: Path | None, *args: str) -> tuple[Json, str]:
 def evidence(config: Config, host: Path | None = None) -> Json:
     """The structure evidence: `unbake map` for the modules and their segments, the captured tree of the same digest
     for sections and `api.symbols` for placements."""
-    document, _ = _unbake(config, host, "map")
+    with narrated("map"):
+        document, _ = _unbake(config, host, "map")
     if not document["ok"]:
         raise _refusal(document)
     slim = json.loads((config.project.root / document["result"]["path"]).read_text(encoding="utf-8"))
-    captured = api.capture(config)
-    if captured.digest != slim["digest"]:
-        raise Refusal(Finding("recipe.evidence", "the tree changed between unbake map and its capture"))
-    return document_of(config, slim, captured, {v: api.symbols(config, v) for v in slim["versions"]})
+    with narrated("capture"):
+        captured = api.capture(config)
+        if captured.digest != slim["digest"]:
+            raise Refusal(Finding("recipe.evidence", "the tree changed between unbake map and its capture"))
+        tables = {v: api.symbols(config, v) for v in slim["versions"]}
+    with narrated("document"):
+        return document_of(config, slim, captured, tables)
 
 
 def document_of(config: Config, slim: Json, captured: api.Tree, tables: Mapping[str, Mapping[str, Any]]) -> Json:
@@ -329,6 +354,7 @@ def _batches(proposal: Json) -> list[tuple[str, list[dict[str, Any]]]]:
 
 # ------------------------------------------------------------------------------------------------ the patch
 
+BEAT = 10.0  # seconds between the progress lines of a long step
 _TEXT = (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".s", ".inc")
 _STAND_IN = r"^[ \t]*INCLUDE_(?:ASM|DATA|RODATA|BSS)\([ \t]*[^,()]+,[ \t]*{name}\b[^\n]*\n"
 
@@ -410,6 +436,9 @@ def _preamble(text: str) -> str:
     return "".join(x for x in text.splitlines(keepends=True) if x.lstrip().startswith("#include"))
 
 
+_INCLUDE_SPELLING = re.compile(r'#[ \t]*include[ \t]*[<"]([^>"]*)[>"]')
+
+
 class Files:
     """The project's source files as text, edited in memory; `diff()` is the git diff of every change."""
 
@@ -418,6 +447,9 @@ class Files:
         self.text: dict[str, str | None] = {}
         self.orig: dict[str, str | None] = {}
         self.origin: dict[str, str] = {}
+        self._disk: set[str] | None = None  # the source and header files on disk, listed once: nothing here writes them
+        self._spelled: dict[str, set[str]] | None = None  # include spelling -> the files that name it, once asked for
+        self._names: dict[str, frozenset[str]] = {}  # file -> the spellings it names
 
     def get(self, path: str) -> str | None:
         if path not in self.text:
@@ -428,6 +460,7 @@ class Files:
     def put(self, path: str, text: str) -> None:
         self.get(path)
         self.text[path] = text
+        self._reindex(path)
 
     def rename(self, old: str, new: str) -> None:
         text = self.get(old)
@@ -435,17 +468,43 @@ class Files:
             return
         self.text[new], self.text[old] = text, None
         self.origin[new] = self.origin.get(old, old)
+        self._reindex(old)
+        self._reindex(new)
+
+    def _reindex(self, path: str) -> None:
+        """Bring the include index up to date with the current text of `path`."""
+        if self._spelled is None:
+            return
+        for spelling in self._names.pop(path, ()):
+            self._spelled[spelling].discard(path)
+        text = self.text.get(path)
+        if text is not None:
+            names = frozenset(_INCLUDE_SPELLING.findall(text))
+            self._names[path] = names
+            for spelling in names:
+                self._spelled.setdefault(spelling, set()).add(path)
+
+    def including(self, *spellings: str) -> list[str]:
+        """The files, in path order, whose text names one of the include spellings. The first call reads every file
+        once; after it only the files an edit touches are read again, so a rename costs its readers, not the tree."""
+        if self._spelled is None:
+            self._spelled = {}
+            for path in self.everything():
+                self.get(path)
+                self._reindex(path)
+        return sorted(set().union(*(self._spelled.get(s, set()) for s in spellings)))
 
     def everything(self) -> list[str]:
         """The source and header files under src/ and include/, by their current names."""
-        found = {
-            p.relative_to(self.root).as_posix()
-            for d in ("src", "include")
-            for p in (self.root / d).rglob("*")
-            if p.is_file() and p.suffix.lower() in _TEXT
-        }
+        if self._disk is None:
+            self._disk = {
+                p.relative_to(self.root).as_posix()
+                for d in ("src", "include")
+                for p in (self.root / d).rglob("*")
+                if p.is_file() and p.suffix.lower() in _TEXT
+            }
         gone = {p for p, t in self.text.items() if t is None}
-        return sorted((found | {p for p, t in self.text.items() if t is not None}) - gone)
+        return sorted((self._disk | {p for p, t in self.text.items() if t is not None}) - gone)
 
     def replace(self, pattern: re.Pattern[str], new: str | Callable[[re.Match[str]], str], paths: Iterable[str]) -> int:
         count = 0
@@ -472,6 +531,19 @@ class Files:
         return "".join(out)
 
 
+def _similarity(old: str, new: str) -> int:
+    """Percent of the two texts that match, by whole lines weighted by their length (git's own index is by chunks).
+    Character matching is quadratic in the file size and took minutes on a project of headers."""
+    if old == new:
+        return 100
+    a, b = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    same = sum(
+        sum(map(len, a[m.a : m.a + m.size]))
+        for m in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
+    )
+    return int(200 * same / (len(old) + len(new)))
+
+
 def _file_diff(path: str, was: str, old: str | None, new: str | None) -> str:
     head = f"diff --git a/{was} b/{path}\n"
     if old is None:
@@ -479,7 +551,7 @@ def _file_diff(path: str, was: str, old: str | None, new: str | None) -> str:
     elif new is None:
         head += "deleted file mode 100644\n"
     elif was != path:
-        head += f"similarity index {int(difflib.SequenceMatcher(None, old, new, autojunk=False).ratio() * 100)}%\n"
+        head += f"similarity index {_similarity(old, new)}%\n"
         head += f"rename from {was}\nrename to {path}\n"
     before, after = (old or "").splitlines(keepends=True), (new or "").splitlines(keepends=True)
     if before == after:
@@ -492,7 +564,13 @@ def _file_diff(path: str, was: str, old: str | None, new: str | None) -> str:
     return head + "".join(body)
 
 
-def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None], modules: Mapping[str, Json]) -> Json:
+def build(
+    root: Path,
+    moves: Sequence[Json],
+    owner: Callable[[str], str | None],
+    modules: Mapping[str, Json],
+    note: Callable[[str], None] | None = None,
+) -> Json:
     """A unified diff of the moves, as `{"patch", "files", "moves"}`. `owner` gives the file now holding a function
     (the tree's), `modules` the source and header path of each module the moves name.
 
@@ -500,8 +578,10 @@ def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None],
     - symbol: its `versions/*/symbol_addrs.txt` lines and, word-bounded, every identifier in src/ and include/;
     - type: the identifier only;
     - module, source, header: the file renames, with the includes that name the old header;
-    - file: the includes of a header move to the header it goes to."""
-    files, applied = Files(root), 0
+    - file: the includes of a header move to the header it goes to.
+
+    `note` hears a progress line at most every `BEAT` seconds."""
+    files, applied, beat = Files(root), 0, time.monotonic()
     where: dict[str, str] = {}
     path = {n: m["source"] for n, m in modules.items()}
     header = {n: m["header"] for n, m in modules.items()}
@@ -520,9 +600,12 @@ def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None],
         def spell(m: re.Match[str]) -> str:
             return f"{m[1]}{new if m[2] == old else new.removeprefix('include/')}{m[3]}"
 
-        return files.replace(pattern, spell, files.everything())
+        return files.replace(pattern, spell, files.including(old, old.removeprefix("include/")))
 
-    for move in moves:
+    for done, move in enumerate(moves):
+        if note and time.monotonic() - beat >= BEAT:
+            beat = time.monotonic()
+            note(f"structure > build {done}/{len(moves)} moves")
         op, subject, target = move["op"], move["subject"], move["target"]
         if op in ("symbol", "type"):
             hits = 0
@@ -564,6 +647,8 @@ def build(root: Path, moves: Sequence[Json], owner: Callable[[str], str | None],
             applied += bool(include(subject, target))
             if files.get(subject) is not None and files.get(target) is None:
                 files.rename(subject, target)
+    if note:
+        note(f"structure > build diff of {len(files.changed())} files")
     return {"patch": files.diff(), "files": files.changed(), "moves": applied}
 
 
@@ -637,6 +722,11 @@ def save(config: Config, built: Json) -> str:
     return str(path.relative_to(config.project.root))
 
 
+def _saved(config: Config, built: Json) -> str:
+    with narrated("save"):
+        return save(config, built)
+
+
 def stream(built: Json) -> str:
     """What the verb prints on stdout: the patch, the files it touches and the count of moves."""
     return json.dumps({k: built[k] for k in ("patch", "files", "moves")}) + "\n"
@@ -649,18 +739,23 @@ def run(config: Config, params: Json) -> Json:
     paths = [_rel(root, p) for p in params.get("paths") or ()]
     library = getattr(config.project, "libraries", ())
     settings, types, naming = state.structure(), clash.reader(root), tree.style(root)
-    proposal = dict(propose(document, settings, params["segment"], library, types, (), naming))
+    with narrated("propose"):
+        proposal = dict(propose(document, settings, params["segment"], library, types, (), naming))
     found: list[str] = []
     if paths:  # a scope is a suggestion that never blocks: a refusal is a finding and the proposal is empty
-        try:
-            closure = scope_modules(document, proposal, paths)
-            proposal = dict(scoped(proposal, closure))
-            confine(proposal, closure)
-        except Refusal as refusal:
-            found = [f.reason for f in refusal.findings]
-            proposal = {**proposal, "modules": []}
+        with narrated("scope"):
+            try:
+                closure = scope_modules(document, proposal, paths)
+                proposal = dict(scoped(proposal, closure))
+                confine(proposal, closure)
+            except Refusal as refusal:
+                found = [f.reason for f in refusal.findings]
+                proposal = {**proposal, "modules": []}
     captured = api.capture(config)
-    built = build(root, ops(proposal), lambda n: captured.owner(document["names_from"], n), modules_of(document))
+    with narrated("build"):
+        built = build(
+            root, ops(proposal), lambda n: captured.owner(document["names_from"], n), modules_of(document), say
+        )
     kept = bool(built["moves"]) or not paths  # a scoped proposal with nothing to move saves no patch
     return {
         **{k: dict(zip(("before", "after"), v, strict=True)) for k, v in proposal["estimate"].items()},
@@ -668,7 +763,7 @@ def run(config: Config, params: Json) -> Json:
         "gates": proposal["gates"],
         "boundaries": proposal["boundaries"],
         **{k: built[k] for k in ("patch", "files", "moves")},
-        "path": save(config, built) if kept else "",
+        "path": _saved(config, built) if kept else "",
         "stream": stream(built),
         **({"suggestions": ops(proposal), "findings": found} if paths else {}),
         "next": "recipe apply" if built["moves"] else "recipe status",

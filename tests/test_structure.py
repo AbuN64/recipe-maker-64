@@ -426,6 +426,44 @@ def test_a_header_move_edits_the_include_lines(tmp_path):
     assert (root / "src/a.c").read_text() == '#include "types.h"\n#include "other.h"\n'
 
 
+def test_the_include_index_follows_edits_and_renames(tmp_path):
+    root = _repo(
+        tmp_path,
+        {"src/a.c": '#include "x/a.h"\n', "include/x/a.h": "int a;\n", "src/c.c": '#include "other.h"\n'},
+    )
+    files = structure.Files(root)
+    assert files.including("x/a.h", "include/x/a.h") == ["src/a.c"]
+    files.put("src/c.c", '#include <x/a.h>\n#include "other.h"\n')
+    assert files.including("x/a.h") == ["src/a.c", "src/c.c"]
+    files.rename("src/a.c", "src/b.c")
+    assert files.including("x/a.h") == ["src/b.c", "src/c.c"]
+    files.put("src/new.c", '#include "x/a.h"\n')
+    assert files.including("x/a.h") == ["src/b.c", "src/c.c", "src/new.c"]
+    files.put("src/c.c", "")
+    assert files.including("x/a.h") == ["src/b.c", "src/new.c"]
+
+
+def test_a_renamed_file_whose_text_changed_gets_a_similarity_between_zero_and_a_hundred():
+    kept, edited = "a\nb\nc\nd\n", "a\nb\nx\nd\n"
+    assert structure._similarity(kept, kept) == 100
+    assert 0 < structure._similarity(kept, edited) < 100
+    assert structure._similarity("a\n", "b\n") == 0
+
+
+def test_build_tells_progress_and_the_stage_lines_go_to_stderr(tmp_path, capsys, monkeypatch):
+    root = _repo(tmp_path, {"src/a.c": '#include "old.h"\n', "include/old.h": "int a;\n"})
+    monkeypatch.setattr(structure, "BEAT", 0.0)
+    heard: list[str] = []
+    moves = [{"op": "file", "subject": "include/old.h", "target": "include/types.h"}]
+    got = structure.build(root, moves, {}.get, {}, heard.append)
+    assert any("build 0/1 moves" in line for line in heard) and any("diff of" in line for line in heard)
+    assert got["moves"] == 1
+    with structure.narrated("probe"):
+        pass
+    out = capsys.readouterr()
+    assert out.out == "" and "structure > probe started" in out.err and "structure > probe 0." in out.err
+
+
 def _fake_unbake(monkeypatch, answers):
     calls = []
 

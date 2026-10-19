@@ -27,3 +27,16 @@ def test_a_unit_has_the_definitions_of_the_headers_it_includes_and_each_header_i
     (tmp_path / "include/b.h").write_text("changed")
     assert "struct B" in types("src/u1.c")  # a header is not read again
     assert types("src/missing.c") == {}
+
+
+def test_a_header_spelled_in_capitals_is_read_once_however_many_paths_reach_it(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/LEAF.H").write_text("struct L { int x; };\n")
+    (tmp_path / "include/LEFT.H").write_text('#include "LEAF.H"\n')
+    (tmp_path / "include/RIGHT.H").write_text('#include "LEAF.H"\n')
+    (tmp_path / "src/U.C").write_text('#include "LEFT.H"\n#include "RIGHT.H"\n')
+    types = clash.reader(tmp_path)
+    assert set(types("src/U.C")) == {"struct L"}
+    (tmp_path / "include/LEAF.H").write_text("changed")
+    assert "struct L" in types("include/LEFT.H")  # served from the first read

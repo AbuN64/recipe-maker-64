@@ -53,31 +53,48 @@ def definitions(text: str) -> Types:
 
 
 def reader(root: Path) -> Callable[[str], Types]:
-    """`types(unit_path)` for the project at `root`, each header read once however many units include it."""
+    """`types(unit_path)` for the project at `root`, each header read once however many units include it. A file is
+    parsed once and an include is resolved once per including folder, so a header reached again through another
+    path costs a lookup (the suffix test is case-blind: a project may spell its headers `.H`)."""
     seen: dict[str, Types] = {}
+    parsed: dict[str, tuple[list[str], Types] | None] = {}
+    found: dict[tuple[str, str], str] = {}
 
     def find(name: str, parent: str) -> str:
-        for base in (Path(parent).parent, Path("include"), Path()):
-            if (root / base / name).is_file():
-                return str(base / name)
-        return ""
+        key = (name, str(Path(parent).parent))
+        if key not in found:
+            found[key] = ""
+            for base in (Path(parent).parent, Path("include"), Path()):
+                if (root / base / name).is_file():
+                    found[key] = str(base / name)
+                    break
+        return found[key]
+
+    def read(path: str) -> tuple[list[str], Types] | None:
+        if path not in parsed:
+            try:
+                text = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                parsed[path] = None
+            else:
+                parsed[path] = (_INCLUDE.findall(_COMMENT.sub(" ", text)), definitions(text))
+        return parsed[path]
 
     def of(path: str, trail: tuple[str, ...] = ()) -> Types:
         if path in seen:
             return seen[path]
-        try:
-            text = (root / path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        own = read(path)
+        if own is None:
             return {}
         out: Types = {}
-        for name in _INCLUDE.findall(_COMMENT.sub(" ", text)):
+        for name in own[0]:
             child = find(name, path)
             if child and child not in trail and child != path:
                 for key, value in of(child, (*trail, path)).items():
                     out.setdefault(key, value)
-        for key, value in definitions(text).items():
+        for key, value in own[1].items():
             out.setdefault(key, value)
-        if not trail or path.endswith(".h"):
+        if not trail or path.lower().endswith(".h"):
             seen[path] = out
         return out
 
