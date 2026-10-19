@@ -41,6 +41,15 @@ def neutral(name: str) -> bool:
     return any(re.fullmatch(p, name) for p in _rules()["names"]["neutral"])
 
 
+def subsystem_word(folder: str) -> str:
+    """The subsystem word of a folder: its name folded to the convention's case, or empty for a neutral folder,
+    a folder that is no subsystem word, or a folder the name rules leave alone. SCHED and sched give `sched`."""
+    rules = _rules()
+    word = folder.lower()
+    ok = re.fullmatch(rules["names"]["subsystem"], word) and word not in rules["paths"]["no_prefix"]
+    return word if ok and not neutral(folder) and not neutral(word) else ""
+
+
 def pascal(word: str) -> str:
     return word[:1].upper() + word[1:]
 

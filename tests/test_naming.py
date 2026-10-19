@@ -309,3 +309,45 @@ def test_reads_refuses_when_no_assembly_is_extracted(assembly, monkeypatch):
     with pytest.raises(Refusal) as refused:
         naming.reads(assembly, document())
     assert refused.value.findings[0].key == "recipe.name"
+
+
+@pytest.mark.parametrize("folder", ["sched", "SCHED", "Sched"])
+def test_a_subsystem_folder_word_is_its_name_folded_to_the_convention_case(folder):
+    from recipemaker import style
+
+    assert style.subsystem_word(folder) == "sched"
+    assert style.pattern("function", style.subsystem_word(folder)).startswith("^Sched_")
+    assert style.legal("function", "Sched_ReadResourcePages", style.subsystem_word(folder))
+    assert style.legal("module", "sched_pager", style.subsystem_word(folder))
+
+
+@pytest.mark.parametrize("folder", ["", "src", "SRC", "sys_80003000", "SYS_80003000", "func_80001000", "AUDIO_3"])
+def test_a_folder_that_is_no_subsystem_word_gives_no_word(folder):
+    from recipemaker import style
+
+    assert style.subsystem_word(folder) == ""
+
+
+def test_map_word_agrees_for_upper_and_lower_case_folders():
+    ctx = naming.Map.__new__(naming.Map)
+    assert ctx.word("SCHED") == ctx.word("sched") == "sched"
+    assert ctx.word("sys_80003000") == ""
+
+
+@pytest.mark.parametrize("folder", ["actor", "ACTOR"])
+def test_submit_takes_the_same_prefix_in_a_lower_or_upper_case_folder(project, monkeypatch, folder):
+    doc = document()
+    for m in doc["modules"]:
+        if m["name"] == "code_80004000":
+            m["source"] = m["source"].replace("/actor/", f"/{folder}/")
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee func_80004020"]),
+        row("func_80004030", "Menu_Spawn", ["callee func_80004020"]),
+        row("code_80004000", "actor_spawner", ["callee func_80004020"], kind="module"),
+        row("func_80004020", "actor_Free", ["caller func_80004010"]),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 2 and got["by_rule"] == {"regex": 2}
+    named = submit(project, [row(folder, "actor", ["tag actor"], kind="subsystem")])
+    assert named["by_rule"] == {"named": 1}  # an already-named folder is still recognised

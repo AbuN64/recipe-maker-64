@@ -100,9 +100,7 @@ class Map:
 
     def word(self, folder: str) -> str:
         """The subsystem word of a folder, or an empty string when it is neutral or no subsystem folder."""
-        rules = table("knowledge/style.toml")
-        ok = re.fullmatch(rules["names"]["subsystem"], folder) and folder not in rules["paths"]["no_prefix"]
-        return folder if ok and not style.neutral(folder) else ""
+        return style.subsystem_word(folder)
 
     def functions(self, folder: str) -> list[str]:
         return [
