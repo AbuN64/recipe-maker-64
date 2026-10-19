@@ -1,0 +1,11 @@
+#!/bin/sh
+# The CI gates: lint, format, strict typing and the test suite (run bin/dev-setup or pip install '.[dev]' first).
+set -eu
+cd "$(dirname "$0")/.."
+PY="${PYTHON:-python3}"
+[ -x .venv/bin/python ] && PY=.venv/bin/python
+export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+"$PY" -m ruff check src tests
+"$PY" -m ruff format --check src tests
+"$PY" -m mypy --strict src
+"$PY" -m pytest -q -n auto --basetemp="${TMPDIR:-.}/.test-tmp-ci"
