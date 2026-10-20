@@ -604,6 +604,29 @@ def test_apply_leaves_a_file_the_patch_makes_tracked_so_the_tree_syncs(tmp_path,
     assert "src/b.c" in listed.split()
 
 
+def test_apply_keeps_the_index_and_marks_only_the_files_the_patch_makes(tmp_path, monkeypatch):
+    """`git apply --intent-to-add` alone replaced the whole index with the new files (10-20: ~6,420 entries lost)."""
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout
+
+    root = _repo(tmp_path, {"src/a.c": "int a;\n", "src/c.c": "int c;\n", "src/d.c": "int d;\n"})
+    before = git("ls-files", "-s")
+    patch = (
+        "diff --git a/src/a.c b/src/b.c\nsimilarity index 100%\nrename from src/a.c\nrename to src/b.c\n"
+        "diff --git a/src/e.c b/src/e.c\nnew file mode 100644\n--- /dev/null\n+++ b/src/e.c\n@@ -0,0 +1 @@\n+int e;\n"
+        "diff --git a/src/c.c b/src/c.c\n--- a/src/c.c\n+++ b/src/c.c\n@@ -1 +1 @@\n-int c;\n+int cc;\n"
+    )
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", patch)
+    _fake_unbake(monkeypatch, [{"ok": True, "result": {}, "findings": []}])
+    structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    after = git("ls-files", "-s").splitlines()
+    assert set(before.splitlines()) <= set(after), "no tracked entry may be lost"
+    assert {line.split("	")[1] for line in after} >= {"src/a.c", "src/c.c", "src/d.c", "src/b.c", "src/e.c"}
+    assert len(after) == len(before.splitlines()) + 2
+
+
 def test_a_patch_git_refuses_stays_saved_and_sync_is_not_run(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.c": "x\n"})
     structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")

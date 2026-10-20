@@ -930,6 +930,19 @@ def run(config: Config, params: Json) -> Json:
     }
 
 
+def _made_paths(patch: str) -> list[str]:
+    """The paths a git diff creates: new files, rename targets and copy targets."""
+    made: list[str] = []
+    lines = patch.splitlines()
+    for number, line in enumerate(lines):
+        for prefix in ("rename to ", "copy to "):
+            if line.startswith(prefix):
+                made.append(line[len(prefix) :])
+        if line == "--- /dev/null" and number + 1 < len(lines) and lines[number + 1].startswith("+++ b/"):
+            made.append(lines[number + 1][6:])
+    return list(dict.fromkeys(made))
+
+
 def apply(config: Config, params: Json) -> Json:
     """`recipe apply`: `git apply` the oldest saved patch (or PATCH), its new files intent-to-add, then `unbake sync`;
     sync's result comes back.
@@ -942,12 +955,24 @@ def apply(config: Config, params: Json) -> Json:
     patch = Path(params["patch"]) if params.get("patch") else saved[0] if saved else None
     if patch is None or not patch.is_file():
         raise state.stop("recipe.apply", "no patch is saved", action="recipe structure")
-    # a file the patch makes (a module renamed or split off) is intent-to-add: sync and the project's [file] rows
-    # read tracked files, and the tree must sync as the patch leaves it
-    ran = recipe_host.run(["git", "-C", str(root), "apply", "--intent-to-add", str(patch.resolve())], root, config)
+    # the patch edits the work tree only: `git apply --intent-to-add` without `--index` replaces the whole index with
+    # the new files alone (10-20: ~6,420 entries lost per apply), so the index stays as it was and the files the patch
+    # makes are then marked intent-to-add one by one
+    text = patch.read_text(errors="replace")
+    ran = recipe_host.run(["git", "-C", str(root), "apply", str(patch.resolve())], root, config)
     if ran.exit:
         tail = bytes(ran.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git apply failed"]
         raise state.stop("recipe.apply", f"git apply refused {patch.name}: {tail[0]}", action="recipe structure")
+    made = _made_paths(text)
+    if made:
+        # a file the patch makes (a module renamed or split off) is intent-to-add: sync and the project's [file] rows
+        # read tracked files, and the tree must sync as the patch leaves it
+        marked = recipe_host.run(["git", "-C", str(root), "add", "--intent-to-add", "--", *made], root, config)
+        if marked.exit:
+            tail = bytes(marked.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git add failed"]
+            raise state.stop(
+                "recipe.apply", f"git add -N refused after {patch.name}: {tail[0]}", action="recipe status"
+            )
     patch.rename(patch.with_suffix(".applied"))
     document, _ = _unbake(config, params["host"], "sync")
     if not document["ok"]:
