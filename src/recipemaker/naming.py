@@ -341,6 +341,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     else:
         unnamed = style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)
     if not unnamed and not original:
+        if kind == "function" and ctx.sdk_name(ctx.canon(target)) == target:
+            return "catalog", f"{target} is an SDK function: its name is the catalog name"
         return "named", f"{target} already has a name"
     if original and ctx.canon(target) == name:
         return "named", f"{target} already has its original name"
@@ -353,6 +355,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         clash := [f"{a} -> {b}" for a, b in ctx.carried(target, name).items() if b in ctx.taken]
     ):
         return "duplicate", f"carrying the prefix to {name} gives a name already taken: {clash[0]}"
+    if kind == "function" and ctx.sdk_name(ctx.canon(target)) == name:
+        return "", ""  # the libultra table line for this address is the evidence, with or without a caller
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
         return "evidence", "a name needs at least one evidence item"

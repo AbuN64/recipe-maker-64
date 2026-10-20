@@ -24,8 +24,9 @@ macro = '^[A-Z][A-Z0-9_]+$'
 # a name that is always legal, and a file or folder suffix that never is
 neutral = ['^func_[0-9A-F]{8}(_\w+)?$', '^D_[0-9A-F]{8}$', '^code_[0-9A-F]{8}(_\d+)?$', '^data_[0-9A-F]{8}(_\d+)?$', '^sys_[0-9A-F]{8}$', '^lib_[0-9A-F]{8}$', '^jtbl_\w+$']
 forbidden_suffix = '_\d{3,}$'
-# a folder word plus a collision counter (FX_2) is a placeholder: it has no name yet, like a neutral folder
-placeholder_folder = '^[A-Za-z]+_\d+$'
+# a folder word plus a collision counter (FX_2), or a library part address (part_800C7F20, the vendor archive split
+# by address), is a placeholder: it has no name yet, like a neutral folder
+placeholder_folder = '^(?:[A-Za-z]+_\d+|part_[0-9A-F]{8})$'
 
 [paths]
 # folders whose name is no subsystem word, folders and files the name rules leave alone

@@ -624,3 +624,41 @@ def test_a_module_with_no_header_of_its_own_is_named_by_its_source_alone(project
     assert [m["op"] for m in moves(project)] == ["module", "source"]
     submit(project, [row("actor", "creature", ["callee func_80004020"], kind="subsystem")])  # its folder moves
     assert "header" not in [m["op"] for m in moves(project)]
+
+
+def test_a_library_part_folder_is_unnamed_so_one_subsystem_row_names_it_and_its_functions_then_follow(
+    project, monkeypatch
+):
+    """part_800C7F20 (the vendor archive split by address) had a name for the subsystem row and none for the function
+    rows: each refusal told the lane to do the other first. folder_unnamed is the one fact both read."""
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "part_80006000", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80006010", (["func_80700000"], []))
+    before = submit(project, [row("func_80006010", "Synth_Find", ["callee func_80700000"])])
+    assert before["by_rule"] == {"prefix": 1}  # waits on the folder
+    got = submit(project, [row("part_80006000", "synth", ["callee func_80700000"], kind="subsystem")])
+    assert got["accepted"] == 1
+    assert naming.style.prefix_word("part_80006000") == ""  # the address is no word to prefix from
+    assert naming.style.prefix_word("RENDER_3") == "render"
+
+
+def test_an_sdk_function_asked_to_take_another_name_is_refused_as_the_catalog_name(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\talSeqpPlay\tEXACT\tsame words\n")
+    got = submit(project, [row("alSeqpPlay", "Seqp_Play", ["caller func_80001010"])])
+    assert got["by_rule"] == {"catalog": 1}
+
+
+def test_an_sdk_function_takes_its_catalog_name_with_no_evidence_when_nothing_calls_it(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    rows = [
+        row("func_80700000", "__osDisableInt", []),  # the table line is the evidence
+        row("func_80700000", "__osRestoreInt", []),  # not the catalog name: still refused
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}

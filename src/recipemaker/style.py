@@ -69,9 +69,8 @@ def prefix_word(folder: str) -> str:
     as RENDER, so Render_ is true of its code; naming the folder later carries the prefix to the new word."""
     if word := subsystem_word(folder):
         return word
-    if neutral(folder) or not re.fullmatch(_rules()["names"]["placeholder_folder"], folder):
-        return ""
-    return subsystem_word(re.sub(r"_\d+$", "", folder))
+    counted = re.fullmatch(r"([A-Za-z]+)_\d{1,3}", folder)
+    return subsystem_word(counted[1]) if counted and not neutral(folder) else ""
 
 
 def free_folder(folder: str) -> bool:
