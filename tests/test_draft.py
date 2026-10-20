@@ -9,7 +9,7 @@ from typing import Any
 
 import fixture
 import pytest
-from unbake import api
+from unbake import api, effort
 from unbake.contracts import Refusal, Snapshot, Version
 
 from recipemaker import draft, host, index, judge, signatures, world
@@ -52,13 +52,14 @@ def _snapshot(tmp: Path, kinds: dict[str, str] | None = None, **kw: Any) -> Snap
     kw.setdefault("functions", code)
     root = fixture.project(tmp, **kw)
     config = api.load(root, fixture.host(tmp))
-    members, symbols = {}, {}
+    members, symbols, facts = {}, {}, {}
     for kind, items in (("function", kw["functions"]), ("data", kw.get("data", {}))):
         for name, by in items.items():
             places = []
             for version, (rom, blob) in sorted(by.items()):
                 vram = fixture.VRAM_BASE + rom - fixture.ROM_BASE
                 symbols.setdefault(version, {})[name] = vram
+                facts.setdefault(version, {})[name] = (vram, rom, len(blob), "func" if kind == "function" else "data")
                 section = {"rodata": ".rodata", "bss": ".bss"}.get((kinds or {}).get(name, ""), "")
                 section = section or (".text" if kind == "function" else ".data")
                 bss = section == ".bss"
@@ -70,7 +71,7 @@ def _snapshot(tmp: Path, kinds: dict[str, str] | None = None, **kw: Any) -> Snap
         v: Version(v, root / f"roms/baserom.{v}.z64", "0" * 64, "", "", symbols.get(v, {}), ())
         for v in kw.get("versions", ("a", "b"))
     }
-    return Snap(config, "0" * 40, None, versions, {}, "0" * 64, layout=layout)
+    return Snap(config, "0" * 40, SimpleNamespace(symbols=facts), versions, {}, "0" * 64, layout=layout)
 
 
 def _data_snapshot(tmp: Path, blob: bytes, kinds: dict[str, str] | None = None) -> Snapshot:
@@ -706,3 +707,53 @@ def test_data_draft_types_text_as_char_array(tmp_path: Path, toolchains: Any) ->
     USES["d"] = (("f", "lw", 0),)  # read as words: stays a word array
     _create(snapshot, "d", out)
     assert "unsigned int d[]" in out.read_text()
+
+
+def _kuseg(tmp: Path, here: bytes, other: bytes | None = None, moved: bool = False) -> Snapshot:
+    """d holds `here` in a; with `other`, b holds another member o with those bytes, and func_80000400 sits 0x10
+    later in b when `moved` (its word there follows it)."""
+    code = {"func_80000400": {"a": (0x1000, CODE), "b": (0x1010 if moved else 0x1000, CODE)}}
+    data = {"d": {"a": (0x1200, here)}, "e": {"a": (0x1300, b"\0\0\0\0"), "b": (0x1300, b"\0\0\0\0")}}
+    if other is not None:
+        data["o"] = {"b": (0x1400, other)}
+    return _snapshot(tmp, None, functions=code, data=data, versions=("a", "b"))
+
+
+def test_a_kuseg_word_beside_another_pointer_names_its_function(tmp_path: Path, toolchains: Any) -> None:
+    snapshot = _kuseg(tmp_path, _words(0x80000700, 0x00000400))
+    words = [0x80000700, 0x00000400]
+    assert draft.code_alias(snapshot, {}, "a", 0x80000604, words, 1).name == "func_80000400"  # type: ignore[union-attr]
+
+
+def test_a_lone_kuseg_word_stays_a_number_unless_it_moves_with_its_function(tmp_path: Path, toolchains: Any) -> None:
+    lone = _kuseg(tmp_path / "1", _words(0x5, 0x00000400, 0x7))
+    assert draft.code_alias(lone, {}, "a", 0x80000604, [0x5, 0x00000400, 0x7], 1) is None
+    effort._memo.clear()  # the fakes share one digest: a new snapshot needs a new command
+    moved = _kuseg(tmp_path / "2", _words(0x5, 0x00000400, 0x7), _words(0x00000410), moved=True)
+    assert draft.code_alias(moved, {}, "a", 0x80000604, [0x5, 0x00000400, 0x7], 1) is not None  # b's data follows it
+
+
+def test_the_second_word_of_a_display_list_command_is_no_code_pointer(tmp_path: Path, toolchains: Any) -> None:
+    snapshot = _kuseg(tmp_path, _words(0xDE000000, 0x00000400, 0x80000700))
+    assert draft.code_alias(snapshot, {}, "a", 0x80000604, [0xDE000000, 0x00000400, 0x80000700], 1) is None
+    assert draft.code_alias(snapshot, {}, "a", 0x80000600, [0x00000400, 0x80000700], 0) is not None
+
+
+def test_alias_name_reuses_a_shared_row_and_refuses_a_name_taken_for_another_address(
+    tmp_path: Path, toolchains: Any
+) -> None:
+    snapshot = _kuseg(tmp_path, _words(0x80000700, 0x00000400))
+    assert draft.alias_name(snapshot, ("a", "b"), 0x400) == "D_00000400"
+    snapshot.versions["a"].symbols["D_00000400"] = 0x404
+    assert draft.alias_name(snapshot, ("a", "b"), 0x400) is None
+    snapshot.versions["a"].symbols["D_old"] = 0x400
+    snapshot.versions["b"].symbols["D_old"] = 0x400
+    assert draft.alias_name(snapshot, ("a", "b"), 0x400) == "D_old"
+
+
+def test_data_draft_spells_a_kuseg_code_word_by_the_alias_row_the_version_has(tmp_path: Path, toolchains: Any) -> None:
+    snapshot = _kuseg(tmp_path, _words(0x80000700, 0x00000400))
+    assert "0x00000400" in draft.data_text(snapshot, "d")  # no row yet: the number stays
+    snapshot.versions["a"].symbols["D_00000400"] = 0x400
+    text = draft.data_text(snapshot, "d")
+    assert "extern char D_00000400[];" in text and "(unsigned int)D_00000400" in text

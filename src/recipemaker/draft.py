@@ -28,6 +28,7 @@ from recipemaker import (
     resource,
     signatures,
     state,
+    table,
     world,
 )
 from recipemaker.world import Member, Placement
@@ -305,6 +306,104 @@ def _vram(p: Placement) -> int:
     return p.vram
 
 
+KSEG0 = 0x80000000
+_REACH = 3  # words on either side of a code word searched for another pointer
+
+
+def _starts(snapshot: Snapshot, version: str) -> dict[int, Member]:
+    """The function members of the version by their start address."""
+    return api.memo(
+        ("recipe.starts", snapshot.digest, version),
+        lambda: {
+            p.vram: m
+            for m in world.of(snapshot).members.values()
+            if m.kind == "function"
+            for p in m.placements
+            if p.version == version
+        },
+    )
+
+
+def kuseg_function(snapshot: Snapshot, version: str, value: int) -> Member | None:
+    """The function a word without the KSEG0 bit names: the game calls its code through the TLB map of KUSEG onto the
+    same RAM, so 0x00239FBC is the function that starts at 0x80239FBC."""
+    return _starts(snapshot, version).get(value | KSEG0) if 0 < value < KSEG0 else None
+
+
+def _image(snapshot: Snapshot, member: Member, version: str) -> bytes:
+    parts = sorted((p for p in member.placements if p.version == version and p.section != ".bss"), key=_vram)
+    return b"".join(world.rom_bytes(snapshot.versions[version], p.rom_start, p.rom_end) for p in parts)
+
+
+def _aliases(snapshot: Snapshot) -> dict[str, frozenset[int]]:
+    """Per version, every word of its data rows (each up to the next row) that names a function through KUSEG: the
+    data an assembly file or a blob holds counts as much as a member's."""
+
+    def scan() -> dict[str, frozenset[int]]:
+        found: dict[str, frozenset[int]] = {}
+        for version, record in snapshot.versions.items():
+            table = snapshot.files.symbols.get(version, {})
+            ends = world.extents(table)
+            words: set[int] = set()
+            for name, (_, rom, size, kind) in table.items():
+                if kind == "func" or rom is None or not (extent := size or ends.get(name, 0)) or extent > 0x10000:
+                    continue
+                raw = world.rom_bytes(record, rom, rom + extent)
+                for at in range(0, len(raw) - 3, 4):
+                    value = int.from_bytes(raw[at : at + 4], "big")
+                    if kuseg_function(snapshot, version, value) is not None:
+                        words.add(value)
+            found[version] = frozenset(words)
+        return found
+
+    return api.memo(("recipe.aliases", snapshot.digest), scan)
+
+
+def _opcodes() -> frozenset[int]:
+    """The display-list command bytes of every microcode the GBI table knows, but G_NOOP (0, a common number)."""
+    rows = table("tables/gbi.toml")["command"]
+    return frozenset(e["opcode"] for r in rows for e in r.get("variants", [r]) if e["opcode"])
+
+
+def code_alias(
+    snapshot: Snapshot,
+    held: dict[str, tuple[list[tuple[int, int, Member]], list[int]]],
+    version: str,
+    vram: int,
+    words: list[int],
+    index: int,
+) -> Member | None:
+    """The function the word `words[index]` (at `vram`) points to through KUSEG, when the original shows it is one:
+    the word moves with the function (another version places the function elsewhere and its data holds that
+    address without the KSEG0 bit: the linker's relocation), or another pointer sits within three words (a record
+    of pointers). The second word of a display-list command (its first word a GBI opcode) is no code pointer."""
+    target = kuseg_function(snapshot, version, words[index])
+    if target is None or (vram % 8 == 4 and index and words[index - 1] >> 24 in _opcodes()):
+        return None
+    aliases = _aliases(snapshot)
+    moved = any(
+        p.vram != words[index] | KSEG0 and p.vram & ~KSEG0 in aliases.get(p.version, ())
+        for p in target.placements
+        if p.version != version
+    )
+    near = (
+        _into(snapshot, held, version, w) is not None or kuseg_function(snapshot, version, w) is not None
+        for w in words[max(0, index - _REACH) : index] + words[index + 1 : index + 1 + _REACH]
+    )
+    return target if moved or any(near) else None
+
+
+def alias_name(snapshot: Snapshot, versions: tuple[str, ...], value: int) -> str | None:
+    """The symbol that names the KUSEG address `value` in every one of the versions: the row they already share, else
+    D_<value> when no version spells that name for another address; None when they disagree."""
+    tables = [snapshot.versions[v].symbols for v in versions]
+    shared = sorted(set.intersection(*({n for n, a in t.items() if a == value} for t in tables)))
+    if shared:
+        return next((n for n in shared if n.startswith("D_")), shared[0])
+    name = f"D_{value:08X}"
+    return name if all(t.get(name, value) == value for t in tables) else None
+
+
 def _byte_uses(snapshot: Snapshot, version: str, vram: int, size: int) -> bool:
     """Whether no reference to any symbol inside [vram, vram + size) reads it as words or halfwords: only address
     loads and byte accesses (a source array can span several symbols)."""
@@ -345,8 +444,16 @@ def data_text(snapshot: Snapshot, member: str) -> str:
     referenced: dict[str, str] = {}
     held: dict[str, tuple[list[tuple[int, int, Member]], list[int]]] = {}
     images: dict[str, bytes] = {}
+    words = [int.from_bytes(raw[at : at + 4], "big") for at in range(0, len(raw) - 3, 4)] if code == "I" else []
     for at in range(0, len(raw), 4) if code == "I" else ():
         value = int.from_bytes(raw[at : at + 4], "big")
+        if code_alias(snapshot, held, version, placements[0].vram + at, words, at // 4) is not None:
+            # a code pointer through KUSEG: spelled by the alias row the version has (`recipe text` adds missing rows)
+            alias = alias_name(snapshot, (version,), value)
+            if alias is not None and alias in snapshot.versions[version].symbols:
+                referenced[alias] = f"extern char {alias}[];"
+                values[at // 4] = f"(unsigned int){alias}"
+            continue
         hit = _into(snapshot, held, version, value)
         if hit is None or not _agrees(snapshot, held, images, entry, version, at, hit):
             continue
