@@ -929,7 +929,7 @@ GOOD = "int func_a(void) { return 1; }\n"
         ("int func_a(void) { return 4; }\n", 0.7, False),  # better
     ],
 )
-def test_try_restores_the_previous_content_byte_for_byte_when_the_candidate_is_worse_or_lost_the_function(
+def test_try_keeps_the_lanes_text_and_saves_the_previous_content_beside_it_when_the_candidate_is_worse(
     fakes, text, score, restored
 ):
     lease(fakes)
@@ -939,10 +939,11 @@ def test_try_restores_the_previous_content_byte_for_byte_when_the_candidate_is_w
     path.write_text(text)
     fakes.run_result = failing_result("bytes", score)
     got = work.try_(fakes.config, {"item": "func_a"})
-    assert path.read_text() == (GOOD if restored else text)
+    assert path.read_text() == text  # the lane's own text is never rewritten under it
     assert ("restored" in got) == restored
     if restored:
-        assert "previous content" in got["restored"] and "restored:" in cli.render("try", got)
+        assert "previous content" in got["restored"] and "REGRESSED:" in cli.render("try", got)
+        assert path.with_name(path.name + ".prev").read_text() == GOOD
 
 
 def test_a_landing_row_without_a_commit_is_named_by_its_submission_id():

@@ -300,6 +300,18 @@ def test_reads_follows_a_member_to_the_assembly_of_the_version_that_names_it(ass
     assert got["func_80001010_eu"] == (["func_80001020_eu"], []) and "func_80001020_eu" not in got
 
 
+def test_reads_takes_a_call_only_another_version_of_the_function_makes(assembly):
+    # func_80001010 is placed in us and eu; only its eu assembly (func_<its eu VRAM>_eu there) calls func_80004010
+    folder = assembly.project.root / "asm/eu/nonmatchings/main"
+    folder.mkdir(parents=True)
+    (folder / f"func_{VRAM:08X}_eu.s").write_text("    /* 1 2 3 */  jal        func_80004010\n")
+    doc = document()
+    first = next(m for m in doc["members"] if m["name"] == "func_80001010")
+    first["placements"].append({**first["placements"][0], "version": "eu"})
+    got = naming.reads(assembly, doc)
+    assert got["func_80001010"][0] == ["func_80001020", "osMissing", "func_80700000", "func_80004010"]
+
+
 def test_reads_places_a_segment_by_the_first_member_unbake_can_place(assembly):
     doc = document()
     doc["members"].insert(0, member("func_80004020", "code_80004000", unit="src/c.c"))  # unplaced and first

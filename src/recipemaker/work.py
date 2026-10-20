@@ -520,9 +520,12 @@ def try_(config: Config, params: Json) -> Json:
         out = _report(config, item, path, result, fixes, tries, before, now, kept, bool(reason))
     except Exception as exc:
         raise _late(config, item, landed, saved, exc) from exc
-    if reason:
-        host.write(path, kept.encode("utf-8"))
-        out["restored"] = f"{reason}; the file is back to the previous content"
+    if reason:  # the lane's text stays where it wrote it: the previous candidate goes beside it, said loudly
+        previous = path.with_name(path.name + ".prev")
+        host.write(previous, kept.encode("utf-8"))
+        out["restored"] = (
+            f"{reason}; the file keeps your text (it is not the best candidate), the previous content is in {previous}"
+        )
     return out
 
 

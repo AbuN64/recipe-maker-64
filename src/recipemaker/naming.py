@@ -63,15 +63,15 @@ def _stems(member: Json, version: str) -> list[str]:
 
 def reads(config: Config, doc: Json) -> Graph:
     """Per function with extracted assembly the members it calls and the symbols whose address it loads (a member or
-    not: `reads NAME` evidence cites any of them), in order of first use. A member is named in one version
-    (`func_X_de`), so its assembly and its callees' names are that version's; a function without assembly has no
-    entry."""
+    not: `reads NAME` evidence cites any of them), in order of first use, over the assembly of every version that
+    places it: a call only one version makes (a us-only callee) is still a call. Each version's names are its own
+    (`func_X_us`); `Map.canon` folds them onto the members. A function without assembly has no entry."""
     root = config.project.root
     by_segment: dict[tuple[str, str], list[str]] = {}
     by_name = {m["name"]: m for m in doc["members"]}
     for m in doc["members"]:
-        if m["kind"] == "function" and m["placements"]:
-            by_segment.setdefault((m["placements"][0]["version"], m["segment"]), []).append(m["name"])
+        for version in dict.fromkeys(p["version"] for p in m["placements"]) if m["kind"] == "function" else ():
+            by_segment.setdefault((version, m["segment"]), []).append(m["name"])
     graph: Graph = {}
     for (version, _), names in by_segment.items():
         folder = _directory(config, version, names)
@@ -85,7 +85,8 @@ def reads(config: Config, doc: Json) -> Graph:
             # a callee no member is named as (stale assembly of a renamed function) is resolved by `Map.canon`
             calls = [x for x in dict.fromkeys(_CALL.findall(text)) if x != name and not x.startswith(".")]
             loads = [x for x in dict.fromkeys(_LOAD.findall(text)) if x != name]  # data no module holds is still read
-            graph[name] = (calls, loads)
+            held = graph.get(name, ([], []))
+            graph[name] = (list(dict.fromkeys([*held[0], *calls])), list(dict.fromkeys([*held[1], *loads])))
     if not graph and by_segment:
         raise state.stop("recipe.name", "no extracted assembly to read calls from", action="extract the base ROMs")
     return graph
@@ -101,7 +102,10 @@ class Map:
         self.config = config
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
-        self.calls = {n: [x for x in map(self.canon, c) if x in self.members] for n, (c, _) in graph.items()}
+        self.calls = {
+            n: list(dict.fromkeys(x for x in map(self.canon, c) if x in self.members and x != n))
+            for n, (c, _) in graph.items()
+        }
         self.loads = {n: list(dict.fromkeys(map(self.canon, ld))) for n, (_, ld) in graph.items()}
         self.callers: dict[str, list[str]] = {}
         for name in graph:

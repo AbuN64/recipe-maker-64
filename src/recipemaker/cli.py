@@ -82,7 +82,7 @@ def _render_work(result: Json) -> list[str]:
     if result["auto_fixes"]:
         lines.append("auto-fixes: " + "; ".join(result["auto_fixes"]))
     if "restored" in result:
-        lines.append("restored: " + result["restored"])
+        lines.append("REGRESSED: " + result["restored"])
     if result["result"] != "exact":
         lines += [f"file: {result['candidate']}", f"brief: {result['brief']}"]
         budget = result["budget"]
@@ -116,7 +116,7 @@ def _render_try(result: Json) -> list[str]:
     if result["auto_fixes"]:
         lines.append("auto-fixes: " + "; ".join(result["auto_fixes"]))
     if "restored" in result:
-        lines.append("restored: " + result["restored"])
+        lines.append("REGRESSED: " + result["restored"])
     if result["result"] != "exact":
         lines += [*(f"why: {w}" for w in result["why"]), f"file: {result['file']}", f"brief: {result['brief']}"]
     return lines
