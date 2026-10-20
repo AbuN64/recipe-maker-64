@@ -230,6 +230,166 @@ def wav(pcm: list[int], rate: int) -> bytes:
     return header + data
 
 
+# sizes of the graph records: sound (envelope, key map and wave pointers, pan, volume, flags), envelope (three times,
+# two volumes), key map (velocity and key ranges, base key, detune), wave table (base, length, type, flags, loop and
+# book pointers), loop (start, end, count, sixteen state words)
+_RECORD = {"sound": 16, "envelope": 16, "keymap": 6, "wave": 20, "loop": 44}
+
+
+def structures(image: bytes) -> list[tuple[str, int, int]]:
+    """Every record of the bank graph as (kind, start, size), each once, in offset order: the file table, bank file
+    headers, banks, instruments, sounds, envelopes, key maps, wave tables, loops and books."""
+    found: dict[int, tuple[str, int]] = {}
+    files = _u32(image, 0)
+    found[0] = ("files", 4 + 8 * files)
+    for file in range(files):
+        header = _pointer(image, 4 + file * 8, 4)
+        banks = struct.unpack_from(">H", image, header + 2)[0]
+        found[header] = ("bankfile", 4 + 4 * banks)
+        for bank in range(banks):
+            at = _pointer(image, header + 4 + bank * 4, 12)
+            instruments = struct.unpack_from(">H", image, at)[0]
+            found[at] = ("bank", 12 + 4 * instruments)
+            slots = [at + 12 + i * 4 for i in range(instruments)] + ([at + 8] if _u32(image, at + 8) else [])
+            for slot in slots:
+                instrument = _pointer(image, slot, 16)
+                sounds = struct.unpack_from(">H", image, instrument + 14)[0]
+                found[instrument] = ("instrument", 16 + 4 * sounds)
+                for number in range(sounds):
+                    sound = _pointer(image, instrument + 16 + number * 4, _RECORD["sound"])
+                    found[sound] = ("sound", _RECORD["sound"])
+                    for kind, field in (("envelope", 0), ("keymap", 4), ("wave", 8)):
+                        found[_pointer(image, sound + field, _RECORD[kind])] = (kind, _RECORD[kind])
+                    wave = _pointer(image, sound + 8, _RECORD["wave"])
+                    if _u32(image, wave + 12):
+                        found[_pointer(image, wave + 12, _RECORD["loop"])] = ("loop", _RECORD["loop"])
+                    book = _pointer(image, wave + 16, 8)
+                    order, predictors = struct.unpack_from(">II", image, book)
+                    found[book] = ("book", 8 + order * predictors * HALF * 2)
+    return [(kind, at, size) for at, (kind, size) in sorted(found.items())]
+
+
+def explain(image: bytes) -> Json:
+    """How much of the control image the bank graph accounts for: the bytes inside its records, the zero bytes between
+    them (alignment) and the nonzero ranges no record reaches. Nothing unreached means the graph is the whole image."""
+    held = bytearray(len(image))
+    for _kind, at, size in structures(image):
+        held[at : at + size] = b"\1" * size
+    unreached: list[list[int]] = []
+    for at, byte in enumerate(image):
+        if not held[at] and byte:
+            if unreached and unreached[-1][1] == at:
+                unreached[-1][1] = at + 1
+            else:
+                unreached.append([at, at + 1])
+    inside = held.count(1)
+    loose = sum(end - start for start, end in unreached)
+    return {"bytes": len(image), "records": inside, "zero_between": len(image) - inside - loose, "unreached": unreached}
+
+
+SEQUENCE_PREFIX = 8  # a word and a float the game keeps before the libultra compressed MIDI header
+TRACKS = 16
+_BLOCK = 0xFE  # a back reference (offset high, offset low, length) or, doubled, a literal 0xFE
+_META_BYTES = {0x51: 3, 0x2E: 2, 0x2D: 6}  # tempo; loop start (number, 0xFF); loop end (counts, 32-bit offset)
+_DATA_BYTES = {0x8: 2, 0x9: 2, 0xA: 2, 0xB: 2, 0xC: 1, 0xD: 1, 0xE: 2}
+
+
+class _Track:
+    """The byte reader of one compressed track: a back reference replays `length` earlier stored bytes, counted back
+    from the byte after it by `offset + 4`."""
+
+    def __init__(self, data: bytes, at: int) -> None:
+        self.data, self.at, self.back, self.left = data, at, 0, 0
+
+    def byte(self) -> int:
+        data = self.data
+        if self.left:
+            self.left -= 1
+            self.back += 1
+            return data[self.back - 1]
+        if not 0 <= self.at < len(data):
+            raise BankError(f"sequence track runs past its data at {self.at:#x}")
+        value = data[self.at]
+        self.at += 1
+        if value != _BLOCK:
+            return value
+        if data[self.at] == _BLOCK:
+            self.at += 1
+            return _BLOCK
+        offset, length = data[self.at] << 8 | data[self.at + 1], data[self.at + 2]
+        self.at += 3
+        self.back = self.at - (offset + 4)
+        if self.back < 0 or not length:
+            raise BankError(f"sequence back reference at {self.at - 4:#x} leaves the track")
+        self.left = length - 1
+        self.back += 1
+        return data[self.back - 1]
+
+    def number(self) -> int:
+        value = 0
+        while True:
+            byte = self.byte()
+            value = value << 7 | (byte & 0x7F)
+            if not byte & 0x80:
+                return value
+
+
+def _events(data: bytes, at: int) -> tuple[int, int]:
+    """(end, events) of the track at `at`: delta times, running status, notes with a duration, the tempo and loop
+    metas, ending at the end-of-track meta."""
+    track, status, events = _Track(data, at), 0, 0
+    while True:
+        track.number()
+        first = track.byte()
+        if first & 0x80:
+            status, first = first, -1
+        if not status:
+            raise BankError(f"sequence track at {at:#x} has data before any status")
+        if status == 0xFF:
+            kind = track.byte() if first < 0 else first
+            if kind == 0x2F:
+                return track.at, events
+            if kind not in _META_BYTES:
+                raise BankError(f"sequence meta {kind:#x} near {track.at:#x}")
+            for _ in range(_META_BYTES[kind]):
+                track.byte()
+        else:
+            if status >> 4 not in _DATA_BYTES:
+                raise BankError(f"sequence status {status:#x} near {track.at:#x}")
+            for _ in range(_DATA_BYTES[status >> 4] - (first >= 0)):
+                track.byte()
+            if status >> 4 == 0x9:
+                track.number()  # the note's duration
+        events += 1
+
+
+def sequence(data: bytes) -> Json:
+    """Parse one compressed sequence: the prefix, sixteen track offsets (from the prefix end, 0 for no track), the
+    division, then every track to its end meta. The receipt holds each track's span and event count, the zero bytes
+    after the last track, and the nonzero bytes no part reaches (none means the parse is the whole sequence)."""
+    header = SEQUENCE_PREFIX + 4 * TRACKS + 4
+    if len(data) < header:
+        raise BankError("sequence shorter than its header")
+    offsets = struct.unpack_from(f">{TRACKS}I", data, SEQUENCE_PREFIX)
+    tracks = []
+    for offset in offsets:
+        if offset:
+            end, events = _events(data, SEQUENCE_PREFIX + offset)
+            tracks.append([SEQUENCE_PREFIX + offset, end, events])
+    held = bytearray(len(data))
+    held[:header] = b"\1" * header
+    for start, end, _events_count in tracks:
+        held[start:end] = b"\1" * (end - start)
+    unreached = [at for at in range(len(data)) if not held[at] and data[at]]
+    return {
+        "bytes": len(data),
+        "division": struct.unpack_from(">i", data, SEQUENCE_PREFIX + 4 * TRACKS)[0],
+        "tracks": tracks,
+        "zero_between": held.count(0) - len(unreached),
+        "unreached": unreached,
+    }
+
+
 def prove(ctl: bytes, table: bytes) -> Json:
     """Decode every wave and rebuild its bytes: the receipt of what is exact, what is clamped and what tiles."""
     waves = read_waves(ctl, len(table))
@@ -257,6 +417,7 @@ def prove(ctl: bytes, table: bytes) -> Json:
             }
         )
     return {
+        "control": explain(ctl),
         "waves": len(waves),
         "frames": frames,
         "samples": frames * FRAME_SAMPLES,

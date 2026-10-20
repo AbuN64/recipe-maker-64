@@ -113,7 +113,7 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 
 
 # Soft cap on the size of the Python source; raise it with the change that needs the room.
-HARD_CAP = 11700  # raw lines of recipe maker Python
+HARD_CAP = 11800  # raw lines of recipe maker Python
 
 
 def test_line_budget():
