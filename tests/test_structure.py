@@ -432,6 +432,20 @@ def test_a_source_and_a_header_rename_are_rename_diffs_and_the_includes_follow(t
     assert not (root / "src/a.c").exists() and (root / "include/game/m.h").exists()
 
 
+def test_a_renamed_source_takes_its_config_toml_file_rule_along(tmp_path):
+    # BT-OPUS-1: apply renamed src files but left [file."old"] rules, so the files lost their toolchain silently
+    config = '[project]\nname = "x"\n\n[file."src/a.c"]\ntoolchain = "gcc-2.7.2"\n\n[file."src/b.c"]\nflags = ["-O1"]\n'
+    root = _repo(tmp_path, {"src/a.c": "int a;\n", "src/b.c": "int b;\n", "config.toml": config})
+    modules = {"m": {"source": "src/a.c", "header": "include/m.h"}}
+    moves = [{"op": "source", "subject": "m", "target": "src/game/m.c"}]
+    got = structure.build(root, modules=modules, moves=moves, owner={}.get)
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    text = (root / "config.toml").read_text()
+    assert '[file."src/game/m.c"]\ntoolchain = "gcc-2.7.2"' in text and '[file."src/a.c"]' not in text
+    assert '[file."src/b.c"]' in text  # a file that stays keeps its rule
+
+
 def test_a_header_move_edits_the_include_lines(tmp_path):
     root = _repo(tmp_path, {"src/a.c": '#include "old.h"\n#include "other.h"\n', "include/old.h": "int a;\n"})
     got = structure.build(root, [{"op": "file", "subject": "include/old.h", "target": "include/types.h"}], {}.get, {})

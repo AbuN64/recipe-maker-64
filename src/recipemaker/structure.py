@@ -660,9 +660,21 @@ def build(
             applied += bool(include(subject, target))
             if files.get(subject) is not None and files.get(target) is None:
                 files.rename(subject, target)
+    _rekey(files)
     if note:
         note(f"structure > build diff of {len(files.changed())} files")
     return {"patch": files.diff(), "files": files.changed(), "moves": applied}
+
+
+_FILE_ROW = re.compile(r"""(?m)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["'])([^"'\n]+)\2([ \t]*\])""")
+
+
+def _rekey(files: Files) -> None:
+    """The per-file rules of config.toml (`[file."src/a.c"]`: toolchain, flags) follow the files the moves rename: a
+    rule left on the old path matches nothing, and the file silently builds with the project's defaults."""
+    moved = {was: now for now, was in files.origin.items() if files.text.get(now) is not None and was != now}
+    if moved:
+        files.replace(_FILE_ROW, lambda m: f"{m[1]}{m[2]}{moved.get(m[3], m[3])}{m[2]}{m[4]}", ["config.toml"])
 
 
 def ops(proposal: Json) -> list[Json]:
