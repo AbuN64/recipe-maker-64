@@ -587,3 +587,15 @@ def test_an_sdk_function_takes_the_name_the_projects_libultra_table_gives_its_ad
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
     assert {"op": "symbol", "subject": "func_80700000", "target": "__osDisableInt"} in moves(project)
+
+
+def test_n4_calls_a_datum_static_when_one_file_reads_it_whatever_the_folder_holds(project):
+    doc = document()
+    doc["members"] += [member("func_80001030", "code_80001100", unit="src/a2.c"), member("D_80002100", kind="data")]
+    doc["modules"].append(module("code_80001100", "sys_80001000", ["func_80001030"]))  # same folder, another file
+    graph = {**GRAPH, "func_80001030": ([], ["D_80002000"]), "func_80001020": (["func_80700000"], ["D_80002100"])}
+    ctx = naming.Map(project, doc, graph)
+    kinds = {n: k for k, n in naming._targets(ctx, "N4")}
+    assert kinds["D_80002000"] == "global"  # read by two files of one folder: a folder is no C scope
+    assert kinds["D_80002100"] == "static"  # read by one file only, though it sits in no module of its own
+    assert kinds["D_80005000"] == "static"

@@ -8,7 +8,6 @@ catalog-name or header-graph facts, so there is no catalog step (N0), no string 
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 from collections import Counter
@@ -138,6 +137,11 @@ class Map:
     def folder_of(self, member: str) -> str:
         return self.folder(self.members[member]["module"]) if member in self.members else ""
 
+    def module_at(self, member: str) -> str:
+        """The module (one source file) that holds a member now, after the renames accepted so far."""
+        module = self.members[member]["module"] if member in self.members else ""
+        return self.alias.get(module, module)
+
     def word(self, folder: str) -> str:
         """The prefix word of a folder (a placeholder's is the word before its counter), or an empty string when it
         is neutral or takes no prefix."""
@@ -224,12 +228,7 @@ class Map:
         """The SDK name the project's `versions/<v>/libultra_names.tsv` (vram, name, ...) gives a member's address in
         a version that places it, or "" when no table names it."""
         if self._sdk is None:
-            self._sdk = {}
-            for version in self.doc["versions"]:
-                table = self.root / "versions" / version / "libultra_names.tsv"
-                for cells in (r.split("\t") for r in (table.read_text().splitlines()[1:] if table.is_file() else ())):
-                    with contextlib.suppress(ValueError, IndexError):
-                        self._sdk[(version, int(cells[0], 16))] = cells[1]
+            self._sdk = structure.sdk_names(self.root, self.doc["versions"])
         return next(
             (
                 n
@@ -474,8 +473,10 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
             if m["kind"] == "function" and ctx.word(ctx.folder_of(n))
         ]
         return [("function", n) for fan, n in sorted(rows, key=lambda r: (-r[0], r[1])) if fan]
+    # N4: a datum is static when one file reads it (C's file scope: the data may sit in a data file of its own, the
+    # code file it came from is the one that reads it), global when two files do; a folder is no scope of C
     data = {n: ctx.callers.get(n, []) for n, m in neutral.items() if m["kind"] != "function"}
-    held = [(n, "global" if len({ctx.folder_of(c) for c in by}) >= 2 else "static") for n, by in data.items() if by]
+    held = [(n, "global" if len({ctx.module_at(c) for c in by}) >= 2 else "static") for n, by in data.items() if by]
     return [(k, n) for n, k in sorted(held, key=lambda r: (-len(data[r[0]]), r[0]))]
 
 

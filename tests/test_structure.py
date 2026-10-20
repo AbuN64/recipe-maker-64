@@ -668,3 +668,40 @@ def test_a_split_piece_is_compiled_as_the_file_its_members_leave(tmp_path):
     text = (root / "config.toml").read_text()
     assert '[file."src/a.c"]\ntoolchain = "gcc-2.7.2-kmc"' in text
     assert '[file."src/a_2.c"]\ntoolchain = "gcc-2.7.2-kmc"\ncflags = []' in text
+
+
+def _sdk_at(doc, name):
+    m = next(x for x in doc["members"] if x["name"] == name)
+    p = next(p for p in m["placements"] if p["section"] == ".text")
+    return {(p["version"], p["vram"]): "osCreateThread"}, m["module"]
+
+
+def test_an_object_holding_an_sdk_function_moves_into_the_library_folder(doc):
+    name = next(m["name"] for m in doc["members"] if m["kind"] == "function" and m["module"].startswith(W))
+    sdk, _ = _sdk_at(doc, name)
+    got = structure.propose(doc, SETTINGS, naming=RW, library=("src/sdk/",), sdk=sdk)
+    moved = holding(got, name)
+    assert moved["folder"] == "src/sdk/libultra" and moved["source"].startswith("src/sdk/libultra/")
+    assert moved["sdk"] == ["osCreateThread"] and "src/sdk/libultra" in got["order"]
+    assert not moved["header"] or moved["header"].startswith("include/sdk/libultra/")
+    others = [m for m in got["modules"] if name not in m["atoms"]]
+    assert all(not m["folder"].startswith("src/sdk") for m in others)  # only the library object moves
+    assert {"op": "source", "subject": moved["name"], "target": moved["source"]} in structure.ops(got)
+
+
+def test_a_library_object_joins_the_projects_own_folder_of_that_library(doc):
+    name = next(m["name"] for m in doc["members"] if m["kind"] == "function" and m["module"].startswith(W))
+    sdk, _ = _sdk_at(doc, name)
+    doc["modules"].append({**doc["modules"][0], "name": "x", "source": "src/sdk/libgultra/ai.c", "members": []})
+    got = structure.propose(doc, SETTINGS, naming=RW, library=("src/sdk/",), sdk=sdk)
+    assert holding(got, name)["folder"] == "src/sdk/libgultra"
+    gcc = {k: "__udivdi3" for k in sdk}
+    assert holding(structure.propose(doc, SETTINGS, naming=RW, library=("src/sdk/",), sdk=gcc), name)["folder"] == (
+        "src/sdk/libgcc"
+    )
+
+
+def test_sdk_names_read_every_versions_table(tmp_path):
+    (tmp_path / "versions/us").mkdir(parents=True)
+    (tmp_path / "versions/us/libultra_names.tsv").write_text("vram\tname\n0x80112480\t__osDisableInt\tEXACT\nbad\n")
+    assert structure.sdk_names(tmp_path, ["us", "eu"]) == {("us", 0x80112480): "__osDisableInt"}

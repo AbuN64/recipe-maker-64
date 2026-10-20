@@ -248,10 +248,12 @@ def propose(
     types: Callable[[str], clash.Types] | None = None,
     evidence: Sequence[Json] = (),
     naming: tree.Naming = tree.PLAIN,
+    sdk: Mapping[tuple[str, int], str] | None = None,
 ) -> Json:
     """Propose one module per object, named by its address, in the folder of the file it comes from.
     Scope is all segments or the requested segment names; `types` splits an object whose C files define a type
-    differently."""
+    differently. An object holding a function `sdk` names ((version, vram) -> SDK name) is a library object and goes
+    under the library folder (`_library_folder`)."""
     wanted = None if segment is None else frozenset(segment.split(",") if isinstance(segment, str) else segment)
     first = doc["names_from"]
     every = atoms(doc, library)
@@ -295,6 +297,16 @@ def propose(
                 m["batch"] = m["folder"]
                 if m["batch"] not in order:
                     order.insert(0, m["batch"])  # its own batch, before the folders the map already holds
+    by_atom = {a["name"]: a for a in every}
+    for m in modules:  # a library object found in a game folder: the vendor's archive member, never game code
+        named = [n for a in m["atoms"] if (n := _sdk_name(by_atom[a], sdk or {}))]
+        if named and not _inside(m["origin"], library):
+            folder = _library_folder(named, [x["source"] for x in doc["modules"]], library)
+            m |= {"folder": folder, "source": naming.file(folder, m), "sdk": named}
+            m["header"] = _sdk_header(m["source"], m["header"]) if m["header"] else ""
+            m["batch"] = folder
+            if folder not in order:
+                order.append(folder)
     is_c = {a["name"]: a["c"] for a in every}
     counted = [m for m in modules if any(is_c.get(n) for n in m["atoms"])]  # asm-only modules are no C units
     touched = {a["module"] for a in free}
@@ -332,6 +344,50 @@ def propose(
             "single_atom_modules": (sizes.count(1), [len(m["atoms"]) for m in modules].count(1)),
         },
     }
+
+
+_LIBGCC = re.compile(r"__\w+[sdt]i[23]|__(?:fix|float)\w+")  # the compiler's runtime: __udivdi3, __fixunsdfdi
+
+
+def sdk_names(root: Path, versions: Sequence[str]) -> dict[tuple[str, int], str]:
+    """(version, vram) -> SDK name of each row of `versions/<v>/libultra_names.tsv` (vram, name, ...)."""
+    found: dict[tuple[str, int], str] = {}
+    for version in versions:
+        table = root / "versions" / version / "libultra_names.tsv"
+        for cells in (r.split("\t") for r in (table.read_text().splitlines()[1:] if table.is_file() else ())):
+            try:
+                found[(version, int(cells[0], 16))] = cells[1].strip()
+            except (ValueError, IndexError):
+                continue
+    return found
+
+
+def _sdk_name(atom: Json, sdk: Mapping[tuple[str, int], str]) -> str:
+    """The SDK name a function atom's address has in a version that places it, "" for none."""
+    if atom["kind"] != "function":
+        return ""
+    return next((n for v, p in sorted(atom["text"].items()) if (n := sdk.get((v, int(p["vram"]))))), "")
+
+
+def _library_folder(named: Sequence[str], sources: Sequence[str], library: Sequence[str]) -> str:
+    """Where a library object goes: the compiler runtime's names (libgcc) or the SDK's (libultra), into the folder
+    of that library the project already has under a library root (src/sdk/libgultra, src/libgcc), else
+    `<first library root>/libgcc` or `/libultra`."""
+    gcc = all(_LIBGCC.fullmatch(n) for n in named)
+    words = ("libgcc",) if gcc else ("libgultra", "libultra")
+    roots = [r.rstrip("/") for r in library] or ["src/sdk"]
+    have = sorted(
+        {d for s in sources for d in [posixpath.dirname(s)] if _inside(s, roots) and posixpath.basename(d) in words},
+        key=lambda d: (words.index(posixpath.basename(d)), d),
+    )
+    return have[0] if have else f"{roots[0]}/{words[-1]}"
+
+
+def _sdk_header(source: str, header: str) -> str:
+    """The header of a module moved into a library folder: include/ beside the source's folder, the same stem."""
+    folder = posixpath.dirname(source).removeprefix("src/")
+    stem = posixpath.splitext(posixpath.basename(source))[0]
+    return f"include/{folder}/{stem}{posixpath.splitext(header)[1]}"
 
 
 def _module_moves(entry: Json, existing: Json, current: Json) -> list[dict[str, Any]]:
@@ -843,7 +899,8 @@ def run(config: Config, params: Json) -> Json:
     catalog = debug.load(config)  # the original source file of each function its debug record places: a boundary
     rows = debug.boundaries(catalog, document) if catalog is not None else []
     with narrated("propose"):
-        proposal = dict(propose(document, settings, params["segment"], library, types, rows, naming))
+        sdk = sdk_names(root, document["versions"])
+        proposal = dict(propose(document, settings, params["segment"], library, types, rows, naming, sdk))
     found: list[str] = []
     if paths:  # a scope is a suggestion that never blocks: a refusal is a finding and the proposal is empty
         with narrated("scope"):
