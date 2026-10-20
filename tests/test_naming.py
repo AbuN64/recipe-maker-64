@@ -174,7 +174,7 @@ def test_submit_refuses_a_duplicate_and_unverifiable_evidence(project):
         row("func_80004030", "Actor_Spawn2", ["string 'Mix'"]),  # no string evidence exists
     ]
     got = submit(project, rows)
-    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 3, "named": 2}
+    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 2, "evidence": 1, "named": 2}
     assert got["accepted"] == 2 and [m["op"] for m in moves(project)] == ["symbol", "symbol"]
 
 
@@ -422,3 +422,20 @@ def test_a_subsystem_name_is_taken_when_a_folder_spells_it_in_another_case(proje
     monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
     taken = submit(project, [row("sys_80003000", "combat", ["callee osContStartReadData"], kind="subsystem")])
     assert taken["by_rule"] == {"duplicate": 1}
+
+
+def test_submit_checks_reads_evidence_against_the_loads_and_names_an_item_of_no_form(project):
+    # SPEED-4: `reads X` (the card's own `loads`) was refused as unverifiable, and so was an item of no known form
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["reads D_80005000"]),  # the card's loads hold it
+        row("func_80004020", "Actor_Free", ["reads D_80005000"]),  # this one loads nothing
+        row("func_80004030", "Actor_Kill", ["callee func_80004020", "uses D_80005000"]),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"unverifiable": 1, "evidence": 1}
+    refused = [
+        json.loads(x) for x in (project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()
+    ]
+    reasons = {r["rule"]: r["reason"] for r in refused}
+    assert reasons["unverifiable"] == "the assembly does not show: reads D_80005000"
+    assert "'uses D_80005000'" in reasons["evidence"] and "reads NAME" in reasons["evidence"]

@@ -21,7 +21,7 @@ from unbake.contracts import Config, Json, Refusal
 from recipemaker import state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
-_EVIDENCE = re.compile(r"^(callee|caller|tag) (\S+)$")
+_EVIDENCE = re.compile(r"^(callee|caller|reads|tag) (\S+)$")  # style.toml evidence_forms
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
@@ -48,9 +48,10 @@ def _directory(config: Config, version: str, names: Iterable[str]) -> str:
 
 
 def reads(config: Config, doc: Json) -> Graph:
-    """Per function with extracted assembly the members it calls and the members whose address it loads, in order of
-    first use. A member is named in one version (`func_X_de`), so its assembly and its callees' names are that
-    version's; a function without assembly has no entry."""
+    """Per function with extracted assembly the members it calls and the symbols whose address it loads (a member or
+    not: `reads NAME` evidence cites any of them), in order of first use. A member is named in one version
+    (`func_X_de`), so its assembly and its callees' names are that version's; a function without assembly has no
+    entry."""
     root = config.project.root
     known = {m["name"] for m in doc["members"]}
     by_segment: dict[tuple[str, str], list[str]] = {}
@@ -65,8 +66,9 @@ def reads(config: Config, doc: Json) -> Graph:
             if not file.is_file():
                 continue
             text = file.read_text(encoding="utf-8", errors="replace")
-            found = ([x for x in dict.fromkeys(rx.findall(text)) if x in known and x != name] for rx in (_CALL, _LOAD))
-            graph[name] = (next(found), next(found))
+            calls = [x for x in dict.fromkeys(_CALL.findall(text)) if x in known and x != name]
+            loads = [x for x in dict.fromkeys(_LOAD.findall(text)) if x != name]  # data no module holds is still read
+            graph[name] = (calls, loads)
     if not graph and by_segment:
         raise state.stop("recipe.name", "no extracted assembly to read calls from", action="extract the base ROMs")
     return graph
@@ -159,6 +161,8 @@ class Map:
             return self.tags(names)[value] > 0
         if kind == "caller":
             return any(value in self.callers.get(n, ()) for n in names)
+        if kind == "reads":  # a member whose address the code loads: the card's `loads`
+            return any(value in self.loads.get(n, ()) for n in names)
         return any(value in self.calls.get(n, ()) for n in names)
 
 
@@ -212,6 +216,9 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
         return "evidence", "a name needs at least one evidence item"
+    if unknown := [e for e in evidence if not _EVIDENCE.match(e)]:
+        forms = ", ".join(table("knowledge/style.toml")["evidence_forms"])
+        return "evidence", f"evidence item {unknown[0]!r} has no form a reader can check; the forms are {forms}"
     users = ctx.users(target, kind)
     if missing := [e for e in evidence if not ctx.verifies(e, users)]:
         return "unverifiable", f"the assembly does not show: {missing[0]}"
