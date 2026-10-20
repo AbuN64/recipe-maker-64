@@ -41,13 +41,19 @@ def neutral(name: str) -> bool:
     return any(re.fullmatch(p, name) for p in _rules()["names"]["neutral"])
 
 
+def folder_unnamed(folder: str) -> bool:
+    """Whether a folder has no name yet: a neutral address form or a word with a collision counter (FX_2).
+    The one fact both the subsystem row (it may be named) and the function and module rows (they must wait) read."""
+    return neutral(folder) or bool(re.fullmatch(_rules()["names"]["placeholder_folder"], folder))
+
+
 def subsystem_word(folder: str) -> str:
     """The subsystem word of a folder: its name folded to the convention's case, or empty for a neutral folder,
     a folder that is no subsystem word, or a folder the name rules leave alone. SCHED and sched give `sched`."""
     rules = _rules()
     word = folder.lower()
     ok = re.fullmatch(rules["names"]["subsystem"], word) and word not in rules["paths"]["no_prefix"]
-    return word if ok and not neutral(folder) and not neutral(word) else ""
+    return word if ok and not folder_unnamed(folder) and not neutral(word) else ""
 
 
 def pascal(word: str) -> str:

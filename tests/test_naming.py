@@ -351,3 +351,20 @@ def test_submit_takes_the_same_prefix_in_a_lower_or_upper_case_folder(project, m
     assert got["accepted"] == 2 and got["by_rule"] == {"regex": 2}
     named = submit(project, [row(folder, "actor", ["tag actor"], kind="subsystem")])
     assert named["by_rule"] == {"named": 1}  # an already-named folder is still recognised
+
+
+def test_a_collision_counter_folder_is_unnamed_so_it_can_be_named_and_then_hold_names(project, monkeypatch):
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "FX_2", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80006010", (["func_80700000"], []))
+    rows = [
+        row("func_80006010", "Particle_Build", ["callee func_80700000"]),
+        row("FX_2", "particle", ["callee func_80700000"], kind="subsystem"),
+        row("actor", "creature", ["callee func_80004020"], kind="subsystem"),  # a named folder stays named
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 2 and got["by_rule"] == {"named": 1}
+    assert {"op": "symbol", "subject": "func_80006010", "target": "Particle_Build"} in moves(project)
+    assert any(m["target"] == "src/game/main/particle/code_80006000.c" for m in moves(project))

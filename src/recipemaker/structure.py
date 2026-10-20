@@ -613,6 +613,13 @@ def build(
                 found = sorted((root / "versions").glob("*/symbol_addrs.txt"))
                 line = re.compile(rf"(?m)^([ \t]*){re.escape(subject)}(?![\w])")
                 hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found])
+                # the literals row of a function (aliases.txt, splat.yaml) follows its name; a word match skips it
+                rows = [
+                    p.relative_to(root).as_posix()
+                    for v in ("aliases.txt", "splat.yaml")
+                    for p in (root / "versions").glob(f"*/{v}")
+                ]
+                hits += files.replace(_word(LITERALS + subject), LITERALS + target, sorted(rows))
             hits += files.replace(_word(subject), target, files.everything())
             applied += bool(hits)
             if subject in where:

@@ -390,13 +390,26 @@ def test_a_symbol_rename_edits_symbol_addrs_and_every_word_bounded_use(tmp_path)
             "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\nfunc_80001 = 0x9000;\n",
             "src/a.c": "INCLUDE_ASM(main, func_8000);\nvoid g(void) { func_8000(); func_80001(); }\n",
             "include/a.h": "void func_8000(void);\n",
+            "versions/us/aliases.txt": "literals_func_8000 = 0x9000;\nliterals_func_80001 = 0x9010;\n",
+            "versions/us/splat.yaml": "  - [0x10, rodata, data/literals_func_8000]\n",
         },
     )
     got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
-    assert got["files"] == ["include/a.h", "src/a.c", "versions/us/symbol_addrs.txt"] and got["moves"] == 1
+    assert got["files"] == [
+        "include/a.h",
+        "src/a.c",
+        "versions/us/aliases.txt",
+        "versions/us/splat.yaml",
+        "versions/us/symbol_addrs.txt",
+    ]
+    assert got["moves"] == 1
     assert _check(root, got["patch"], "--check").returncode == 0
     _check(root, got["patch"])
     assert (root / "versions/us/symbol_addrs.txt").read_text().startswith("osYield = 0x8000;")
+    assert (
+        root / "versions/us/aliases.txt"
+    ).read_text() == "literals_osYield = 0x9000;\nliterals_func_80001 = 0x9010;\n"
+    assert "data/literals_osYield]" in (root / "versions/us/splat.yaml").read_text()
     assert "func_80001()" in (root / "src/a.c").read_text() and "osYield();" in (root / "src/a.c").read_text()
 
 

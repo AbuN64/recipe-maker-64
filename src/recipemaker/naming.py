@@ -190,7 +190,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "shape", "a row needs kind, target, name, evidence and doc"
     if reason := _exists(ctx, row):
         return "target", reason
-    if not style.neutral(target):
+    if not (style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)):
         return "named", f"{target} already has a name"
     rule, reason = _form(ctx, row)
     if rule:
