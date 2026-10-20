@@ -263,7 +263,10 @@ def propose(
     free = [a for a in every if a["segment"] in scope and not a["protected"]]
     key = _objects(free, first, evidence)
     groups: dict[Any, list[Json]] = defaultdict(list)
-    for a in sorted(free, key=lambda a: (a["segment"], *_place(a, first), a["name"])):
+    # an object's atoms in the names_from ROM order, then those only other versions hold: its first atom (which names
+    # and addresses the module) is where it starts in names_from, never an atom (a padding, a version's own function)
+    # that only another version holds and that sorts first by that version's name
+    for a in sorted(free, key=lambda a: (a["segment"], first not in a["text"], *_place(a, first), a["name"])):
         groups[key[a["name"]]].append(a)
     pieces: list[list[Json]] = []
     for piece in groups.values():
@@ -613,13 +616,16 @@ def build(
                 found = sorted((root / "versions").glob("*/symbol_addrs.txt"))
                 line = re.compile(rf"(?m)^([ \t]*){re.escape(subject)}(?![\w])")
                 hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found])
-                # the literals row of a function (aliases.txt, splat.yaml) follows its name; a word match skips it
+                # the literals name of a function follows its name wherever it is (its symbol_addrs.txt row,
+                # aliases.txt, the splat.yaml piece, a source that declares it); a word match of the function skips it
                 rows = [
                     p.relative_to(root).as_posix()
-                    for v in ("aliases.txt", "splat.yaml")
+                    for v in ("symbol_addrs.txt", "aliases.txt", "splat.yaml")
                     for p in (root / "versions").glob(f"*/{v}")
                 ]
-                hits += files.replace(_word(LITERALS + subject), LITERALS + target, sorted(rows))
+                hits += files.replace(
+                    _word(LITERALS + subject), LITERALS + target, [*sorted(rows), *files.everything()]
+                )
             hits += files.replace(_word(subject), target, files.everything())
             applied += bool(hits)
             if subject in where:

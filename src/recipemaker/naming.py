@@ -18,7 +18,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import state, structure, style, table
+from recipemaker import state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 _EVIDENCE = re.compile(r"^(callee|caller|tag) (\S+)$")
@@ -88,8 +88,19 @@ class Map:
         self._gbi: dict[str, bool] = {}
         self.alias: dict[str, str] = {}  # a module renamed by an accepted row: old name to new name
         self.taken: set[str] = {*self.members, *self.modules}
+        self._naming: tree.Naming | None = None
         for module in self.modules.values():
             self.taken |= {PurePosixPath(module[k]).stem for k in ("source", "header")} | {self.folder(module["name"])}
+
+    def spell(self, folder: str) -> str:
+        """A subsystem name as a folder of this project spells it (FRONTEND beside CODE_*.CPP stems)."""
+        if self._naming is None:
+            self._naming = tree.style(self.root)
+        return self._naming.cased(folder)
+
+    def folder_taken(self, word: str) -> bool:
+        """Whether a folder already holds the subsystem `word`, in whatever case it spells it (COMBAT holds combat)."""
+        return any(self.folder(m).lower() == word.lower() for m in self.modules) or self.spell(word) in self.taken
 
     def folder(self, module: str) -> str:
         module = self.alias.get(module, module)
@@ -166,14 +177,15 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     """Whether the new name has the shape its kind and subsystem ask for, and holds no banned word."""
     kind, target, name = row["kind"], row["target"], row["name"]
     word = ""
-    if kind == "function":
-        word = ctx.word(ctx.folder_of(target))
+    if kind in ("function", "module"):
+        folder = ctx.folder_of(target) if kind == "function" else ctx.folder(target)
+        word = ctx.word(folder)
         if not word:
-            return "prefix", f"the subsystem folder {ctx.folder_of(target)} has no name yet"
-    elif kind == "module":
-        word = ctx.word(ctx.folder(target))
-        if not word:
-            return "prefix", f"the subsystem folder {ctx.folder(target)} has no name yet"
+            return "prefix", (
+                f"the subsystem folder {folder} has no name yet: name it first, with a subsystem row for {folder} in "
+                f"this same file (subsystem rows are judged first) or from `recipe name next --step N2`, which offers "
+                "every unnamed folder"
+            )
     if not style.legal(kind, name, word) or style.neutral(name):
         return "regex", f"{name} does not match {style.pattern(kind, word)}"
     if kind == "module" and style.collision(name):
@@ -195,7 +207,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     rule, reason = _form(ctx, row)
     if rule:
         return rule, reason
-    if name in ctx.taken:
+    if name in ctx.taken or (kind == "subsystem" and ctx.folder_taken(name)):
         return "duplicate", f"{name} is already a symbol, folder or file name"
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
@@ -224,11 +236,13 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
             module[op] = str(path.with_name(name + path.suffix))
             out.append({"op": op, "subject": name, "target": module[op]})
         return out
+    folder = ctx.spell(name)  # the folder as the project spells its folders; the row's name stays the word
+    ctx.taken.add(folder)
     for module in ctx.modules.values():
         if ctx.folder(module["name"]) != target:
             continue
         for op in ("source", "header"):
-            parts = [name if p == target else p for p in PurePosixPath(module[op]).parts]
+            parts = [folder if p == target else p for p in PurePosixPath(module[op]).parts]
             if parts != list(PurePosixPath(module[op]).parts):
                 module[op] = str(PurePosixPath(*parts))
                 out.append({"op": op, "subject": module["name"], "target": module[op]})
@@ -286,8 +300,10 @@ def _card(ctx: Map, kind: str, target: str, version: str) -> Json:
 def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
     """The (kind, target) pairs an LLM step names, the most useful first."""
     neutral = {n: m for n, m in ctx.members.items() if style.neutral(n)}
-    if step == "N2":
-        folders = {f for m in ctx.modules if (f := ctx.folder(m)).startswith("sys_") and style.neutral(f)}
+    if step == "N2":  # every subsystem folder with no name yet, a neutral sys_ one or a placeholder like FX_2: the
+        # functions and modules in it wait on its name (a library's neutral folder is no subsystem)
+        every = {ctx.folder(m) for m in ctx.modules}
+        folders = {f for f in every if style.folder_unnamed(f) and (f.startswith("sys_") or not style.neutral(f))}
         return [("subsystem", f) for f in sorted(folders)]
     if step == "N1":  # leaf numeric functions many subsystems call
         leaf = [n for n, m in neutral.items() if m["kind"] == "function" and n in ctx.calls and not ctx.calls[n]]

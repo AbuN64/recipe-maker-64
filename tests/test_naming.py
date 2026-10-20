@@ -368,3 +368,57 @@ def test_a_collision_counter_folder_is_unnamed_so_it_can_be_named_and_then_hold_
     assert got["accepted"] == 2 and got["by_rule"] == {"named": 1}
     assert {"op": "symbol", "subject": "func_80006010", "target": "Particle_Build"} in moves(project)
     assert any(m["target"] == "src/game/main/particle/code_80006000.c" for m in moves(project))
+
+
+def _placeholder(monkeypatch):
+    """A module in a collision-counter folder (SYSTEM_2): a subsystem with no name yet."""
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "SYSTEM_2", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80006010", (["func_80700000"], []))
+
+
+def test_n2_offers_every_unnamed_subsystem_folder_a_placeholder_too_but_no_library(project, monkeypatch):
+    _placeholder(monkeypatch)
+    got = run(project, "next", step="N2")
+    pack = json.loads((project.project.root / got["pack"]).read_text())
+    assert [t["target"] for t in pack["targets"]] == ["SYSTEM_2", "sys_80003000"]  # lib_80900000 is no subsystem
+
+
+def test_a_function_in_an_unnamed_folder_is_refused_with_the_way_to_name_the_folder(project, monkeypatch):
+    _placeholder(monkeypatch)
+    got = submit(project, [row("func_80006010", "System_ApplyAreaDamage", ["callee func_80700000"])])
+    assert got["by_rule"] == {"prefix": 1}
+    refused = json.loads((project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()[-1])
+    assert "subsystem row for SYSTEM_2" in refused["reason"] and "--step N2" in refused["reason"]
+    rows = [
+        row("func_80006010", "Combat_ApplyAreaDamage", ["callee func_80700000"]),
+        row("SYSTEM_2", "combat", ["callee func_80700000"], kind="subsystem"),
+    ]
+    assert submit(project, rows)["accepted"] == 2  # named together in one file, the folder first
+
+
+def test_a_named_subsystem_folder_is_spelled_as_the_projects_folders_are(project, monkeypatch):
+    _placeholder(monkeypatch)
+    for path in ("src/AI/CODE_80001000.CPP", "src/FRONTEND/CODE_80002000.CPP"):
+        (project.project.root / path).parent.mkdir(parents=True, exist_ok=True)
+        (project.project.root / path).write_text("")
+    rows = [
+        row("SYSTEM_2", "combat", ["callee func_80700000"], kind="subsystem"),
+        row("func_80006010", "Combat_ApplyAreaDamage", ["callee func_80700000"]),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 2
+    assert {"op": "source", "subject": "code_80006000", "target": "src/game/main/COMBAT/code_80006000.c"} in moves(
+        project
+    )
+
+
+def test_a_subsystem_name_is_taken_when_a_folder_spells_it_in_another_case(project, monkeypatch):
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "COMBAT", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    taken = submit(project, [row("sys_80003000", "combat", ["callee osContStartReadData"], kind="subsystem")])
+    assert taken["by_rule"] == {"duplicate": 1}

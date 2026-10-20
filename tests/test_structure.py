@@ -594,3 +594,47 @@ def test_a_failing_sync_is_refused_with_unbakes_findings(tmp_path, monkeypatch):
     with pytest.raises(Refusal) as caught:
         structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
     assert caught.value.findings[0].key == "config.schema"
+
+
+def test_a_module_is_named_by_its_first_atom_in_names_from_not_by_another_versions_own_atom(doc):
+    last = next(m for m in doc["members"] if m["name"] == "func_802149C0_de")
+    eu = next(p for p in last["placements"] if p["version"] == "eu")
+    later = {**eu, "rom_start": eu["rom_end"], "rom_end": eu["rom_end"] + 0x20, "vram": eu["vram"] + 0x400}
+    pad = {**later, "section": ".data", "rom_start": later["rom_end"], "rom_end": later["rom_end"] + 4}
+    doc["members"] += [
+        {**last, "name": "func_80214DC0_eu", "unit": None, "placements": [later]},  # eu's own function
+        {
+            **last,
+            "name": "D_auto_func_80214DE0_eu_padding_1",
+            "kind": "data",
+            "unit": f"{W}_2.CPP",
+            "placements": [pad],
+        },
+    ]
+    module = next(m for m in doc["modules"] if m["name"] == f"{W}_2.CPP")
+    module["members"] += ["func_80214DC0_eu", "D_auto_func_80214DE0_eu_padding_1"]
+    got = of(structure.propose(doc, SETTINGS, naming=RW), f"{W}_2.CPP")
+    assert (got["name"], got["source"]) == ("code_80214310", "src/WEAPONS/CODE_80214310.CPP")  # as without them
+    assert got["atoms"][:3] == ["func_80214310_de", "func_80214624_de", "func_802149C0_de"]
+    assert set(got["atoms"][3:]) == {"func_80214DC0_eu", "D_auto_func_80214DE0_eu_padding_1"}
+
+
+def test_a_symbol_rename_moves_the_literals_name_in_symbol_addrs_and_sources_too(tmp_path):
+    root = _repo(
+        tmp_path,
+        {
+            "versions/us/symbol_addrs.txt": (
+                "func_8000 = 0x8000; // type:func\nliterals_func_8000 = 0x9000; // rom:0x900\n"
+                "literals_func_80001 = 0x9010;\n"
+            ),
+            "versions/us/splat.yaml": "  - [0x900, rodata, data/literals_func_8000]\n",
+            "src/a.c": "extern int literals_func_8000[];\nINCLUDE_ASM(main, func_8000);\n",
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "Game_Start"}], {}.get, {})
+    _check(root, got["patch"])
+    assert (root / "versions/us/symbol_addrs.txt").read_text() == (
+        "Game_Start = 0x8000; // type:func\nliterals_Game_Start = 0x9000; // rom:0x900\nliterals_func_80001 = 0x9010;\n"
+    )
+    assert "data/literals_Game_Start]" in (root / "versions/us/splat.yaml").read_text()
+    assert (root / "src/a.c").read_text() == "extern int literals_Game_Start[];\nINCLUDE_ASM(main, Game_Start);\n"
