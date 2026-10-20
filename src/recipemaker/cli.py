@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, errors, flags, lifecycle, naming, state, structure, style, tui, work
+from recipemaker import advice, brief, errors, flags, lifecycle, naming, retext, state, structure, style, tui, work
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -30,6 +30,7 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "flags": flags.run,
     "name": naming.run,
     "style": style.run,
+    "text": retext.run,
 }
 
 
@@ -204,6 +205,12 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "flags": _render_flags,
     "name": _render_name,
     "style": _render_style,
+    "text": lambda result: [
+        f"{'retyped' if result['written'] else 'would retype'} {len(result['items'])} text arrays"
+        f" in {len(result['files'])} files",
+        *(f"{i['symbol']} in {i['file']}: {i['size']} bytes" for i in result["items"]),
+        *(f"kept {k['symbol']}: {k['why']}" for k in result["kept"]),
+    ],
 }
 
 
@@ -273,6 +280,9 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--baseline", action="store_true", help="write the counts as the new baseline")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
+    one = verb("text", "retype published integer arrays that hold text as char arrays with identical bytes")
+    one.add_argument("--write", action="store_true", help="edit the unit sources (default: only list)")
+    one.add_argument("--only", help="comma list of unit source paths")
     verb("status", "sessions, leases and counts")
     verb("tui", "curses views over the verbs")
     return parser

@@ -189,6 +189,41 @@ def data_symbol(snapshot: Snapshot, entry: Member, version: str, vram: int) -> s
     return own if own in named else named[0] if named else f"D_{vram:08X}"
 
 
+def text_like(raw: bytes) -> bool:
+    """Whether the bytes are text in the game's charset (ASCII): printable bytes, tab, newline, return and NUL only;
+    NULs only end a string or pad it, so every printable run between them has two or more characters; at least one
+    four-letter word; letters and spaces make up 80 % of the printable bytes. A word array of small integers or
+    pointers has one-character runs (00 00 00 41) and fails."""
+    runs = [r for r in raw.split(b"\0") if r]
+    printable = [b for r in runs for b in r]
+    if len(raw) < 6 or any((b < 32 and b not in (9, 10, 13)) or b >= 127 for b in printable):
+        return False
+    if any(len(r) < 2 for r in runs) or re.search(rb"[A-Za-z]{4}", raw) is None:
+        return False
+    return sum(chr(b).isalpha() or b == 32 for b in printable) >= 0.8 * len(printable)
+
+
+def text_literal(raw: bytes) -> str:
+    """The C string literal of the bytes without their trailing NULs (the array size keeps them as zero fill)."""
+    out, octal = [], False
+    for b in raw.rstrip(b"\0"):
+        c = chr(b)
+        if c in '"\\':
+            out.append("\\" + c)
+        elif c in "\n\t\r":
+            out.append({"\n": "\\n", "\t": "\\t", "\r": "\\r"}[c])
+        elif 32 <= b < 127 and not (octal and c.isdigit()):
+            out.append(c)
+        elif 32 <= b < 127:
+            out.append('" "' + c)
+        else:
+            out.append(f"\\{b:03o}")
+            octal = True
+            continue
+        octal = False
+    return '"' + "".join(out) + '"'
+
+
 def data_code(snapshot: Snapshot, symbol: str, raw: bytes) -> str:
     """The struct code of the one element type every reference to the item agrees on, else ""."""
     codes = {_ACCESS.get(m, m) for _, m, _ in index.get(snapshot).uses.get(symbol, ()) if m not in ("addiu", "ori")}
@@ -270,7 +305,36 @@ def _vram(p: Placement) -> int:
     return p.vram
 
 
+def _byte_uses(snapshot: Snapshot, version: str, vram: int, size: int) -> bool:
+    """Whether no reference to any symbol inside [vram, vram + size) reads it as words or halfwords: only address
+    loads and byte accesses (a source array can span several symbols)."""
+    inside = [n for n, v in snapshot.versions[version].symbols.items() if vram <= v < vram + max(size, 1)]
+    return all(
+        m in ("addiu", "ori", "lb", "lbu", "sb") for n in inside for _, m, _ in index.get(snapshot).uses.get(n, ())
+    )
+
+
+def text_array(snapshot: Snapshot, version: str, symbol: str, vram: int, raw: bytes, const: bool) -> str | None:
+    """The char-array definition of bytes that are text no reference reads as words, else None."""
+    if text_like(raw) and _byte_uses(snapshot, version, vram, len(raw)):
+        return f"{'const ' * const}char {symbol}[{len(raw)}] = {text_literal(raw)};\n"
+    return None
+
+
+def text_data(snapshot: Snapshot, member: str) -> str | None:
+    """The char-array definition of a member whose ROM bytes are text, else None."""
+    entry, version, placements, raw = data_image(snapshot, member)
+    symbol = data_symbol(snapshot, entry, version, placements[0].vram)
+    if data_code(snapshot, symbol, raw) not in ("", "B", "b"):
+        return None
+    return text_array(
+        snapshot, version, symbol, placements[0].vram, raw, all(p.section == ".rodata" for p in placements)
+    )
+
+
 def data_text(snapshot: Snapshot, member: str) -> str:
+    if (text := text_data(snapshot, member)) is not None:  # strings are char arrays, bytes unchanged
+        return text
     entry, version, placements, raw = data_image(snapshot, member)
     symbol = data_symbol(snapshot, entry, version, placements[0].vram)
     code = data_code(snapshot, symbol, raw)

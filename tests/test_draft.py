@@ -679,3 +679,30 @@ def test_a_draft_that_fails_on_a_dereferenced_scalar_is_retyped_until_it_builds(
     assert got["reason"] == "" and "s32 *var;" in got["text"] and len(seen) == 1
     other = [{"text": "void f(void) {}\n", "reason": "compile.error: other"}]
     assert draft._dereferenced(snapshot, "func_80000400", "a", other) is other[0] and len(seen) == 1
+
+
+def test_text_like_takes_strings_not_integer_words_or_pointers() -> None:
+    assert draft.text_like(b"EXPANSION PAK FOUND\0")
+    assert draft.text_like(b"anim object index\0")
+    assert draft.text_like(b"one line\0\0\0\0second line\0")
+    assert not draft.text_like(_words(0x41, 0x42, 0x4E45494C))  # small integers read 00 00 00 41
+    assert not draft.text_like(b"O\0\0\0N\0\0\0NEIL")  # one-character runs between NULs
+    assert not draft.text_like(_words(0x80000400, 0x80000600))
+    assert not draft.text_like(b"ab\0")  # too short
+
+
+def test_text_literal_keeps_bytes_with_escapes() -> None:
+    assert draft.text_literal(b'say "hi"\\\n\0\0') == '"say \\"hi\\"\\\\\\n"'
+    assert draft.text_literal(b"a\x012b\0") == '"a\\001" "2b"'  # a digit after an octal escape starts a new literal
+
+
+def test_data_draft_types_text_as_char_array(tmp_path: Path, toolchains: Any) -> None:
+    blob = b"controller pak\0\0"
+    snapshot = _data_snapshot(tmp_path, blob, {"d": "rodata"})
+    out = tmp_path / "d.c"
+    USES["d"] = (("f", "addiu", 0),)
+    _create(snapshot, "d", out)
+    assert out.read_text() == 'const char d[16] = "controller pak";\n'
+    USES["d"] = (("f", "lw", 0),)  # read as words: stays a word array
+    _create(snapshot, "d", out)
+    assert "unsigned int d[]" in out.read_text()
