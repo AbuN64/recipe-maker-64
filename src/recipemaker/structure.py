@@ -591,6 +591,7 @@ def build(
     path = {n: m["source"] for n, m in modules.items()}
     header = {n: m["header"] for n, m in modules.items()}
     final = {m["subject"]: m["target"] for m in moves if m["op"] == "source"}
+    born: dict[str, str] = {}  # a source file a member move creates -> the file its first member came from
 
     def at(name: str) -> str | None:
         if name not in where and (found := owner(name)):
@@ -644,6 +645,8 @@ def build(
                 continue
             files.put(src, taken[0])
             have = files.get(dest)
+            if have is None and files.orig.get(dest) is None:  # a new piece: it is compiled as the file it leaves
+                born.setdefault(dest, files.origin.get(src, src))
             files.put(dest, (_preamble(text or "") + "\n" if have is None else have + "\n") + taken[1])
             path[target], where[subject] = dest, dest
             applied += 1
@@ -667,6 +670,7 @@ def build(
             if files.get(subject) is not None and files.get(target) is None:
                 files.rename(subject, target)
     _rekey(files)
+    _inherit(files, born)
     if note:
         note(f"structure > build diff of {len(files.changed())} files")
     return {"patch": files.diff(), "files": files.changed(), "moves": applied}
@@ -725,6 +729,28 @@ def _rekey(files: Files) -> None:
     moved = {was: now for now, was in files.origin.items() if files.text.get(now) is not None and was != now}
     if moved:
         files.replace(_FILE_ROW, lambda m: f"{m[1]}{m[2]}{moved.get(m[3], m[3])}{m[2]}{m[4]}", ["config.toml"])
+
+
+def _inherit(files: Files, born: Mapping[str, str]) -> None:
+    """A file a split creates is compiled as the file its members come from: that file's `[file."..."]` rule of
+    config.toml (toolchain, flags) is copied to it, else the piece silently builds with the project's defaults
+    (RW src/IO/802013D8_2.CPP took the default compiler while 802013D8.CPP is KMC)."""
+    text = files.get("config.toml")
+    if not text or not born:
+        return
+    blocks = {m[3]: m for m in _FILE_ROW.finditer(text)}
+    added = []
+    for new, was in sorted(born.items()):
+        if new in blocks or was not in blocks or files.get(new) is None:
+            continue
+        start = blocks[was].start()
+        later = [m.start() for m in _FILE_ROW.finditer(text) if m.start() > start] + [len(text)]
+        rule = text[start : later[0]].rstrip("\n")
+        added.append(
+            rule.replace(blocks[was][0], f"{blocks[was][1]}{blocks[was][2]}{new}{blocks[was][2]}{blocks[was][4]}", 1)
+        )
+    if added:
+        files.put("config.toml", text.rstrip("\n") + "\n\n" + "\n\n".join(added) + "\n")
 
 
 def ops(proposal: Json) -> list[Json]:

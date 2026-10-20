@@ -652,3 +652,19 @@ def test_a_symbol_rename_moves_the_literals_name_in_symbol_addrs_and_sources_too
     )
     assert "data/literals_Game_Start]" in (root / "versions/us/splat.yaml").read_text()
     assert (root / "src/a.c").read_text() == "extern int literals_Game_Start[];\nINCLUDE_ASM(main, Game_Start);\n"
+
+
+def test_a_split_piece_is_compiled_as_the_file_its_members_leave(tmp_path):
+    # SPEED-1d: src/IO/802013D8_2.CPP had no row while 802013D8.CPP is KMC, so the split built with the default
+    config = '[project]\nname = "x"\n\n[file."src/a.c"]\ntoolchain = "gcc-2.7.2-kmc"\ncflags = []\n'
+    root = _repo(tmp_path, {"src/a.c": C_FILE, "include/a.h": "", "config.toml": config})
+    moves = [
+        {"op": "member", "subject": "func_8000", "target": "new"},
+        {"op": "source", "subject": "new", "target": "src/a_2.c"},
+    ]
+    got = structure.build(root, moves, {"func_8000": "src/a.c"}.get, MODULES)
+    assert _check(root, got["patch"], "--check").returncode == 0
+    _check(root, got["patch"])
+    text = (root / "config.toml").read_text()
+    assert '[file."src/a.c"]\ntoolchain = "gcc-2.7.2-kmc"' in text
+    assert '[file."src/a_2.c"]\ntoolchain = "gcc-2.7.2-kmc"\ncflags = []' in text
