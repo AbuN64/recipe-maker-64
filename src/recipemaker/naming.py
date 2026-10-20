@@ -21,7 +21,8 @@ from unbake.contracts import Config, Json, Refusal
 from recipemaker import state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
-_EVIDENCE = re.compile(r"^(callee|caller|reads|tag) (\S+)$")  # style.toml evidence_forms
+# style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
+_EVIDENCE = re.compile(r"^(callee|caller|reads|tag) (\S+)(?:\s+\([^()]*\))?$")
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
@@ -112,8 +113,25 @@ class Map:
         return self.folder(self.members[member]["module"]) if member in self.members else ""
 
     def word(self, folder: str) -> str:
-        """The subsystem word of a folder, or an empty string when it is neutral or no subsystem folder."""
-        return style.subsystem_word(folder)
+        """The prefix word of a folder (a placeholder's is the word before its counter), or an empty string when it
+        is neutral or takes no prefix."""
+        return style.prefix_word(folder)
+
+    def carried(self, folder: str, name: str) -> dict[str, str]:
+        """The members and modules of `folder` that already hold its prefix word, each with the name a subsystem row
+        naming the folder `name` gives it (Render_Draw -> Ribbon_Draw, render_ribbon -> ribbon_ribbon)."""
+        old = self.word(folder)
+        if not old or name == old:
+            return {}
+        out = {
+            n: style.pascal(name) + n[len(old) :]
+            for n in self.functions(folder)
+            if n.startswith(style.pascal(old) + "_")
+        }
+        for mod in self.modules:
+            if self.folder(mod) == folder and mod.startswith(old + "_"):
+                out[mod] = name + mod[len(old) :]
+        return out
 
     def functions(self, folder: str) -> list[str]:
         return [
@@ -184,7 +202,7 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     if kind in ("function", "module"):
         folder = ctx.folder_of(target) if kind == "function" else ctx.folder(target)
         word = ctx.word(folder)
-        if not word:
+        if not word and not style.free_folder(folder):
             return "prefix", (
                 f"the subsystem folder {folder} has no name yet: name it first, with a subsystem row for {folder} in "
                 f"this same file (subsystem rows are judged first) or from `recipe name next --step N2`, which offers "
@@ -213,12 +231,17 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return rule, reason
     if name in ctx.taken or (kind == "subsystem" and ctx.folder_taken(name)):
         return "duplicate", f"{name} is already a symbol, folder or file name"
+    if kind == "subsystem" and (
+        clash := [f"{a} -> {b}" for a, b in ctx.carried(target, name).items() if b in ctx.taken]
+    ):
+        return "duplicate", f"carrying the prefix to {name} gives a name already taken: {clash[0]}"
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
         return "evidence", "a name needs at least one evidence item"
     if unknown := [e for e in evidence if not _EVIDENCE.match(e)]:
         forms = ", ".join(table("knowledge/style.toml")["evidence_forms"])
-        return "evidence", f"evidence item {unknown[0]!r} has no form a reader can check; the forms are {forms}"
+        note = table("knowledge/style.toml")["evidence_note"]
+        return "evidence", f"evidence item {unknown[0]!r} has no form a reader can check; the forms are {forms}; {note}"
     users = ctx.users(target, kind)
     if missing := [e for e in evidence if not ctx.verifies(e, users)]:
         return "unverifiable", f"the assembly does not show: {missing[0]}"
@@ -245,13 +268,20 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
         return out
     folder = ctx.spell(name)  # the folder as the project spells its folders; the row's name stays the word
     ctx.taken.add(folder)
-    for module in ctx.modules.values():
-        if ctx.folder(module["name"]) != target:
-            continue
+    carried = ctx.carried(target, name)  # a placeholder's prefixed names follow the folder's new word
+    ctx.taken |= set(carried.values())
+    out += [{"op": "symbol", "subject": old, "target": new} for old, new in carried.items() if old in ctx.members]
+    for module in [m for m in ctx.modules.values() if ctx.folder(m["name"]) == target]:
+        if renamed := carried.get(module["name"], ""):
+            ctx.modules[renamed], ctx.alias[module["name"]] = ctx.modules.pop(module["name"]), renamed
+            out.append({"op": "module", "subject": module["name"], "target": renamed})
+            module["name"] = renamed
         for op in ("source", "header"):
-            parts = [folder if p == target else p for p in PurePosixPath(module[op]).parts]
-            if parts != list(PurePosixPath(module[op]).parts):
-                module[op] = str(PurePosixPath(*parts))
+            path = PurePosixPath(module[op])
+            moved = PurePosixPath(*[folder if p == target else p for p in path.parts])
+            moved = moved.with_name(renamed + path.suffix) if renamed else moved
+            if moved != path:
+                module[op] = str(moved)
                 out.append({"op": op, "subject": module["name"], "target": module[op]})
     return out
 
@@ -365,7 +395,7 @@ def next_(config: Config, params: Json) -> Json:
         path, answer = _root(config) / f"pack-{k}.json", f".unbake/recipe/name/names-{k}.jsonl"
         cards = [_card(ctx, kind, t, doc["names_from"]) for kind, t in pick]
         pack = {"step": step, "k": k, "targets": cards, "answer": answer}
-        pack |= {x: rules[x] for x in ("names", "banned", "evidence_forms")}
+        pack |= {x: rules[x] for x in ("names", "banned", "evidence_forms", "evidence_note")}
         structure.write(path, json.dumps(pack))
     built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
     return {

@@ -56,14 +56,35 @@ def subsystem_word(folder: str) -> str:
     return word if ok and not folder_unnamed(folder) and not neutral(word) else ""
 
 
+def prefix_word(folder: str) -> str:
+    """The word a folder's functions and modules take their prefix from: its subsystem word, and for a placeholder
+    (RENDER_3) the word before its collision counter. Structure gave the placeholder that word from the same evidence
+    as RENDER, so Render_ is true of its code; naming the folder later carries the prefix to the new word."""
+    if word := subsystem_word(folder):
+        return word
+    if neutral(folder) or not re.fullmatch(_rules()["names"]["placeholder_folder"], folder):
+        return ""
+    return subsystem_word(re.sub(r"_\d+$", "", folder))
+
+
+def free_folder(folder: str) -> bool:
+    """Whether a folder's functions and modules take no prefix: a folder that is no subsystem word (GAME), or a
+    placeholder of one (GAME_2). The audit reads no prefix there either (`_words`)."""
+    placeholder = not neutral(folder) and re.fullmatch(_rules()["names"]["placeholder_folder"], folder)
+    base = re.sub(r"_\d+$", "", folder) if placeholder else folder
+    return base.lower() in _rules()["paths"]["no_prefix"]
+
+
 def pascal(word: str) -> str:
     return word[:1].upper() + word[1:]
 
 
 def pattern(kind: str, word: str = "") -> str:
-    """The regex of a name kind, for a subsystem word (`{dir}` and `{Prefix}`)."""
+    """The regex of a name kind, for a subsystem word (`{dir}` and `{Prefix}`); a function or module of no word (a
+    folder that takes no prefix) has the unprefixed form."""
     names = _rules()["names"]
-    key = "unprefixed_function" if kind == "function" and word in _rules()["unprefixed"] else kind
+    bare = kind in ("function", "module") and not word
+    key = f"unprefixed_{kind}" if bare or (kind == "function" and word in _rules()["unprefixed"]) else kind
     return str(names[key]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
 
 

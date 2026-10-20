@@ -386,17 +386,73 @@ def test_n2_offers_every_unnamed_subsystem_folder_a_placeholder_too_but_no_libra
     assert [t["target"] for t in pack["targets"]] == ["SYSTEM_2", "sys_80003000"]  # lib_80900000 is no subsystem
 
 
-def test_a_function_in_an_unnamed_folder_is_refused_with_the_way_to_name_the_folder(project, monkeypatch):
-    _placeholder(monkeypatch)
-    got = submit(project, [row("func_80006010", "System_ApplyAreaDamage", ["callee func_80700000"])])
+def test_a_function_in_a_neutral_folder_is_refused_with_the_way_to_name_the_folder(project):
+    got = submit(project, [row("func_80003010", "Input_ReadPad", ["callee func_80001020"])])
     assert got["by_rule"] == {"prefix": 1}
     refused = json.loads((project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()[-1])
-    assert "subsystem row for SYSTEM_2" in refused["reason"] and "--step N2" in refused["reason"]
+    assert "subsystem row for sys_80003000" in refused["reason"] and "--step N2" in refused["reason"]
+
+
+def test_a_function_in_a_placeholder_folder_takes_the_word_before_its_counter(project, monkeypatch):
+    _placeholder(monkeypatch)  # SYSTEM_2: structure gave it the word system, so System_ is true of its code
+    rows = [
+        row("func_80006010", "Combat_ApplyAreaDamage", ["callee func_80700000"]),
+        row("func_80006010", "System_ApplyAreaDamage", ["callee func_80700000"]),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
+    assert {"op": "symbol", "subject": "func_80006010", "target": "System_ApplyAreaDamage"} in moves(project)
     rows = [
         row("func_80006010", "Combat_ApplyAreaDamage", ["callee func_80700000"]),
         row("SYSTEM_2", "combat", ["callee func_80700000"], kind="subsystem"),
     ]
     assert submit(project, rows)["accepted"] == 2  # named together in one file, the folder first
+
+
+def test_naming_a_placeholder_folder_carries_its_prefixed_names_to_the_new_word(project, monkeypatch):
+    doc = document()
+    doc["members"] += [
+        member("System_ApplyAreaDamage", "system_damage", unit="src/d.c"),
+        member("func_80006020", "system_damage"),
+    ]
+    doc["modules"].append(module("system_damage", "SYSTEM_2", ["System_ApplyAreaDamage", "func_80006020"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "System_ApplyAreaDamage", (["func_80700000"], []))
+    got = submit(project, [row("SYSTEM_2", "combat", ["callee func_80700000"], kind="subsystem")])
+    assert got["accepted"] == 1
+    assert moves(project) == [
+        {"op": "symbol", "subject": "System_ApplyAreaDamage", "target": "Combat_ApplyAreaDamage"},
+        {"op": "module", "subject": "system_damage", "target": "combat_damage"},
+        {"op": "source", "subject": "combat_damage", "target": "src/game/main/combat/combat_damage.c"},
+        {"op": "header", "subject": "combat_damage", "target": "include/game/main/combat/combat_damage.h"},
+    ]
+
+
+def test_a_carried_name_that_is_taken_refuses_the_folder_name(project, monkeypatch):
+    doc = document()
+    doc["members"] += [member("System_Spawn", "code_80006000", unit="src/d.c"), member("Actor_Spawn", "code_80004000")]
+    doc["modules"].append(module("code_80006000", "SYSTEM_2", ["System_Spawn"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "System_Spawn", (["func_80700000"], []))
+    got = submit(project, [row("SYSTEM_2", "actor", ["callee func_80700000"], kind="subsystem")])
+    assert got["by_rule"] == {"duplicate": 1}  # the folder word actor is taken first
+    got = submit(project, [row("SYSTEM_2", "spawner", ["callee func_80700000"], kind="subsystem")])
+    assert got["accepted"] == 1
+
+
+def test_a_function_in_a_folder_that_takes_no_prefix_has_the_unprefixed_form(project, monkeypatch):
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "GAME", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80006010", (["func_80700000"], []))
+    rows = [
+        row("func_80006010", "Game_StartRound", ["callee func_80700000"]),
+        row("func_80006010", "StartRound", ["callee func_80700000"]),
+        row("code_80006000", "round_start", ["callee func_80700000"], kind="module"),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 2 and got["by_rule"] == {"regex": 1}
 
 
 def test_a_named_subsystem_folder_is_spelled_as_the_projects_folders_are(project, monkeypatch):
@@ -439,3 +495,14 @@ def test_submit_checks_reads_evidence_against_the_loads_and_names_an_item_of_no_
     reasons = {r["rule"]: r["reason"] for r in refused}
     assert reasons["unverifiable"] == "the assembly does not show: reads D_80005000"
     assert "'uses D_80005000'" in reasons["evidence"] and "reads NAME" in reasons["evidence"]
+
+
+def test_an_evidence_item_may_end_in_a_note_that_is_not_checked(project):
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee func_80004020 (frees the slot)"]),
+        row("func_80004030", "Actor_Despawn", ["callee func_80004020 (frees (twice))"]),  # a note holds no parentheses
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"evidence": 1}
+    refused = json.loads((project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()[-1])
+    assert "a note in parentheses" in refused["reason"]
