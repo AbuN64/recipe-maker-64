@@ -69,7 +69,7 @@ def catalog_document():
         {"dialect": "obj", "functions": [{"name": "Pak_Open", "address": 0, "file": "", "frame": 8, "params": []}],
          "globals": []},
     ]  # fmt: skip
-    return {"schema": 1, "types": types, "versions": {"us": {"streams": streams}}}
+    return {"schema": 1, "types": types, "versions": {"us": {"rom_sha256": "aa" * 32, "streams": streams}}}
 
 
 @pytest.fixture
@@ -253,7 +253,22 @@ def test_the_catalog_path_comes_from_the_inputs_table_relative_to_the_project(tm
         debug.load(config, conf)
     (tmp_path / "game/ev").mkdir(parents=True)
     (tmp_path / "game/ev/debug-types.json").write_text(json.dumps(catalog_document()))
-    assert {r.name for r in debug.load(config, conf).records} >= {"CWarp"}
+    assert {r.name for r in debug.load(config, conf, {"us": "aa" * 32}).records} >= {"CWarp"}
+
+
+def test_a_catalog_of_another_rom_is_ignored_and_only_the_projects_versions_name_by_address(tmp_path, capsys):
+    # BT has a `us` too: RW's catalog from the rig-global recipe.toml must never name BT functions by address
+    conf = tmp_path / "recipe.toml"
+    conf.write_text('[inputs]\ndebug_types = "debug-types.json"\n')
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+    document = catalog_document()
+    document["versions"]["de"] = {"rom_sha256": "dd" * 32, "streams": document["versions"]["us"]["streams"]}
+    (tmp_path / "debug-types.json").write_text(json.dumps(document))
+    assert debug.load(config, conf, {"us": "bb" * 32}) is None
+    assert "is ignored: no version's ROM matches" in capsys.readouterr().err
+    both = debug.load(config, conf, {"us": "aa" * 32, "de": "ee" * 32})
+    assert both is not None and {f.version for f in both.functions} == {"us"}  # de's ROM is another: its rows go
+    assert debug.own({"versions": {"us": {"streams": []}}}, {"us": "aa" * 32}) is None  # no sha recorded: untrusted
 
 
 def doc_with(name, vram, kind="function", folder="world"):

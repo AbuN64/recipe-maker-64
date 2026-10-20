@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -91,16 +92,40 @@ def path(config: Config, source: Path | None = None) -> Path | None:
     return given if given.is_absolute() else config.project.root / given
 
 
-def load(config: Config, source: Path | None = None) -> Catalog | None:
-    """The configured catalog, read once per command; None when none is configured. A configured path that is not
-    a schema-1 catalog is refused by name."""
+def load(config: Config, source: Path | None = None, roms: Mapping[str, str] | None = None) -> Catalog | None:
+    """The configured catalog, read once per command; None when none is configured or when it is another game's.
+    A configured path that is not a schema-1 catalog is refused by name. `roms` is the project's ROM sha256 per
+    version (default: the snapshot's)."""
     where = path(config, source)
     if where is None:
         return None
     if not where.is_file():
         raise state.stop("recipe.debug", f"the debug catalog {where} does not exist", path=str(where))
     key = ("recipe.debug", str(where), where.stat().st_mtime_ns)
-    return api.memo(key, lambda: read(json.loads(where.read_text(encoding="utf-8")), str(where)))
+    document = api.memo(key, lambda: json.loads(where.read_text(encoding="utf-8")))
+    shas = roms if roms is not None else api.memo(("recipe.roms", str(config.project.root)), lambda: _roms(config))
+    kept = own(document, shas)
+    if kept is None:
+        sys.stderr.write(f"recipe: the debug catalog {where} is ignored: no version's ROM matches its rom_sha256\n")
+        return None
+    catalog: Catalog = api.memo((*key, tuple(sorted(shas.items()))), lambda: read(kept, str(where)))
+    return catalog
+
+
+def _roms(config: Config) -> dict[str, str]:
+    return {v: r.rom_sha256 for v, r in api.snapshot(config).versions.items()}
+
+
+def own(document: Json, roms: Mapping[str, str]) -> Json | None:
+    """The catalog limited to the versions whose ROM is the project's (the catalog's per-version rom_sha256 equals the
+    project ROM's): a catalog read from another game's ROM (BattleTanx has a `us` too) must never name this one by
+    address. None when no version matches; the record definitions stay with any matching version."""
+    versions = {
+        v: facts
+        for v, facts in (document.get("versions") or {}).items()
+        if facts.get("rom_sha256") and facts.get("rom_sha256") == roms.get(v)
+    }
+    return {**document, "versions": versions} if versions else None
 
 
 def _kind(spelled: str) -> str:
