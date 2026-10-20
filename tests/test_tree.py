@@ -101,3 +101,14 @@ def test_mixed_case_stems_keep_the_spelling_and_a_project_with_no_sources_gets_t
 def test_config_toml_is_not_read_for_the_style(tmp_path):
     (tmp_path / "config.toml").write_text('[naming]\ncase = "upper"\nstem_max = 3\n')
     assert _tree(tmp_path, ["a/player_update.c"]).case == "lower"
+
+
+def test_evidence_paths_follow_the_projects_own_source_root(tmp_path):
+    # RECIPE-TYPES-1: RW keeps src/AI/..., so src/game/AI/ENEMIES/TURRETAI.CPP was a path no merge could reach
+    (tmp_path / "include" / "AI").mkdir(parents=True)
+    (tmp_path / "include" / "AI" / "TURRET.H").write_text("")
+    flat = _tree(tmp_path, ["AI/ENEMIES/TURRETAI_2.CPP", "IO/80200500.CPP"])
+    assert flat.evidenced("AI/ENEMIES/TURRETAI.CPP") == ("AI/ENEMIES", "src/AI/ENEMIES/TURRETAI.CPP")
+    assert flat.header("AI/ENEMIES") == "include/AI/ENEMIES.H"
+    nested = _tree(tmp_path / "bt", ["game/sys_80076000/code_80079A5C.c"])
+    assert nested.evidenced("GAME/ACTORS/PLAYER.CPP")[1].startswith("src/game/GAME/ACTORS/")  # BT: under src/game

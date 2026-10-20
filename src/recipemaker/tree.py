@@ -76,11 +76,19 @@ def style(root: Path | None) -> Naming:
     stems = [p.stem for p in found if p.suffix == ext]
     kinds = Counter("upper" if s.isupper() else "lower" if s.islower() else "as-is" for s in stems if s != s.swapcase())
     case = kinds.most_common(1)[0][0] if kinds else "as-is"
+    # subsystems sit where the project keeps them: under src/game/ when it has one, else right under src/ (RW: src/AI)
+    nested = root is not None and (root / "src" / "game").is_dir()
+    headers = (
+        [p.suffix for p in (root / "include").rglob("*") if p.is_file() and p.suffix.lower() == ".h"] if root else []
+    )
+    hext = Counter(headers).most_common(1)[0][0] if headers else ".h"
     return Naming(
         case=case,
         stem_max=8 if max(map(len, stems)) <= 8 else 0,
         source_ext=ext,
         evidence="keep" if case == "as-is" else case,
+        subsystem_source="src/game/{subsystem}" if nested else "src/{subsystem}",
+        subsystem_header=f"include/{'game/' * nested}{{subsystem}}{hext}",
     )
 
 
