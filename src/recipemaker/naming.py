@@ -306,7 +306,10 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
                 "every unnamed folder"
             )
     if not style.legal(kind, name, word) or style.neutral(name):
-        return "regex", f"{name} does not match {style.pattern(kind, word)}"
+        free = kind in ("function", "module") and not word  # a folder that takes no prefix (GAME): say the form
+        bare = re.sub(r"^[A-Za-z0-9]+_", "", name) if free and "_" in name else ""
+        hint = f"; {folder} takes no prefix: the unprefixed form, such as {bare}" if bare else ""
+        return "regex", f"{name} does not match {style.pattern(kind, word)}{hint}"
     if kind == "module" and style.collision(name):
         return "regex", f"{name} ends in a collision counter"
     if found := style.banned(name, kind):

@@ -470,6 +470,8 @@ def test_a_function_in_a_folder_that_takes_no_prefix_has_the_unprefixed_form(pro
     ]
     got = submit(project, rows)
     assert got["accepted"] == 2 and got["by_rule"] == {"regex": 1}
+    refused = (naming._root(project) / "refused.jsonl").read_text()
+    assert "GAME takes no prefix: the unprefixed form, such as StartRound" in refused  # THINK-802946A4
 
 
 def test_a_named_subsystem_folder_is_spelled_as_the_projects_folders_are(project, monkeypatch):
