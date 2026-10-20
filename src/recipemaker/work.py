@@ -491,11 +491,13 @@ def try_(config: Config, params: Json) -> Json:
             _landed(config, snapshot, item)
     if lease is None or lease.session != state.session():
         raise state.lost(item, lease, now)
-    if lease.tries >= rules.stall_tries or lease.expires <= now:
+    if lease.expires <= now:  # idle time alone never ends a lease this session holds: the verb renews it
+        lease = state.take(config, item, now)
+    if lease.tries >= rules.stall_tries:
         best = _best(config, item)
         state.skip(config, item, "budget", "budget spent", best, now)
-        used = f"{lease.tries} tries without progress" if lease.tries >= rules.stall_tries else "idle time"
-        reason = f"budget spent ({used}), skipped as budget. Best kept: {state.percent(best)}."
+        spent = f"budget spent ({lease.tries} tries without progress), skipped as budget"
+        reason = f"{spent}. Best kept: {state.percent(best)}."
         raise Refusal(Finding("recipe.budget", reason, unit=item, action="recipe next"))
     baseline = _tracked(config)
     if declare.is_item(config, item):

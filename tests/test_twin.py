@@ -77,3 +77,13 @@ def test_a_function_is_never_its_own_twin(fakes):
 def test_swap_replaces_whole_words_only_and_all_at_once():
     assert twin.swap("a ab b", {"a": "b", "b": "a"}) == "b ab a"
     assert twin.swap("x", {}) == "x"
+
+
+def test_block_is_the_whole_non_matching_branch_with_its_types_externs_and_helpers():
+    source = (
+        '#include "a.h"\nint other(void) { return 1; }\n#ifdef NON_MATCHING\ntypedef struct { int a; } Q;\n'
+        "extern int g;\nstatic inline int help(void) { return g; }\nint f(Q *q) { return help(); }\n"
+        "#else\nINCLUDE_ASM(main, f);\n#endif\n"
+    )
+    assert twin.block(source, "f") == source.split("#ifdef NON_MATCHING\n")[1].split("#else")[0]
+    assert twin.block(source, "other") == "int other(void) { return 1; }\n"

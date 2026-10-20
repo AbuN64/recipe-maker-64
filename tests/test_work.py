@@ -209,10 +209,20 @@ def test_try_refuses_when_the_budget_is_spent_skips_with_reason_budget_and_costs
     assert fakes.calls["judge.compare"] == 0 and state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1}
 
 
-def test_try_refuses_when_the_time_is_spent(fakes, monkeypatch):
+def test_try_renews_this_sessions_lease_after_idle_time_instead_of_spending_the_budget(fakes, monkeypatch):
     lease(fakes)
     candidate(fakes)
+    fakes.run_result = failing_result("bytes")
     monkeypatch.setattr(work, "_now", lambda: NOW + 901)
+    assert work.try_(fakes.config, {"item": "func_a"})["brief"]
+    assert state.lease(fakes.config, "func_a").expires > NOW + 901
+
+
+def test_try_refuses_when_the_tries_without_progress_are_spent(fakes):
+    lease(fakes)
+    candidate(fakes)
+    for _ in range(4):
+        state.count_try(fakes.config, "func_a", NOW, False)
     with pytest.raises(Refusal) as caught:
         work.try_(fakes.config, {"item": "func_a"})
     assert caught.value.findings[0].key == "recipe.budget" and fakes.calls["judge.compare"] == 0

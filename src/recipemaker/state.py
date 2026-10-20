@@ -182,7 +182,8 @@ def worst(score: Json) -> float:
 
 
 def take(config: Config, item: str, now: float) -> Lease:
-    """Lease `item` to this session; a lease another session holds live is never granted."""
+    """Lease `item` to this session; a lease another session holds live is never granted, and this session's own
+    expired lease is taken again with its stall count."""
     with host.exclusive(config, "recipe", wait=True):
         current = lease(config, item)
         live = current is not None and current.expires > now
@@ -196,7 +197,11 @@ def take(config: Config, item: str, now: float) -> Lease:
                 )
             )
         expires = _expiry(now)
-        granted = replace(current, expires=expires) if current and live else Lease(item, session(), now, expires, 0)
+        granted = (
+            replace(current, expires=expires)
+            if current and (live or current.session == session())
+            else Lease(item, session(), now, expires, 0)
+        )
         _write(config, granted)
         return granted
 

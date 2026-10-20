@@ -234,3 +234,10 @@ def test_a_skip_row_from_before_blockers_existed_has_none(fakes):
 def test_worst_is_the_lowest_score_and_zero_without_one_and_minutes_left_rounds_to_a_tenth(fakes):
     assert (state.worst({"a": 0.9, "b": 0.4}), state.worst({})) == (0.4, 0.0)
     assert state.minutes_left(state.take(fakes.config, "func_a", NOW), NOW + 60) == 14.0
+
+
+def test_take_gives_the_same_session_its_expired_lease_back_with_its_tries_and_not_another_session(fakes, monkeypatch):
+    state.take(fakes.config, "func_a", NOW)
+    state.count_try(fakes.config, "func_a", NOW + 1, False)
+    again = state.take(fakes.config, "func_a", NOW + 5000)
+    assert (again.session, again.tries, again.expires) == ("s1", 1, NOW + 5000 + 900)

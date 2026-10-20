@@ -132,9 +132,9 @@ def _known(snapshot: Snapshot, item: _Item) -> tuple[str, float, str] | None:
 
 
 def _fuzzy_body(snapshot: Snapshot, path: str, member: str) -> str:
-    """The module's NON_MATCHING body of `member` with the module's includes: the seed a resume starts from."""
+    """The module's NON_MATCHING block of `member` (types, helpers, body) and its includes: a resume's seed."""
     source = index.source(snapshot, path)
-    body = twin.function(source, member) or ""
+    body = twin.block(source, member) or ""
     includes = "".join(line + "\n" for line in source.splitlines() if line.startswith("#include"))
     return includes + "\n" * bool(includes) + body
 

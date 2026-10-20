@@ -85,6 +85,34 @@ def function(source: str, name: str) -> str | None:
     return source[head.start() : cparse.close(source, head.end() - 1) + 1] + "\n"
 
 
+def block(source: str, name: str) -> str | None:
+    """The `#ifdef NON_MATCHING` branch that holds `name`: its types, externs, helpers and body, whole."""
+    body = function(source, name)
+    if body is None:
+        return None
+    at = source.index(body)
+    lines = source[:at].splitlines(keepends=True)
+    depth = 0
+    for i in range(len(lines) - 1, -1, -1):  # the open `#if` before the body that names NON_MATCHING
+        word = lines[i].lstrip().removeprefix("#").lstrip() if lines[i].lstrip().startswith("#") else ""
+        depth += word.startswith("endif") - word.startswith("if")
+        if depth < 0:
+            if "NON_MATCHING" not in word or "!" in word:
+                return body
+            head, depth = "".join(lines[i + 1 :]), 0
+            break
+    else:
+        return body
+    tail = ""
+    for line in source[at + len(body) :].splitlines(keepends=True):  # up to its `#else` or `#endif`
+        word = line.lstrip().removeprefix("#").lstrip() if line.lstrip().startswith("#") else ""
+        depth += word.startswith("if") - word.startswith("endif")
+        if depth < 0 or (depth == 0 and word.startswith("else")):
+            break
+        tail += line
+    return head + body + tail
+
+
 def _local(source: str, end: int) -> str:
     """What precedes the twin function in its source: types, data and static helpers, but no other function."""
     text = source[:end]
