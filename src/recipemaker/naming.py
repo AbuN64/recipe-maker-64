@@ -550,6 +550,23 @@ def _types(config: Config, doc: Json) -> Json:
     }
 
 
+def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
+    """(kind, target) for `--target`: a folder is a subsystem, a function a function, a datum static or global as N4
+    reads it (the step's own kind when it lists the target); a name the evidence lacks is refused."""
+    found = next((t for t in _targets(ctx, step) if t[1] == target), None) if step in ("N2", "N4") else None
+    if found:
+        return found
+    member = ctx.members.get(target) or ctx.members.get(ctx.canon(target))
+    if member and member["kind"] == "function":
+        return ("function", member["name"])
+    if member:
+        readers = {ctx.module_at(c) for c in ctx.callers.get(member["name"], ())}
+        return ("global" if len(readers) >= 2 else "static", member["name"])
+    if target in {ctx.folder(m) for m in ctx.modules}:
+        return ("subsystem", target)
+    raise state.stop("recipe.name", f"no member or folder is named {target}", action="recipe name next --step N3")
+
+
 def next_(config: Config, params: Json) -> Json:
     """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack; T
     renames invented records to the debug catalog's original types."""
@@ -561,7 +578,11 @@ def next_(config: Config, params: Json) -> Json:
     for row in _auto(ctx) if step == "N2" else []:
         if not judge(ctx, row)[0]:
             moves, done = [*moves, *_moves(ctx, row)], done | {row["target"]}
-    pick = [t for t in _targets(Map(config, doc, graph), step) if t[1] not in done][: int(params["count"])]
+    wanted = params.get("target")
+    if wanted:  # the one thing the caller already chose: its card alone, never the step's best other target
+        pick = [_chosen(ctx, step, wanted)]
+    else:
+        pick = [t for t in _targets(Map(config, doc, graph), step) if t[1] not in done][: int(params["count"])]
     path = None
     answer = ""
     if pick:

@@ -279,6 +279,7 @@ def _parser() -> argparse.ArgumentParser:
         help="the naming step (default: N3); T: original types from the debug catalog",
     )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
+    one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
     one = verb("style", "style findings, or with --census the count per rule against the saved baseline")
     one.add_argument("paths", nargs="*", help="check only these paths")
     one.add_argument(

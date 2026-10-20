@@ -137,6 +137,16 @@ def test_a_pack_carries_the_evidence_of_a_public_function(project):
     assert pack["step"] == "N3" and got["next"].startswith("recipe name submit")
 
 
+def test_a_chosen_target_is_packed_alone_and_an_unknown_one_refused(project):
+    got = run(project, "next", step="N3", target="func_80004010")
+    pack = json.loads((project.project.root / got["pack"]).read_text())
+    assert [(t["target"], t["kind"]) for t in pack["targets"]] == [("func_80004010", "function")] and got[
+        "targets"
+    ] == 1
+    with pytest.raises(Exception, match="no member or folder is named nope"):
+        run(project, "next", step="N3", target="nope")
+
+
 def row(target, name, evidence, kind="function", doc="Does a thing."):
     return {"target": target, "kind": kind, "name": name, "evidence": evidence, "doc": doc}
 
