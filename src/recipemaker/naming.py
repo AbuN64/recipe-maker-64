@@ -8,6 +8,7 @@ catalog-name or header-graph facts, so there is no catalog step (N0), no string 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from collections import Counter
@@ -102,6 +103,7 @@ class Map:
         self.config = config
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
+        self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
         self.calls = {
             n: list(dict.fromkeys(x for x in map(self.canon, c) if x in self.members and x != n))
             for n, (c, _) in graph.items()
@@ -217,6 +219,25 @@ class Map:
                 return next(iter(held))
         return name
 
+    def sdk_name(self, member: str) -> str:
+        """The SDK name the project's `versions/<v>/libultra_names.tsv` (vram, name, ...) gives a member's address in
+        a version that places it, or "" when no table names it."""
+        if self._sdk is None:
+            self._sdk = {}
+            for version in self.doc["versions"]:
+                table = self.root / "versions" / version / "libultra_names.tsv"
+                for cells in (r.split("\t") for r in (table.read_text().splitlines()[1:] if table.is_file() else ())):
+                    with contextlib.suppress(ValueError, IndexError):
+                        self._sdk[(version, int(cells[0], 16))] = cells[1]
+        return next(
+            (
+                n
+                for p in self.members.get(member, {}).get("placements", ())
+                if (n := self._sdk.get((p["version"], p["vram"])))
+            ),
+            "",
+        )
+
     def module_of(self, target: str) -> str:
         """The module a module row names: its key (the source path), or the one module whose source has that stem or
         that path without `src/` and suffix (CODE_80426EC4, FRONTEND/CODE_80426EC4)."""
@@ -268,8 +289,10 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     """Whether the new name has the shape its kind and subsystem ask for, and holds no banned word."""
     kind, target, name = row["kind"], row["target"], row["name"]
     word = ""
+    if kind == "function" and ctx.sdk_name(ctx.canon(target)) == name:
+        return "", ""  # the SDK's own name for the function at this address (the project's libultra_names table)
     if kind in ("function", "module"):
-        folder = ctx.folder_of(target) if kind == "function" else ctx.folder(target)
+        folder = ctx.folder_of(ctx.canon(target)) if kind == "function" else ctx.folder(target)
         word = ctx.word(folder)
         if not word and not style.free_folder(folder):
             return "prefix", (

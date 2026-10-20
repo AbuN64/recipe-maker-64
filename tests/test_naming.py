@@ -572,3 +572,16 @@ def test_a_module_row_names_its_target_by_stem_or_path_and_a_neutral_upper_case_
     for target in ("CODE_80004000", "src/game/main/actor/CODE_80004000.CPP", "game/main/actor/CODE_80004000"):
         got = submit(project, [row(target, "actor_spawner", ["callee func_80004020"], kind="module")])
         assert got["accepted"] == 1, (target, got["by_rule"])
+
+
+def test_an_sdk_function_takes_the_name_the_projects_libultra_table_gives_its_address(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    rows = [
+        row("func_80700000", "__osDisableInt", ["caller func_80001010"]),
+        row("func_80700000", "__osRestoreInt", ["caller func_80001010"]),  # no table names it so
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
+    assert {"op": "symbol", "subject": "func_80700000", "target": "__osDisableInt"} in moves(project)
