@@ -25,7 +25,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal, file_facts
 
-from recipemaker import clash, state, tree, world
+from recipemaker import clash, debug, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
@@ -581,10 +581,12 @@ def build(
     - symbol: its `versions/*/symbol_addrs.txt` lines and, word-bounded, every identifier in src/ and include/;
     - type: the identifier only;
     - module, source, header: the file renames, with the includes that name the old header;
-    - file: the includes of a header move to the header it goes to.
+    - file: the includes of a header move to the header it goes to;
+    - field: a member of the one record body that spells it, and its `.` and `->` accesses.
 
     `note` hears a progress line at most every `BEAT` seconds."""
     files, applied, beat = Files(root), 0, time.monotonic()
+    member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move
     where: dict[str, str] = {}
     path = {n: m["source"] for n, m in modules.items()}
     header = {n: m["header"] for n, m in modules.items()}
@@ -656,6 +658,10 @@ def build(
                 else:
                     where.update({n: target for n, w in list(where.items()) if w == old})
                 applied += 1
+        elif op == "field":
+            if member_words is None:
+                member_words = _member_words(files)
+            applied += _field(files, move, member_words)
         elif op == "file":
             applied += bool(include(subject, target))
             if files.get(subject) is not None and files.get(target) is None:
@@ -664,6 +670,50 @@ def build(
     if note:
         note(f"structure > build diff of {len(files.changed())} files")
     return {"patch": files.diff(), "files": files.changed(), "moves": applied}
+
+
+_RECORD_HEAD = re.compile(r"\b(?:struct|union)\s*(\w+)?\s*\{")
+
+
+def _bodies(text: str) -> Iterator[tuple[int, int, str, str]]:
+    """(start, end, tag, typedef alias) of the inside of every record body a text defines."""
+    for head in _RECORD_HEAD.finditer(text):
+        end = _brace_end(text, head.end() - 1)  # just past the closing brace
+        alias = re.match(r"\s*(\w+)\s*;", text[end:])
+        typedef = text[: head.start()].rstrip().endswith("typedef")
+        yield head.end(), end - 1, head[1] or "", alias[1] if alias and typedef else ""
+
+
+def _field(files: Files, move: Json, members: dict[str, int]) -> int:
+    """A member rename: its declarator in the one record body of the project that has a member of that spelling
+    (the record `tag` or typedef `alias` in `path`), and every `.old` and `->old` of the project. Nothing moves when
+    another body spells the member too: an access could be that record's."""
+    old, new = move["subject"], move["target"]
+    text = files.get(move["path"])
+    wanted = [
+        (a, b)
+        for a, b, tag, alias in (_bodies(text) if text is not None else ())
+        if (move.get("tag") and tag == move["tag"]) or (move.get("alias") and alias == move["alias"])
+    ]
+    if text is None or len(wanted) != 1 or members.get(old, 0) != 1:
+        return 0
+    a, b = wanted[0]
+    files.put(move["path"], text[:a] + _word(old).sub(new, text[a:b]) + text[b:])
+    members[old], members[new] = 0, members.get(new, 0) + 1
+    access = re.compile(rf"(\.|->)(\s*){re.escape(old)}(?![\w])")
+    files.replace(access, lambda m: f"{m[1]}{m[2]}{new}", files.everything())
+    return 1
+
+
+def _member_words(files: Files) -> dict[str, int]:
+    """Per word, how many record bodies of the project spell it."""
+    out: dict[str, int] = defaultdict(int)
+    for path in files.everything():
+        text = files.get(path) or ""
+        for a, b, _, _ in _bodies(text):
+            for word in set(re.findall(r"[A-Za-z_]\w*", text[a:b])):
+                out[word] += 1
+    return out
 
 
 _FILE_ROW = re.compile(r"""(?m)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["'])([^"'\n]+)\2([ \t]*\])""")
@@ -764,8 +814,10 @@ def run(config: Config, params: Json) -> Json:
     paths = [_rel(root, p) for p in params.get("paths") or ()]
     library = getattr(config.project, "libraries", ())
     settings, types, naming = state.structure(), clash.reader(root), tree.style(root)
+    catalog = debug.load(config)  # the original source file of each function its debug record places: a boundary
+    rows = debug.boundaries(catalog, document) if catalog is not None else []
     with narrated("propose"):
-        proposal = dict(propose(document, settings, params["segment"], library, types, (), naming))
+        proposal = dict(propose(document, settings, params["segment"], library, types, rows, naming))
     found: list[str] = []
     if paths:  # a scope is a suggestion that never blocks: a refusal is a finding and the proposal is empty
         with narrated("scope"):

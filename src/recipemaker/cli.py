@@ -270,7 +270,11 @@ def _parser() -> argparse.ArgumentParser:
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
     one.add_argument("action", choices=("next", "submit", "banners"))
     one.add_argument("file", nargs="?", help="the names file for submit")
-    one.add_argument("--step", choices=("N1", "N2", "N3", "N4"), help="the naming step (default: N3)")
+    one.add_argument(
+        "--step",
+        choices=("N1", "N2", "N3", "N4", "T"),
+        help="the naming step (default: N3); T: original types from the debug catalog",
+    )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one = verb("style", "style findings, or with --census the count per rule against the saved baseline")
     one.add_argument("paths", nargs="*", help="check only these paths")

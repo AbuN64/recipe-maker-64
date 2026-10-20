@@ -74,6 +74,7 @@ _SCHEMA = _object(
     ),
     structure=_object(**{k: {"type": "number", "exclusiveMinimum": 0} for k in Structure.__dataclass_fields__}),
     tools=_object(m2c={"type": "string", "minLength": 1}, permuter={"type": "string", "minLength": 1}),
+    inputs=_object(debug_types={"type": "string", "minLength": 1}),
 )
 
 
@@ -127,6 +128,12 @@ def tool(name: str, path: Path | None = None) -> Path:
         where, action = _where(path), f'add {name} = "/path/to/{name}" under [tools]'
         raise stop("recipe.tool", f"no path for {name} in the [tools] table of {where}", path=str(where), action=action)
     return Path(found)
+
+
+def inputs(path: Path | None = None) -> dict[str, str]:
+    """The `[inputs]` table of the recipe config: project evidence files (`debug_types`), absolute or relative to the
+    project root. A missing config or table gives none."""
+    return dict(_document(path).get("inputs", {})) if _where(path).is_file() else {}
 
 
 def session() -> str:

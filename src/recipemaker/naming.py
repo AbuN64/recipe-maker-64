@@ -19,11 +19,11 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import state, structure, style, table, tree
+from recipemaker import cparse, debug, state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 # style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
-_EVIDENCE = re.compile(r"^(callee|caller|reads|tag) (\S+)(?:\s+\([^()]*\))?$")
+_EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) (\S+)(?:\s+\([^()]*\))?$")
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
@@ -101,6 +101,7 @@ class Map:
         self.members: dict[str, Json] = {m["name"]: m for m in doc["members"]}
         self.modules: dict[str, dict[str, Any]] = {m["name"]: dict(m) for m in doc["modules"]}
         self.config = config
+        self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
         self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
@@ -264,7 +265,11 @@ class Map:
         found = _EVIDENCE.match(item)
         if not found:
             return False
-        kind, value = found[1], found[2] if found[1] == "tag" else self.canon(found[2])
+        kind, value = found[1], found[2] if found[1] in ("tag", "debug") else self.canon(found[2])
+        if kind == "debug":  # the original record of that name sits where the target is
+            return self.catalog is not None and any(
+                debug.placed(self.catalog, value, self.members[n]["placements"]) for n in names if n in self.members
+            )
         if kind == "tag":
             return self.tags(names)[value] > 0
         if kind == "caller":
@@ -309,6 +314,18 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     return "", ""
 
 
+def _original(ctx: Map, row: Json) -> bool:
+    """Whether the row gives a function or datum the name its original debug record gives it there (`debug NAME`
+    evidence, verified): the original spelling is the style, and it replaces a name given here."""
+    evidence = row.get("evidence")
+    return (
+        row.get("kind") in ("function", "global", "static")
+        and isinstance(evidence, list)
+        and f"debug {row.get('name')}" in [e.split(" (")[0] for e in evidence if isinstance(e, str)]
+        and ctx.verifies(f"debug {row['name']}", ctx.users(str(row["target"]), str(row["kind"])))
+    )
+
+
 def judge(ctx: Map, row: Json) -> tuple[str, str]:
     """The first rule the row breaks as (rule, reason), or ("", "")."""
     kind, target, name = row.get("kind"), row.get("target"), row.get("name")
@@ -316,13 +333,16 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "shape", "a row needs kind, target, name, evidence and doc"
     if reason := _exists(ctx, row):
         return "target", reason
+    original = _original(ctx, row)
     if kind == "module":
         unnamed = style.neutral_module(PurePosixPath(ctx.modules[target]["source"]).stem)
     else:
         unnamed = style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)
-    if not unnamed:
+    if not unnamed and not original:
         return "named", f"{target} already has a name"
-    rule, reason = _form(ctx, row)
+    if original and ctx.canon(target) == name:
+        return "named", f"{target} already has its original name"
+    rule, reason = ("", "") if original else _form(ctx, row)
     if rule:
         return rule, reason
     if name in ctx.taken or (kind == "subsystem" and ctx.folder_taken(name)):
@@ -403,7 +423,9 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
 
 def _number(config: Config) -> int:
     """The next pack or names number: one past every pack and names file there is."""
-    found = [int(m[1]) for p in _root(config).glob("*-*") if (m := re.match(r"(?:pack|names|banners)-(\d+)\.", p.name))]
+    found = [
+        int(m[1]) for p in _root(config).glob("*-*") if (m := re.match(r"(?:pack|names|banners|types)-(\d+)\.", p.name))
+    ]
     return max(found, default=0) + 1
 
 
@@ -475,9 +497,57 @@ def _auto(ctx: Map) -> list[Json]:
     return out
 
 
+def _identifiers(root: Path) -> set[str]:
+    """Every word the project's sources and headers spell."""
+    files = structure.Files(root)
+    return {w for p in files.everything() for w in re.findall(r"[A-Za-z_]\w*", files.get(p) or "")}
+
+
+def _types(config: Config, doc: Json) -> Json:
+    """`recipe name next --step T`: the project records the debug catalog proves invented-but-original take their
+    original type and member names as one patch; every unique match, moved or not, is written to types-K.json."""
+    catalog = debug.load(config)
+    if catalog is None:
+        raise state.stop(
+            "recipe.debug", "no debug catalog is configured", action='add debug_types = "PATH" under [inputs]'
+        )
+    root = config.project.root
+    layouts = cparse.load(api.snapshot(config))
+    found = debug.plan(layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p))
+    ctx, names, refused = Map(config, doc, {}), list[Json](), list[Json]()
+    for row in sorted(debug.rows(catalog, doc["members"]), key=lambda r: _ORDER.get(str(r["kind"]), 9)):
+        rule, reason = judge(ctx, row)
+        if rule:
+            refused.append({"row": row, "rule": rule, "reason": reason})
+        else:
+            names.extend(_moves(ctx, row))
+    moves = [*found.moves, *names]
+    k = _number(config)
+    report = _root(config) / f"types-{k}.json"
+    body = {"catalog": catalog.path, "proposals": list(found.proposals), "names": names, "refused": refused}
+    structure.write(report, json.dumps(body, indent=1))
+    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
+    return {
+        "action": "next",
+        "step": "T",
+        "read": len(layouts),
+        "pack": str(report.relative_to(root)),
+        "targets": len(found.proposals),
+        "proposed": sum(1 for p in found.proposals if p["moved"]),
+        "names": len(names),
+        **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
+        "stream": structure.stream(built) if built["moves"] else "",
+        "next": "recipe apply" if built["moves"] else "recipe status",
+        "after": "",
+    }
+
+
 def next_(config: Config, params: Json) -> Json:
-    """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack."""
+    """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack; T
+    renames invented records to the debug catalog's original types."""
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
+    if step == "T":
+        return _types(config, doc)
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
     for row in _auto(ctx) if step == "N2" else []:
