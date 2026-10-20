@@ -48,14 +48,27 @@ def _directory(config: Config, version: str, names: Iterable[str]) -> str:
     return ""
 
 
+def _tables(config: Config, versions: Sequence[str]) -> dict[str, Any]:
+    """Per version the symbol table (name -> (vram, rom, size, kind)) a spelling is resolved through."""
+    return {v: api.symbols(config, v) for v in versions}
+
+
+def _stems(member: Json, version: str) -> list[str]:
+    """The file stems a function's extracted assembly can have: its name, and the neutral name extraction gave it
+    (func_<VRAM>_<version>, func_<VRAM>) when it was renamed after the assembly was extracted."""
+    vram = next((p["vram"] for p in member["placements"] if p["version"] == version), None)
+    neutral = [f"func_{vram:08X}_{version.replace('-', '_')}", f"func_{vram:08X}"] if vram is not None else []
+    return [member["name"], *neutral]
+
+
 def reads(config: Config, doc: Json) -> Graph:
     """Per function with extracted assembly the members it calls and the symbols whose address it loads (a member or
     not: `reads NAME` evidence cites any of them), in order of first use. A member is named in one version
     (`func_X_de`), so its assembly and its callees' names are that version's; a function without assembly has no
     entry."""
     root = config.project.root
-    known = {m["name"] for m in doc["members"]}
     by_segment: dict[tuple[str, str], list[str]] = {}
+    by_name = {m["name"]: m for m in doc["members"]}
     for m in doc["members"]:
         if m["kind"] == "function" and m["placements"]:
             by_segment.setdefault((m["placements"][0]["version"], m["segment"]), []).append(m["name"])
@@ -63,11 +76,14 @@ def reads(config: Config, doc: Json) -> Graph:
     for (version, _), names in by_segment.items():
         folder = _directory(config, version, names)
         for name in names if folder else ():
-            file = root / folder / f"{name}.s"
-            if not file.is_file():
+            file = next(
+                (f for f in (root / folder / f"{n}.s" for n in _stems(by_name[name], version)) if f.is_file()), None
+            )
+            if file is None:
                 continue
             text = file.read_text(encoding="utf-8", errors="replace")
-            calls = [x for x in dict.fromkeys(_CALL.findall(text)) if x in known and x != name]
+            # a callee no member is named as (stale assembly of a renamed function) is resolved by `Map.canon`
+            calls = [x for x in dict.fromkeys(_CALL.findall(text)) if x != name and not x.startswith(".")]
             loads = [x for x in dict.fromkeys(_LOAD.findall(text)) if x != name]  # data no module holds is still read
             graph[name] = (calls, loads)
     if not graph and by_segment:
@@ -82,8 +98,11 @@ class Map:
         self.root, self.doc = config.project.root, doc
         self.members: dict[str, Json] = {m["name"]: m for m in doc["members"]}
         self.modules: dict[str, dict[str, Any]] = {m["name"]: dict(m) for m in doc["modules"]}
-        self.calls = {n: c for n, (c, _) in graph.items()}
-        self.loads = {n: ld for n, (_, ld) in graph.items()}
+        self.config = config
+        self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
+        self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
+        self.calls = {n: [x for x in map(self.canon, c) if x in self.members] for n, (c, _) in graph.items()}
+        self.loads = {n: list(dict.fromkeys(map(self.canon, ld))) for n, (_, ld) in graph.items()}
         self.callers: dict[str, list[str]] = {}
         for name in graph:
             for target in (*self.calls[name], *self.loads[name]):
@@ -162,10 +181,56 @@ class Map:
             found.update([table("knowledge/style.toml")["gbi"]["tag"]] * self.gbi(name))
         return found
 
+    def canon(self, name: str) -> str:
+        """The member a spelling names: itself, or the member that sits where a version's symbol table puts that
+        spelling (a per-version name, an alias such as D_blob_* or D_auto_*, a function's old name in stale assembly),
+        names_from's table first. A spelling no member's stays as it is."""
+        if name in self.members:
+            return name
+        if self._spelled is None:
+            at: dict[tuple[str, int, int], str] = {}
+            vram: dict[tuple[str, int], set[str]] = {}
+            for m in self.members.values():
+                for p in m["placements"]:
+                    at[(p["version"], p["rom_start"], p["vram"])] = m["name"]
+                    vram.setdefault((p["version"], p["vram"]), set()).add(m["name"])
+            # names_from first: a datum split into one member per version group resolves as names_from places it
+            versions = sorted(self.doc["versions"], key=lambda v: v != self.doc["names_from"])
+            found = {
+                spelling: member
+                for version, table in reversed(_tables(self.config, versions).items())
+                for spelling, row in table.items()
+                if spelling not in self.members and (member := at.get((version, row[1] or 0, row[0])))
+            }
+            self._vram, self._spelled = vram, found
+        if name in self._spelled:
+            return self._spelled[name]
+        if neutral := re.fullmatch(r"(?:func|D)_([0-9A-F]{8})(?:_(\w+))?", name):  # a neutral name: its version's VRAM
+            version = (neutral[2] or "").replace("_", "-")
+            version = version if version in self.doc["versions"] else self.doc["names_from"]
+            held = self._vram.get((version, int(neutral[1], 16)), set())
+            if len(held) == 1:
+                return next(iter(held))
+        return name
+
+    def module_of(self, target: str) -> str:
+        """The module a module row names: its key (the source path), or the one module whose source has that stem or
+        that path without `src/` and suffix (CODE_80426EC4, FRONTEND/CODE_80426EC4)."""
+        if target in self.modules:
+            return target
+        path = PurePosixPath
+        found = [
+            k
+            for k, m in self.modules.items()
+            if target
+            in (m["source"], path(m["source"]).stem, str(path(m["source"]).with_suffix("")).removeprefix("src/"))
+        ]
+        return found[0] if len(found) == 1 else target
+
     def users(self, target: str, kind: str) -> list[str]:
         """The members whose evidence speaks for a target: itself, or a folder's or module's members."""
         if kind in ("function", "global", "static"):
-            return [target] * (target in self.members)
+            return [self.canon(target)] * (self.canon(target) in self.members)
         if kind == "subsystem":
             return [m for mod in self.modules if self.folder(mod) == target for m in self.modules[mod]["members"]]
         return list(self.modules.get(target, {}).get("members", ()))
@@ -174,7 +239,7 @@ class Map:
         found = _EVIDENCE.match(item)
         if not found:
             return False
-        kind, value = found[1], found[2]
+        kind, value = found[1], found[2] if found[1] == "tag" else self.canon(found[2])
         if kind == "tag":
             return self.tags(names)[value] > 0
         if kind == "caller":
@@ -191,7 +256,7 @@ def _exists(ctx: Map, row: Json) -> str:
     if kind == "module":
         return "" if target in ctx.modules else "no module has this name"
     want = "function" if kind == "function" else "data"
-    found = ctx.members.get(target)
+    found = ctx.members.get(ctx.canon(target))
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
 
 
@@ -224,7 +289,11 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "shape", "a row needs kind, target, name, evidence and doc"
     if reason := _exists(ctx, row):
         return "target", reason
-    if not (style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)):
+    if kind == "module":
+        unnamed = style.neutral_module(PurePosixPath(ctx.modules[target]["source"]).stem)
+    else:
+        unnamed = style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)
+    if not unnamed:
         return "named", f"{target} already has a name"
     rule, reason = _form(ctx, row)
     if rule:
@@ -428,6 +497,8 @@ def submit(config: Config, params: Json) -> Json:
     k = m[1] if (m := re.search(r"names-(\d+)", path.name)) else str(_number(config))
     accepted, refused = [], []
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
+        if row.get("kind") == "module" and isinstance(row.get("target"), str):
+            row = {**row, "target": ctx.module_of(row["target"])}
         rule, reason = judge(ctx, row) if "bad" not in row else ("shape", "not a JSON object")
         if rule:
             refused.append({"row": row, "rule": rule, "reason": reason})

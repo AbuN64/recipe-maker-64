@@ -41,6 +41,13 @@ def neutral(name: str) -> bool:
     return any(re.fullmatch(p, name) for p in _rules()["names"]["neutral"])
 
 
+def neutral_module(stem: str) -> bool:
+    """Whether a module's file stem is a structure name, not a human one: a neutral form in any case (CODE_80426EC4
+    as code_80426EC4) or a bare address with an optional counter (80423280_4)."""
+    folded = re.sub(r"^(CODE|DATA)_", lambda m: m[1].lower() + "_", stem)
+    return neutral(stem) or neutral(folded) or bool(re.fullmatch(r"[0-9A-F]{8}(?:_\d+)?", stem))
+
+
 def folder_unnamed(folder: str) -> bool:
     """Whether a folder has no name yet: a neutral address form or a word with a collision counter (FX_2).
     The one fact both the subsystem row (it may be named) and the function and module rows (they must wait) read."""

@@ -30,6 +30,9 @@ GRAPH = {  # name -> (calls, loads), what `naming.reads` finds in the assembly
 }
 
 
+TABLES: dict = {"us": {}}  # per version the symbol table a spelling resolves through (`naming._tables`)
+
+
 def member(name, module="", kind="function", unit=None, segment="main"):
     place = {"version": "us", "section": ".text", "rom_start": 0x1000, "rom_end": 0x1040, "vram": VRAM}
     return {"name": name, "kind": kind, "module": module, "unit": unit, "segment": segment, "placements": [place]}
@@ -87,6 +90,7 @@ def project(tmp_path, monkeypatch):
     """The moves a verb hands to the patch builder are recorded in `ops`; the builder itself is tested below."""
     monkeypatch.setattr(structure, "evidence", lambda config, host=None: document())
     monkeypatch.setattr(naming, "reads", lambda config, doc: dict(GRAPH))
+    monkeypatch.setattr(naming, "_tables", lambda config, versions: dict(TABLES))
     config = SimpleNamespace(project=SimpleNamespace(root=tmp_path), owners={}, ops=[], real=naming._patch)
 
     def spy(cfg, doc, moves):
@@ -277,7 +281,8 @@ def assembly(tmp_path, monkeypatch):
 
 def test_reads_takes_calls_and_loads_of_known_members_from_the_assembly_of_their_own_version(assembly):
     got = naming.reads(assembly, document())
-    assert got["func_80001010"] == (["func_80001020", "func_80700000"], ["D_80002000"])  # unknown, self, labels out
+    # self and labels out; a callee no member is named as stays for `Map.canon` (a renamed function's stale name)
+    assert got["func_80001010"] == (["func_80001020", "osMissing", "func_80700000"], ["D_80002000"])
     assert got["func_80001020"] == (["func_80700000"], [])
     assert sorted(got) == ["func_80001010", "func_80001020"]  # no file, no entry; data members have none
 
@@ -506,3 +511,52 @@ def test_an_evidence_item_may_end_in_a_note_that_is_not_checked(project):
     assert got["accepted"] == 1 and got["by_rule"] == {"evidence": 1}
     refused = json.loads((project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()[-1])
     assert "a note in parentheses" in refused["reason"]
+
+
+def _aliased(monkeypatch):
+    """D_80005000 is named D_blob_1 in the names_from table (an alias), D_80005000 in another version's; the tree's
+    C spells D_80005000. func_80004020 was renamed Actor_Free while the assembly still says func_80004020."""
+    doc = document()
+    for m in doc["members"]:
+        if m["name"] == "D_80005000":
+            m["name"] = "D_blob_1"
+            m["placements"] = [{**m["placements"][0], "vram": 0x80005000, "rom_start": 0x5000}]
+        if m["name"] == "func_80004020":
+            m["name"] = "Actor_Free"
+            m["placements"] = [{**m["placements"][0], "vram": 0x80004020, "rom_start": 0x4020}]
+    for mod in doc["modules"]:
+        mod["members"] = [
+            "D_blob_1" if n == "D_80005000" else "Actor_Free" if n == "func_80004020" else n for n in mod["members"]
+        ]
+        mod["source"] = mod["source"].replace("code_80004000.c", "CODE_80004000.CPP")
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    tables = {
+        "us": {"D_80005000": (0x80005000, 0x5000, 4, "data"), "func_80004020": (0x80004020, 0x4020, 0x40, "func")}
+    }
+    monkeypatch.setattr(naming, "_tables", lambda config, versions: tables)
+    return doc
+
+
+def test_a_data_target_resolves_through_the_spelling_a_version_table_gives_it(project, monkeypatch):
+    _aliased(monkeypatch)
+    got = submit(project, [row("D_80005000", "g_actorList", ["caller func_80004010"], kind="global")])
+    assert got["accepted"] == 1, got["by_rule"]
+    assert {"op": "symbol", "subject": "D_80005000", "target": "g_actorList"} in moves(project)
+
+
+def test_evidence_naming_a_renamed_function_by_its_stale_assembly_name_or_its_new_name_is_verified(
+    project, monkeypatch
+):
+    _aliased(monkeypatch)
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee Actor_Free"]),
+        row("func_80004030", "Actor_Kill", ["callee func_80004020"]),
+    ]
+    assert submit(project, rows)["accepted"] == 2
+
+
+def test_a_module_row_names_its_target_by_stem_or_path_and_a_neutral_upper_case_stem_is_unnamed(project, monkeypatch):
+    _aliased(monkeypatch)
+    for target in ("CODE_80004000", "src/game/main/actor/CODE_80004000.CPP", "game/main/actor/CODE_80004000"):
+        got = submit(project, [row(target, "actor_spawner", ["callee func_80004020"], kind="module")])
+        assert got["accepted"] == 1, (target, got["by_rule"])
