@@ -380,6 +380,8 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
         ctx.alias[target] = name
         out.append({"op": "module", "subject": target, "target": name})
         for op in ("source", "header"):
+            if not module[op]:  # a module with no header of its own has nothing to rename there
+                continue
             path = PurePosixPath(module[op])
             module[op] = str(path.with_name(name + path.suffix))
             out.append({"op": op, "subject": name, "target": module[op]})
@@ -395,6 +397,8 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
             out.append({"op": "module", "subject": module["name"], "target": renamed})
             module["name"] = renamed
         for op in ("source", "header"):
+            if not module[op]:
+                continue
             path = PurePosixPath(module[op])
             moved = PurePosixPath(*[folder if p == target else p for p in path.parts])
             moved = moved.with_name(renamed + path.suffix) if renamed else moved

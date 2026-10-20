@@ -599,3 +599,18 @@ def test_n4_calls_a_datum_static_when_one_file_reads_it_whatever_the_folder_hold
     assert kinds["D_80002000"] == "global"  # read by two files of one folder: a folder is no C scope
     assert kinds["D_80002100"] == "static"  # read by one file only, though it sits in no module of its own
     assert kinds["D_80005000"] == "static"
+
+
+def test_a_module_with_no_header_of_its_own_is_named_by_its_source_alone(project, monkeypatch):
+    """A module whose source has no same-stem header (header "") is renamed by its source only (10-20: the empty
+    header path crashed the submit with PurePosixPath('.') has an empty name)."""
+    doc = document()
+    for m in doc["modules"]:
+        if m["name"] == "code_80004000":
+            m["header"] = ""
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    got = submit(project, [row("code_80004000", "actor_spawner", ["callee func_80004020"], kind="module")])
+    assert got["accepted"] == 1
+    assert [m["op"] for m in moves(project)] == ["module", "source"]
+    submit(project, [row("actor", "creature", ["callee func_80004020"], kind="subsystem")])  # its folder moves
+    assert "header" not in [m["op"] for m in moves(project)]
