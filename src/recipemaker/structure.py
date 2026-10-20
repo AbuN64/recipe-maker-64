@@ -931,7 +931,8 @@ def run(config: Config, params: Json) -> Json:
 
 
 def apply(config: Config, params: Json) -> Json:
-    """`recipe apply`: `git apply` the oldest saved patch (or PATCH), then `unbake sync`; sync's result comes back.
+    """`recipe apply`: `git apply` the oldest saved patch (or PATCH), its new files intent-to-add, then `unbake sync`;
+    sync's result comes back.
     The one explicit operator action that writes."""
     root = config.project.root
     saved = sorted(
@@ -941,7 +942,9 @@ def apply(config: Config, params: Json) -> Json:
     patch = Path(params["patch"]) if params.get("patch") else saved[0] if saved else None
     if patch is None or not patch.is_file():
         raise state.stop("recipe.apply", "no patch is saved", action="recipe structure")
-    ran = recipe_host.run(["git", "-C", str(root), "apply", str(patch.resolve())], root, config)
+    # a file the patch makes (a module renamed or split off) is intent-to-add: sync and the project's [file] rows
+    # read tracked files, and the tree must sync as the patch leaves it
+    ran = recipe_host.run(["git", "-C", str(root), "apply", "--intent-to-add", str(patch.resolve())], root, config)
     if ran.exit:
         tail = bytes(ran.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git apply failed"]
         raise state.stop("recipe.apply", f"git apply refused {patch.name}: {tail[0]}", action="recipe structure")

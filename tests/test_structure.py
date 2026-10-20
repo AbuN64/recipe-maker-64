@@ -588,6 +588,22 @@ def test_apply_runs_git_apply_then_unbake_sync_and_returns_syncs_result(tmp_path
     assert caught.value.findings[0].action == "recipe structure"
 
 
+def test_apply_leaves_a_file_the_patch_makes_tracked_so_the_tree_syncs(tmp_path, monkeypatch):
+    """A renamed module's new file is intent-to-add after apply: sync's [file] rows read tracked files (10-20: sync
+    refused the new key until the lane ran `git add -N`)."""
+    import subprocess
+
+    root = _repo(tmp_path, {"src/a.c": "int a;\n"})
+    patch = (
+        "diff --git a/src/b.c b/src/b.c\nnew file mode 100644\n--- /dev/null\n+++ b/src/b.c\n@@ -0,0 +1 @@\n+int b;\n"
+    )
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", patch)
+    _fake_unbake(monkeypatch, [{"ok": True, "result": {}, "findings": []}])
+    structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    listed = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True, check=True).stdout
+    assert "src/b.c" in listed.split()
+
+
 def test_a_patch_git_refuses_stays_saved_and_sync_is_not_run(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.c": "x\n"})
     structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")
