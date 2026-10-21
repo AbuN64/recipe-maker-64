@@ -446,3 +446,13 @@ def test_the_header_gets_an_include_of_the_header_that_declares_a_type_its_proto
     )
     made = declare.plan(tree.snapshot, {**FROW, "definition": ("src/f.c", 2, "Widget *func_f(s32 a, s32 *b)")})
     assert made.edits["include/f.h"].decode().splitlines()[2:4] == ['#include "t.h"', "extern s32 other(void);"]
+
+
+def test_leasing_a_name_again_clears_the_copies_an_earlier_lease_left_in_its_folder(world):
+    declare.next_item(world.config, world.snapshot, NOW)
+    where = declare.folder(world.config, "gX")
+    (where / "batch.json").write_text("[]")  # a file from an older tool version, read as an edit if it stayed
+    (where / "include/old.h").write_text("stale")
+    state.release(world.config, "gX")
+    declare.next_item(world.config, world.snapshot, NOW)
+    assert not (where / "batch.json").exists() and not (where / "include/old.h").exists()

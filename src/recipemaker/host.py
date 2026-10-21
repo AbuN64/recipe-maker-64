@@ -33,6 +33,11 @@ def write(path: Path, content: bytes) -> bool:
     return True
 
 
+def clear(folder: Path) -> None:
+    """Remove a work folder of ours (copies from an earlier lease must not read as this lease's edits)."""
+    shutil.rmtree(folder, ignore_errors=True)
+
+
 def stem(member: str) -> str:
     """One file-name segment per member: slashes become dots, a long name keeps head and digest."""
     flat = member.replace("/", ".")

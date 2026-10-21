@@ -431,6 +431,7 @@ def next_item(config: Config, snapshot: Snapshot, now: float, count: int = 0, dr
 
 def _write(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, batch: list[str], now: float) -> None:
     where = folder(config, row["name"])
+    host.clear(where)
     if made and made.edits:
         for path, text in made.edits.items():
             host.write(where / path, text)

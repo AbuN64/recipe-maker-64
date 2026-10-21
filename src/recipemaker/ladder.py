@@ -414,7 +414,7 @@ def land_set(
     return verdict.proofs, result.get("drain") or {}
 
 
-SCREEN_UNITS = 6  # the most edited sources one change set is compiled through (a row costs about eight CPU s)
+SCREEN_UNITS = 4  # the most edited sources one change set is compiled through (a row costs about eight CPU s)
 
 Screened = tuple[world.Unit, Mapping[str, bytes], Sequence[str]]  # primary unit, the set, the units to compile first
 
