@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -413,41 +414,55 @@ def land_set(
     return verdict.proofs, result.get("drain") or {}
 
 
-def submit_set(config: Config, snapshot: Snapshot, unit: world.Unit, edits: dict[str, bytes]) -> Json:
-    """Submit a change set that `screen` found exact: unbake proves it in every version again and lands it, so the
-    drain says what happened (landed rows, refused rows; empty when it took nothing). One proof less than `land_set`."""
-    name, body = carrier(snapshot, unit, edits)
-    with host.work(config) as work:
-        file = work / f"{host.stem(name)}.c"
-        host.write(file, body.encode())
-        result = judge.submit(config, file, name, dict(edits))
-    drain: Json = result.get("drain") or {}
-    return drain
+SCREEN_UNITS = 6  # the most edited sources one change set is compiled through (a row costs about eight CPU s)
+
+Screened = tuple[world.Unit, Mapping[str, bytes], Sequence[str]]  # primary unit, the set, the units to compile first
 
 
-def screen(
-    config: Config, snapshot: Snapshot, sets: Sequence[tuple[world.Unit, Mapping[str, bytes]]]
-) -> list[judge.Verdict]:
-    """The verdict of each change set measured through its carrier, all in one unbake process on every core and in the
-    reference version only: a set that is not exact here is not worth the full proof. A set unbake cannot measure at
-    all (it refuses the whole call) is split out: the others are measured again without it."""
+def _carriers(snapshot: Snapshot, one: Screened) -> list[tuple[str, str]]:
+    """The functions that carry a change set through the compiler: one of the primary unit, and one of up to
+    SCREEN_UNITS - 1 other landed units the set edits (the `risky` ones first), so those sources are compiled as the
+    build will compile them."""
+    unit, edits, risky = one
+    units = world.of(snapshot).units
+    found = [carrier(snapshot, unit, edits)]
+    others = [p for p in dict.fromkeys([*risky, *sorted(edits)]) if p in edits and p in units and p != unit.path]
+    for path in others[: SCREEN_UNITS - 1]:
+        with suppress(Refusal):
+            found.append(carrier(snapshot, units[path], edits))
+    return found
+
+
+def screen(config: Config, snapshot: Snapshot, sets: Sequence[Screened]) -> list[judge.Verdict]:
+    """The verdict of each change set, some of the sources it edits compiled with the whole set laid over the tree: all
+    in one unbake process on every core and in the reference version only, so a set that fails here never reaches the
+    build. A set unbake cannot measure at all (it refuses the whole call) is split out: the others are measured
+    again."""
     if not sets:
         return []
     with host.work(config) as work:
-        rows = []
-        for n, (unit, edits) in enumerate(sets):
-            name, body = carrier(snapshot, unit, edits)
-            file = work / f"{n}-{host.stem(name)}.c"
-            host.write(file, body.encode())
-            rows.append((file, name, dict(edits)))
+        rows, owner = [], []
+        for n, one in enumerate(sets):
+            for k, (name, body) in enumerate(_carriers(snapshot, one)):
+                file = work / f"{n}-{k}-{host.stem(name)}.c"
+                host.write(file, body.encode())
+                rows.append((file, name, dict(one[1])))
+                owner.append(n)
         try:
-            return judge.score_many(config, rows)
+            verdicts = judge.score_many(config, rows)
         except Refusal as refusal:
             if len(sets) == 1:
                 reason = "; ".join(f.reason for f in refusal.findings)[-600:]
                 return [judge.Verdict((judge.proof_failed(rows[0][1], reason),), False, ())]
-    half = len(sets) // 2
-    return [*screen(config, snapshot, sets[:half]), *screen(config, snapshot, sets[half:])]
+            verdicts = []
+    if not verdicts:
+        half = len(sets) // 2
+        return [*screen(config, snapshot, sets[:half]), *screen(config, snapshot, sets[half:])]
+    out = []
+    for n in range(len(sets)):
+        mine = [v for v, o in zip(verdicts, owner, strict=True) if o == n]
+        out.append(judge.Verdict(tuple(p for v in mine for p in v.proofs), all(v.exact for v in mine), mine[0].diff))
+    return out
 
 
 def commits(drain: Json | None, member: str | None = None) -> dict[str, str]:

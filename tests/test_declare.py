@@ -5,7 +5,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from fakes import proof
 from fakes import unit as make_unit
 from unbake.contracts import Refusal
 
@@ -60,36 +59,35 @@ def edited(world, header=b"extern u8 gX[4];\n", source=None):
     (where / "src/a.c").write_bytes(source or b'#include "a.h"\nint func_a(void) { return 0; }\n')
 
 
-def land(world, monkeypatch, exact=True, refused=()):
+def land(world, monkeypatch, exact=True, problem="the ROMs differ"):
+    """settle.land answering for every set: a commit when `exact`, else its problem; the screen answers the same."""
     seen = {}
 
-    def land_set(config, snapshot, unit, edits):
-        seen.update(unit=unit.path, edits=edits)
-        found = [proof("func_a", v, 1.0 if exact else 0.4) for v in ("a", "b")]
-        landed = [{"id": "x", "member": "func_a", "operation": "publish", "commit": "abc1234"}] if exact else []
-        return found, {"landed": landed, "refused": list(refused)}
+    def settled(config, old, edits, message):
+        seen.update(edits=edits, old=old, message=message)
+        return {"commit": "abc1234"} if exact else {"problem": problem}
 
-    monkeypatch.setattr(declare.ladder, "land_set", land_set)
-    monkeypatch.setattr(
-        declare.ladder, "submit_set", lambda config, snapshot, unit, edits: land_set(config, snapshot, unit, edits)[1]
-    )
+    monkeypatch.setattr(declare.settle, "land", settled)
+    world.screens.extend([1.0 if exact else 0.4] * 4)
     return seen
 
 
-def test_try_lands_the_edited_copies_as_one_change_set_under_the_edited_unit(world, monkeypatch):
+def test_try_lands_the_edited_copies_as_one_commit_after_the_screen(world, monkeypatch):
     edited(world)
     seen = land(world, monkeypatch)
     got = work.try_(world.config, {"item": "gX"})
-    assert seen["unit"] == "src/a.c" and sorted(seen["edits"]) == ["include/a.h", "src/a.c"]
+    assert sorted(seen["edits"]) == ["include/a.h", "src/a.c"] and world.calls["judge.score_many"] == 1
+    assert seen["message"].startswith("Declare gX once in a.h from its definition")
+    assert seen["old"]["src/a.c"] == world.snapshot.peek("src/a.c")  # what the tree held when the set was planned
     assert (got["result"], got["landed"], got["next"]) == ("exact", "abc1234", "recipe next")
     assert state.leases(world.config, NOW) == [] and cli.render("try", got).splitlines()[0] == "landed (abc1234)"
 
 
-def test_only_the_files_that_changed_are_in_the_set_and_a_header_alone_goes_under_an_including_unit(world, monkeypatch):
+def test_only_the_files_that_changed_are_in_the_set(world, monkeypatch):
     edited(world, source=b'#include "a.h"\ns32 gX;\nint func_a(void) { return 0; }\n')
     seen = land(world, monkeypatch)
     work.try_(world.config, {"item": "gX"})
-    assert sorted(seen["edits"]) == ["include/a.h"] and seen["unit"] == "src/a.c"  # a.c includes "a.h"
+    assert sorted(seen["edits"]) == ["include/a.h"]  # a.c includes "a.h" and carries the screen
 
 
 def test_try_refuses_copies_nobody_changed(world):
@@ -107,21 +105,27 @@ def test_try_refuses_a_cast_in_an_edited_source_before_any_proof(world, monkeypa
     assert caught.value.findings[0].key == "recipe.cast" and not seen
 
 
-def test_a_set_that_is_not_exact_lands_nothing_and_counts_a_try(world, monkeypatch):
+def test_a_set_that_does_not_screen_exact_lands_nothing_and_counts_a_try(world, monkeypatch):
     edited(world)
-    land(world, monkeypatch, exact=False)
+    seen = land(world, monkeypatch, exact=False)
     got = work.try_(world.config, {"item": "gX"})
-    assert (got["result"], got["landed"], got["stalled"]) == ("fuzzy", "", 0)  # the score rose from nothing
+    assert (got["result"], got["landed"], got["stalled"]) == (
+        "fuzzy",
+        "",
+        0,
+    ) and not seen  # the score rose from nothing
     assert got["next"] == "edit the copies, then run: recipe try gX" and state.lease(world.config, "gX").session
 
 
-def test_unbake_refusing_the_set_by_unit_name_is_reported_and_costs_no_try(world, monkeypatch):
+def test_roms_that_differ_after_the_set_was_written_are_reported_with_the_cause_and_commit_nothing(world, monkeypatch):
     edited(world)
-    finding = {"reason": "src/b.c does not match in us", "missing": ["us: bytes differ"], "key": "land.not_exact"}
-    land(world, monkeypatch, exact=False, refused=[{"member": "func_a", "findings": [finding]}])
+    land(world, monkeypatch, exact=True)
+    monkeypatch.setattr(
+        declare.settle, "land", lambda config, old, edits, message: {"problem": "the ROMs differ: us: sha1 differs"}
+    )
     got = work.try_(world.config, {"item": "gX"})
-    assert got["result"] == "refused" and "src/b.c does not match in us" in got["why"]
-    assert state.lease(world.config, "gX").tries == 0
+    assert got["landed"] == "" and got["result"] != "exact" and "the ROMs differ: us: sha1 differs" in got["why"][0]
+    assert state.lease(world.config, "gX")
 
 
 def test_a_cast_on_an_untouched_old_line_does_not_refuse_the_set_but_a_new_one_does(world, monkeypatch):
@@ -296,7 +300,7 @@ def test_next_leases_the_first_group_writes_each_name_planned_and_names_the_batc
     where = declare.folder(tree.config, "func_f")
     assert got["item"] == "func_f" and got["batch"] == ["func_f"] and got["planned"]
     assert (where / "include/f.h").read_text().count("func_f(s32 a, s32 *b)") == 1
-    assert json.loads((where / "batch.json").read_text()) == ["func_f"]
+    assert json.loads((where / "plan.json").read_text()) == {"batch": ["func_f"], "risky": ["src/a.c"]}
     assert "Planned" in (where / "brief.md").read_text()
 
 
@@ -325,21 +329,17 @@ def two_names(tree, monkeypatch):
     return row_h
 
 
-def landing(world, monkeypatch, exact):
-    """land_set that lands each name whose carrier unit is in `exact`, one commit each."""
+def landing(monkeypatch, refuse=(), edit_check=None):
+    """settle.land committing every set as c1, c2 ... unless its files hold a path in `refuse`."""
     seen = []
 
-    def land_set(config, snapshot, unit, edits):
-        seen.append((unit.path, sorted(edits)))
-        good = unit.path in exact
-        found = [proof("func_a", v, 1.0 if good else 0.4) for v in ("a", "b")]
-        landed = [{"id": "x", "member": "m", "operation": "publish", "commit": f"c{len(seen)}"}] if good else []
-        return found, {"landed": landed, "refused": []}
+    def settled(config, old, edits, message):
+        seen.append(sorted(edits))
+        if edit_check is not None and not edit_check(edits):
+            return {"problem": "the ROMs differ"}
+        return {"problem": "the ROMs differ"} if set(edits) & set(refuse) else {"commit": f"c{len(seen)}"}
 
-    monkeypatch.setattr(declare.ladder, "land_set", land_set)
-    monkeypatch.setattr(
-        declare.ladder, "submit_set", lambda config, snapshot, unit, edits: land_set(config, snapshot, unit, edits)[1]
-    )
+    monkeypatch.setattr(declare.settle, "land", settled)
     return seen
 
 
@@ -347,46 +347,33 @@ def test_a_batch_is_measured_once_and_each_exact_name_lands_as_its_own_commit(tr
     two_names(tree, monkeypatch)
     declare.next_item(tree.config, tree.snapshot, NOW)
     tree.screens.extend([1.0, 1.0])
-    seen = landing(tree, monkeypatch, {"src/a.c", "src/b.c"})
+    seen = landing(monkeypatch)
     got = work.try_(tree.config, {"item": "func_f"})
-    assert tree.calls["judge.score_many"] == 1 and [u for u, _ in seen] == ["src/a.c", "src/b.c"]
+    assert tree.calls["judge.score_many"] == 1 and len(seen) == 2 and "src/a.c" in seen[0] and "src/b.c" in seen[1]
     assert [(b["item"], b["result"], b["landed"]) for b in got["batch"]] == [
         ("func_f", "exact", "c1"),
         ("func_h", "exact", "c2"),
     ]
     assert state.leases(tree.config, NOW) == []
-    text = cli.render("try", got)
-    assert "- func_h: exact (c2)" in text
+    assert "- func_h: exact (c2)" in cli.render("try", got)
 
 
 def test_a_name_that_is_not_exact_in_the_screen_is_split_out_and_the_others_still_land(tree, monkeypatch):
     two_names(tree, monkeypatch)
     declare.next_item(tree.config, tree.snapshot, NOW)
     tree.screens.extend([0.4, 1.0])
-    seen = landing(tree, monkeypatch, {"src/b.c"})
+    seen = landing(monkeypatch, refuse={"include/f.h"})
     got = work.try_(tree.config, {"item": "func_f"})
     assert got["result"] == "fuzzy" and got["landed"] == ""
     assert [(b["item"], b["result"]) for b in got["batch"]] == [("func_f", "fuzzy"), ("func_h", "exact")]
-    assert [u for u, _ in seen] == ["src/b.c", "src/a.c"] and state.lease(tree.config, "func_f")  # a.c: the retry
+    assert len(seen) == 2 and "src/b.c" in seen[0] and state.lease(tree.config, "func_f")  # seen[1]: the retry
 
 
 def test_a_name_that_fails_plain_is_retried_alone_with_the_casts_its_old_types_need(tree, monkeypatch):
     two_names(tree, monkeypatch)
     declare.next_item(tree.config, tree.snapshot, NOW)
-    tree.screens.extend([0.4, 1.0])
-    sets = []
-
-    def land_set(config, snapshot, unit, edits):
-        sets.append(edits)
-        good = b"(u16)func_f" in edits.get("src/a.c", b"") or unit.path == "src/b.c"
-        found = [proof("func_a", v, 1.0 if good else 0.4) for v in ("a", "b")]
-        landed = [{"id": "x", "member": "m", "operation": "publish", "commit": f"c{len(sets)}"}] if good else []
-        return found, {"landed": landed, "refused": []}
-
-    monkeypatch.setattr(declare.ladder, "land_set", land_set)
-    monkeypatch.setattr(
-        declare.ladder, "submit_set", lambda config, snapshot, unit, edits: land_set(config, snapshot, unit, edits)[1]
-    )
+    tree.screens.extend([0.4, 1.0, 1.0])  # the retry screens exact
+    landing(monkeypatch, edit_check=lambda edits: b"(u16)func_f" in edits.get("src/a.c", b"") or "src/b.c" in edits)
     got = work.try_(tree.config, {"item": "func_f"})
     assert got["result"] == "exact" and "cast 1 call sites" in " ".join(got["auto_fixes"])
     assert [b["result"] for b in got["batch"]] == ["exact", "exact"]
@@ -396,7 +383,7 @@ def test_try_dry_measures_the_batch_and_lands_nothing(tree, monkeypatch):
     two_names(tree, monkeypatch)
     declare.next_item(tree.config, tree.snapshot, NOW)
     tree.screens.extend([1.0, 0.4])
-    seen = landing(tree, monkeypatch, {"src/a.c", "src/b.c"})
+    seen = landing(monkeypatch)
     got = work.try_(tree.config, {"item": "func_f", "dry": True})
     assert seen == [] and [b["result"] for b in got["batch"]] == ["would-land", "fuzzy"]
     assert got["landed"] == "" and len(state.leases(tree.config, NOW)) == 2
@@ -408,12 +395,12 @@ def test_a_try_that_spent_its_cpu_budget_leaves_the_exact_names_it_did_not_reach
     two_names(tree, monkeypatch)
     declare.next_item(tree.config, tree.snapshot, NOW)
     tree.screens.extend([1.0, 1.0])
-    seen = landing(tree, monkeypatch, {"src/a.c", "src/b.c"})
+    seen = landing(monkeypatch)
     spent = iter([0.0, 0.0, 500.0, 500.0, 500.0, 500.0, 500.0])
     monkeypatch.setattr(declare, "_cpu", lambda: next(spent))
     got = work.try_(tree.config, {"item": "func_f"})
     assert [(b["item"], b["result"]) for b in got["batch"]] == [("func_f", "exact"), ("func_h", "waiting")]
-    assert [u for u, _ in seen] == ["src/a.c"] and [x.item for x in state.leases(tree.config, NOW)] == ["func_h"]
+    assert len(seen) == 1 and [x.item for x in state.leases(tree.config, NOW)] == ["func_h"]
 
 
 def test_groups_stop_at_the_file_budget_but_a_single_big_name_still_gets_its_own_group():
@@ -423,3 +410,39 @@ def test_groups_stop_at_the_file_budget_but_a_single_big_name_still_gets_its_own
         plan_of("c", "c.c"),
     ]
     assert [[p.name for p in g] for g in declare.groups(plans, budget=100)] == [["a", "c"], ["b"]]
+
+
+def test_the_family_header_is_the_one_the_folder_layout_gives_the_unit_even_when_the_unit_does_not_include_it(
+    tree, monkeypatch
+):
+    files = {**FILES, "src/M/X_1.CPP": b"s32 func_f(s32 a, s32 *b) { return a; }\n", "include/M/X_1.H": b"/* x */\n"}
+    tree.snapshot = replace(tree.snapshot, overlays=files)
+    monkeypatch.setattr(declare.headers, "sources", lambda snapshot, place="include", suffix=".h": ["include/M/X_1.H"])
+    row = {**FROW, "definition": ("src/M/X_1.CPP", 1, "s32 func_f(s32 a, s32 *b)")}
+    assert declare.family(tree.snapshot, "src/M/X_1.CPP", []) == "include/M/X_1.H"
+    assert declare.plan(tree.snapshot, row).header == "include/M/X_1.H"
+
+
+def test_a_name_waits_when_its_header_would_stop_a_unit_that_includes_it_compiling(tree):
+    files = {
+        **FILES,
+        "include/a.h": b"extern s32 func_f(void);\nextern s32 clash(s32 a);\n",
+        "src/a.c": FILES["src/a.c"] + b"extern s32 clash(void);\n",
+    }
+    tree.snapshot = replace(tree.snapshot, overlays=files)
+    made = declare.plan(tree.snapshot, {**FROW, "definition": ("src/f.c", 2, "s32 func_f(s32 a, s32 *b)")})
+    assert made.waits == () and made.edits  # f.h declares no `clash`: nothing to wait for
+    files["include/f.h"] = b"#ifndef F_H\n#define F_H\nextern s32 clash(s32 a);\n#endif\n"
+    tree.snapshot = replace(tree.snapshot, overlays=files)
+    made = declare.plan(tree.snapshot, {**FROW, "definition": ("src/f.c", 2, "s32 func_f(s32 a, s32 *b)")})
+    assert made.waits == ("clash",) and made.edits == {} and "waits for clash" in made.skip
+
+
+def test_the_header_gets_an_include_of_the_header_that_declares_a_type_its_prototype_names(tree, monkeypatch):
+    files = {**FILES, "include/t.h": b"typedef struct Widget Widget;\n"}
+    tree.snapshot = replace(tree.snapshot, overlays=files)
+    monkeypatch.setattr(
+        declare.headers, "catalog", lambda snapshot: {"Widget": ("include/t.h", 1, "typedef struct Widget Widget;")}
+    )
+    made = declare.plan(tree.snapshot, {**FROW, "definition": ("src/f.c", 2, "Widget *func_f(s32 a, s32 *b)")})
+    assert made.edits["include/f.h"].decode().splitlines()[2:4] == ['#include "t.h"', "extern s32 other(void);"]

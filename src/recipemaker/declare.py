@@ -10,19 +10,19 @@ import json
 import posixpath
 import re
 import resource
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from unbake import api
 from unbake.contracts import Config, Json, Proof, Refusal, Snapshot
 
-from recipemaker import declplan, errors, headers, host, index, judge, ladder, state, twin, world
+from recipemaker import declplan, errors, headers, host, index, judge, ladder, settle, state, twin, world
 
 _BLOCKED = 10  # blocked items named in the brief
 BATCH = 8  # the most names one proof carries
-FILE_BUDGET = 120  # the most files one proof carries: a screen costs about two CPU s a file
-CPU_BUDGET = 200.0  # CPU seconds one `try` spends landing before it leaves the rest of the batch for the next one
+FILE_BUDGET = 60  # the most files one proof carries: a screen costs about two CPU s a file
+CPU_BUDGET = 100.0  # CPU seconds one `try` spends landing before it leaves the rest of the batch for the next one
 WINDOW = 40  # the best-ranked names `next` plans from
 _SPELLING = re.compile(r"^[^:]*: (\S+?):(\d+) (.*)$")
 _WIDTHS = {"char": 1, "u8": 1, "s8": 1, "short": 2, "u16": 2, "s16": 2, "int": 4, "u32": 4, "s32": 4, "f32": 4}
@@ -122,6 +122,8 @@ class Plan:
     cast_needed: bool = False  # an old copy took scalar types the definition does not: a cast variant exists
     blocked: tuple[str, ...] = ()  # differences a cast may not bridge (a pointer view)
     left: tuple[str, ...] = ()  # spellings this plan did not touch (a block-scope or conditional declaration)
+    waits: tuple[str, ...] = ()  # names whose own conflicts must be unified before this one can be
+    risky: tuple[str, ...] = ()  # the units whose old copy took other types: the ones the screen compiles first
     skip: str = ""  # why no change set was planned
 
     @property
@@ -138,6 +140,10 @@ def family(snapshot: Snapshot, path: str, spelled: Sequence[str] = ()) -> str:
     found = world.header_of(path, text)
     if found and snapshot.peek(found) is not None:
         return found
+    stem = posixpath.splitext(path)[0].removeprefix("src/").lower()
+    named = {p.lower(): p for p in headers.sources(snapshot)}  # the header the folder layout gives the unit
+    if conventional := next((named[k] for e in (".h", ".hpp") if (k := f"include/{stem}{e}") in named), ""):
+        return conventional
     folder = posixpath.dirname(path).removeprefix("src/").lower()
     included = [
         h
@@ -158,6 +164,49 @@ def _users(snapshot: Snapshot, name: str) -> list[str]:
 
     words = api.memo(("recipe.decl.words", snapshot.digest), build)
     return sorted(p for p, w in words.items() if name in w)
+
+
+def _typed(snapshot: Snapshot, header: str, prototype: str, text: str, read: Callable[[str], str | None]) -> str:
+    """`text` of `header` with an include of every header that declares a type the prototype names, unless the header
+    already sees it (or that header would include this one back)."""
+    catalog = headers.catalog(snapshot)
+    for token in dict.fromkeys(re.findall(r"\b(?:struct|union|enum)\s+\w+|\b[A-Za-z_]\w*", prototype)):
+        found = catalog.get(" ".join(token.split()))
+        if not found or not re.match(r"(?:typedef|struct|union|enum)\b", found[2]):
+            continue
+        if (
+            found[0] != header
+            and not declplan.reaches(header, found[0], read)
+            and not declplan.reaches(found[0], header, read)
+        ):
+            text = declplan.add_include(text, found[0])
+    return text
+
+
+def _clashes(snapshot: Snapshot, header: str, users: list[str], read: Callable[[str], str | None]) -> list[str]:
+    """The names a header (with everything it includes) declares differently from a file-scope declaration of one of
+    the `users` that is about to include it: the include would stop that unit compiling."""
+    closure = [header]
+    for path in closure:
+        for spelled in declplan._INCLUDE.findall(read(path) or ""):
+            if (found := declplan.resolve(path, spelled, lambda p: read(p) is not None)) and found not in closure:
+                closure.append(found)
+
+    def kinds(paths: list[str]) -> dict[str, set[str]]:
+        out: dict[str, set[str]] = {}
+        for scanned in headers._scanned(snapshot, paths):
+            for n, _, text in scanned["declared"]:
+                if not text.startswith("typedef"):
+                    shown = headers._unnamed(headers._normal(headers._type_of(text, n)))
+                    out.setdefault(n, set()).add(shown)
+        return out
+
+    theirs, bad = kinds([p for p in closure if snapshot.peek(p) is not None]), set()
+    for path in users:
+        for n, spelled in kinds([path]).items():
+            if n in theirs and not spelled <= theirs[n]:
+                bad.add(n)
+    return sorted(bad)
 
 
 def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
@@ -197,15 +246,21 @@ def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
             text = declplan.remove(text, one, name)
             removed += 1
         texts[path] = text
-    texts[header] = declplan.put(read(header) or "", name, prototype)
-    added, blocked, cast_count = 0, [], 0
+    texts[header] = _typed(snapshot, header, prototype, declplan.put(read(header) or "", name, prototype), read)
+    added, blocked, cast_count, joining = 0, [], 0, []
     for path in _users(snapshot, name):
         if path == header or not headers.is_source(path):
             continue
         text = read(path)
         if text is not None and not declplan.reaches(path, header, read):
             texts[path] = declplan.add_include(text, header)
+            joining.append(path)
             added += 1
+    if clash := [n for n in _clashes(snapshot, header, joining, read) if n != name]:
+        why = (
+            f"waits for {', '.join(clash[:6])}: {header} declares them another way than the units that would include it"
+        )
+        return Plan(name, {}, header, critical=weight, skip=why, waits=tuple(clash))
     for path in _users(snapshot, name):  # a unit with no copy of its own saw the type the header it includes gave
         if headers.is_source(path) and path not in old:
             given = next((s for h, s in headed.items() if declplan.reaches(path, h, before)), None)
@@ -223,15 +278,20 @@ def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
             if casts and not done.blocked:
                 texts[path], cast_count = done.text, cast_count + done.count
     edits = {p: t.encode() for p, t in texts.items() if t.encode() != snapshot.peek(p)}
-    left = tuple(f"{p}:{n}" for p, n, _ in row["spellings"] if p != header and (p, n) not in seen)
+    left = tuple(
+        f"{p}:{n}"
+        for p, n, _ in row["spellings"]
+        if p != header and (p, n) not in seen and (p, n) != (where, row["definition"][1])
+    )
     if not edits:
         why = (
             "no file-scope copy to merge: " + (", ".join(left[:3]) or "none found") + " are block-scope or conditional"
         )
         return Plan(name, {}, header, critical=weight, skip=why, left=left)
     return Plan(
-        name, edits, header, removed, added, cast_count, weight, bool(differs), tuple(dict.fromkeys(blocked)), left
-    )
+        name, edits, header, removed, added, cast_count, weight, bool(differs), tuple(dict.fromkeys(blocked)), left,
+        risky=tuple(sorted(differs)),
+    )  # fmt: skip
 
 
 def _same_params(a: list[str], b: list[str]) -> bool:
@@ -330,6 +390,7 @@ def _report(made: Plan) -> Json:
         "cast_needed": made.cast_needed,
         "blocked": list(made.blocked),
         "left": list(made.left),
+        "waits": list(made.waits),
         "skip": made.skip,
     }
 
@@ -377,7 +438,7 @@ def _write(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, bat
         for path in sorted({p for p, _, _ in row["spellings"]} | set(_headers(snapshot, row)[0])):
             host.write(where / path, snapshot.peek(path) or b"")
     host.write(where / "brief.md", _brief(snapshot, row, where, made, batch).encode())
-    host.write(where / "batch.json", json.dumps(batch).encode())
+    host.write(where / "plan.json", json.dumps({"batch": batch, "risky": list(made.risky) if made else []}).encode())
     state.take(config, row["name"], now)
 
 
@@ -414,10 +475,15 @@ def take(config: Config, snapshot: Snapshot, row: Json, now: float) -> Json:
 # ---------------------------------------------------------------- proving
 
 
+def _sidecar(config: Config, name: str) -> Json:
+    """What `next` left beside the copies: the batch the name was leased with and the units to screen first."""
+    listing = folder(config, name) / "plan.json"
+    return json.loads(listing.read_text()) if listing.is_file() else {}
+
+
 def _batch(config: Config, name: str) -> list[str]:
     """The names leased together with `name` that are still items of this session."""
-    listing = folder(config, name) / "batch.json"
-    names = json.loads(listing.read_text()) if listing.is_file() else [name]
+    names = _sidecar(config, name).get("batch", [name])
     return [n for n in dict.fromkeys([name, *names]) if is_item(config, n)]
 
 
@@ -425,7 +491,7 @@ def _edits(config: Config, snapshot: Snapshot, name: str) -> dict[str, bytes]:
     where = folder(config, name)
     found = {p.relative_to(where).as_posix(): p.read_bytes() for p in sorted(where.rglob("*")) if p.is_file()}
     found.pop("brief.md", None)
-    found.pop("batch.json", None)
+    found.pop("plan.json", None)
     return {path: text for path, text in found.items() if text != snapshot.peek(path)}
 
 
@@ -505,6 +571,7 @@ class _Try:
     refused: list[Json] = field(default_factory=list)
     exact: bool = False
     waiting: bool = False  # exact in the screen, left for the next `try`: this one spent its CPU budget
+    risky: tuple[str, ...] = ()
 
 
 def _prepare(config: Config, snapshot: Snapshot, name: str) -> _Try:
@@ -520,13 +587,13 @@ def _prepare(config: Config, snapshot: Snapshot, name: str) -> _Try:
     if hit := _banned(snapshot, name, edits):
         raise state.stop(hit[0], hit[1], unit=name, action=hit[2])
     edits, fixed = _drop_repeats(snapshot, edits, name)
-    return _Try(name, edits, fixed)
+    return _Try(name, edits, fixed, risky=tuple(_sidecar(config, name).get("risky", ())))
 
 
 def _screen(config: Config, snapshot: Snapshot, tries: list[_Try]) -> None:
     """Measure every change set in one process and mark the ones that are exact in the reference version."""
     units = [world.of(snapshot).units[_primary(snapshot, t.edits)] for t in tries]
-    sets = [(unit, t.edits) for unit, t in zip(units, tries, strict=True)]
+    sets = [(unit, t.edits, t.risky) for unit, t in zip(units, tries, strict=True)]
     for t, verdict in zip(tries, ladder.screen(config, snapshot, sets), strict=True):
         t.proofs, t.exact = verdict.proofs, verdict.exact
 
@@ -537,19 +604,25 @@ def _cpu() -> float:
     return me.ru_utime + me.ru_stime + kids.ru_utime + kids.ru_stime
 
 
-def _land(config: Config, snapshot: Snapshot, one: _Try, screened: bool = False) -> None:
-    """Land one name. A screened one is exact in the reference version: unbake proves it in the rest while landing."""
-    unit = world.of(snapshot).units[_primary(snapshot, one.edits)]
-    if screened:
-        drain = ladder.submit_set(config, snapshot, unit, one.edits)
-        if not drain.get("landed") and not drain.get("refused"):
-            note = "unbake took nothing: the set is not exact in every version"
-            one.proofs = (*one.proofs, judge.proof_failed(one.name, note, "land.not_exact"))
-    else:
-        one.proofs, drain = ladder.land_set(config, snapshot, unit, one.edits)
-    one.landed = ladder.commits(drain).get("publish", "")
-    one.refused = [f for body in drain.get("refused", []) for f in body["findings"]]
-    one.exact = bool(one.proofs) and all(p.exact for p in one.proofs)
+def _message(one: _Try) -> str:
+    """The commit message of a set: the bug it fixes, then what it changed."""
+    word = re.compile(rf"\b{re.escape(one.name)}\b")  # the edited header that now says the name is the one it goes in
+    header = next((p for p, t in sorted(one.edits.items()) if headers.is_header(p) and word.search(t.decode())), "")
+    where = f" in {header.removeprefix('include/')}" if header else ""
+    return (
+        f"Declare {one.name} once{where} from its definition\n\n"
+        f"{len(one.edits)} files: the other declarations are gone and each unit that used one includes the header.\n"
+        "Every version's ROM builds byte-identical (make check)."
+    )
+
+
+def _land(config: Config, snapshot: Snapshot, one: _Try) -> None:
+    """Write the set, prove every ROM, commit it: one commit for this name. A refusal says what differs."""
+    done = settle.land(config, {p: snapshot.peek(p) for p in one.edits}, one.edits, _message(one))
+    one.landed = done.get("commit", "")
+    if problem := done.get("problem"):
+        one.proofs = (*one.proofs, judge.proof_failed(one.name, problem, "land.not_exact"))
+    one.exact = bool(one.landed)
 
 
 def _retry(config: Config, snapshot: Snapshot, one: _Try) -> _Try | None:
@@ -566,7 +639,9 @@ def _retry(config: Config, snapshot: Snapshot, one: _Try) -> _Try | None:
 
 def _result(one: _Try, dry: bool) -> Json:
     proofs = one.proofs
-    score = {v: round(min(p.score for p in proofs if p.version == v), 4) for v in sorted({p.version for p in proofs})}
+    score = {
+        v: round(min(p.score for p in proofs if p.version == v), 4) for v in sorted({p.version for p in proofs} - {""})
+    }
     word = "exact" if one.landed else "refused" if one.refused else "fuzzy" if any(score.values()) else "failed"
     word = "would-land" if dry and one.exact else "waiting" if one.waiting else word
     why = [x for f in one.refused for x in (f["reason"], *f["missing"])] or [m for p in proofs for m in p.missing][:3]
@@ -612,15 +687,14 @@ def run(config: Config, name: str, now: float, dry: bool = False) -> Json:
             if member == name:
                 raise
             results[member] = _failed(member, refusal.findings[0].reason)
-    if len(tries) > 1 or dry:
-        _screen(config, snapshot, tries)
+    _screen(config, snapshot, tries)
     if not dry:
         began = _cpu()
-        for one in [t for t in tries if t.exact or len(tries) == 1]:
+        for one in [t for t in tries if t.exact]:
             if _cpu() - began > CPU_BUDGET:
                 one.waiting = True
                 continue
-            _land(config, snapshot, one, screened=len(tries) > 1)
+            _land(config, snapshot, one)
         for index_, one in enumerate(tries):  # alone, with the casts the old declarations need
             if (
                 not one.landed

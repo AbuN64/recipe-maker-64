@@ -121,12 +121,19 @@ def include_line(header: str) -> str:
 
 
 def add_include(text: str, header: str) -> str:
-    """`text` with the quoted include of `header` after its last include (at the top when it has none)."""
+    """`text` with the quoted include of `header` after the last include of its first include block; a file with none
+    gets it after the guard's #define, else at the top."""
     line = include_line(header) + "\n"
     found = list(re.finditer(r"^[ \t]*#[ \t]*include\b[^\n]*\n?", text, re.M))
     if not found:
-        return line + text
-    at = found[-1].end()
+        guard = re.match(r"\s*#[ \t]*ifndef\b[^\n]*\n[ \t]*#[ \t]*define\b[^\n]*\n", text)
+        return text[: guard.end()] + line + text[guard.end() :] if guard else line + text
+    last = found[0]
+    for one in found[1:]:
+        if text[last.end() : one.start()].strip():
+            break  # code between two includes: the block ended
+        last = one
+    at = last.end()
     return text[:at] + ("\n" if not text[:at].endswith("\n") else "") + line + text[at:]
 
 

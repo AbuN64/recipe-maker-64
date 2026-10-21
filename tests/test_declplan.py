@@ -55,6 +55,13 @@ def test_add_include_goes_after_the_last_include_or_to_the_top():
         '#include "a.h"\n#include "b.h"\n#include "c/d.H"\nint x;\n'
     )
     assert declplan.add_include("int x;\n", "include/d.h") == '#include "d.h"\nint x;\n'
+    mid = '#include "a.h"\n\n#include "b.h"\nint x;\n#include "late.h"\n'
+    assert (
+        declplan.add_include(mid, "include/c.h")
+        == '#include "a.h"\n\n#include "b.h"\n#include "c.h"\nint x;\n#include "late.h"\n'
+    )
+    guarded = "#ifndef H\n#define H\nint x;\n#endif\n"
+    assert declplan.add_include(guarded, "include/c.h") == '#ifndef H\n#define H\n#include "c.h"\nint x;\n#endif\n'
 
 
 def test_reaches_follows_includes_through_other_headers_and_survives_a_cycle():
