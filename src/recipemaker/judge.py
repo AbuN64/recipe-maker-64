@@ -74,6 +74,11 @@ def _unbuilt(findings: Sequence[Finding]) -> bool:
     return bool(findings) and all(f.key in ("score.compile",) for f in findings)
 
 
+def proof_failed(member: str, reason: str, key: str = "compile.error") -> Proof:
+    """A failed proof carrying why unbake could not measure the candidate, or took nothing of it."""
+    return Proof("", member, "", "", "", "", "", "", False, (f"{key}: {reason}",), 0.0, {"compile_failed": True})
+
+
 def _failed(member: str, findings: tuple[Finding, ...]) -> Verdict:
     """A candidate that did not build: one failed proof carrying the compile error, so the ladder records why."""
     missing = tuple(f"compile.error: {f.reason}" for f in findings) or ("compile.error: no instructions were built",)

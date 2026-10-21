@@ -169,7 +169,7 @@ def next_item(config: Config, params: Json) -> Json:
     now, rules = _now(), state.settings()
     snapshot = world.capture(config)
     if params.get("kind") == "declaration":
-        return declare.next_item(config, snapshot, now)
+        return declare.next_item(config, snapshot, now, params.get("count") or 0, bool(params.get("dry")))
     wanted_kind, wanted_twin = params.get("kind"), params.get("twin")
     taken = {lease.item for lease in state.leases(config, now)}
     ready = twin.ready(snapshot)
@@ -501,7 +501,7 @@ def try_(config: Config, params: Json) -> Json:
         raise Refusal(Finding("recipe.budget", reason, unit=item, action="recipe next"))
     baseline = _tracked(config)
     if declare.is_item(config, item):
-        return declare.run(config, item, now)
+        return declare.run(config, item, now, bool(params.get("dry")))
     tries = [r for r in host.rows(config, "recipe/tries") if r["item"] == item]
     path = ladder.candidate_path(config, item)
     fixes = _prepare(config, item, tries[-1] if tries else None)

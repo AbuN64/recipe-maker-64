@@ -43,9 +43,34 @@ def _landing(result: Json) -> list[str]:
     return []
 
 
+def _render_plan(result: Json) -> list[str]:
+    lines = [f"dry: {result['why']}"]
+    for number, names in enumerate(result["batches"], 1):
+        lines.append(f"batch {number}: {' '.join(names)}")
+    for one in result["plans"]:
+        if one["skip"]:
+            lines.append(f"- {one['name']}: not planned, {one['skip']}")
+            continue
+        extra = f", {one['casts']} casts" * bool(one["casts"]) + ", needs casts" * (
+            one["cast_needed"] and not one["casts"]
+        )
+        left = f"; left: {', '.join(one['left'])}" * bool(one["left"])
+        lines.append(
+            f"- {one['name']} (critical {one['critical']}) -> {one['header']}: {one['removed']} copies deleted,"
+            f" {one['includes']} includes added{extra}{left}; files: {', '.join(one['files'])}"
+        )
+    left = result["reported"]
+    lines.append(
+        f"reported, no landed definition (type unknown): {len(left)}; first: " + ", ".join(r["name"] for r in left[:12])
+    )
+    return lines
+
+
 def _render_next(result: Json) -> list[str]:
     if not result["item"]:
         return [f"none: {result['why']}"]
+    if result.get("dry"):
+        return _render_plan(result)
     shape = "" if result["kind"] == "declaration" else f"   size: {result['size']} bytes   regions: {result['regions']}"
     brief_line = [f"brief: {result['brief']}"] if result["kind"] == "declaration" else []
     return [
@@ -53,6 +78,7 @@ def _render_next(result: Json) -> list[str]:
         f"kind: {result['kind']}{shape}",
         *brief_line,
         f"why: {result['why']}",
+        *([f"batch: {' '.join(result['batch'])}"] if len(result.get("batch", ())) > 1 else []),
         *([f"twin: {result['twin']}"] if "twin" in result else []),
         f"lease: ends after {result['stall_tries']} tries without progress or {result['idle_minutes']:g} idle minutes",
     ]
@@ -117,7 +143,14 @@ def _render_try(result: Json) -> list[str]:
         lines.append("auto-fixes: " + "; ".join(result["auto_fixes"]))
     if "restored" in result:
         lines.append("REGRESSED: " + result["restored"])
-    if result["result"] != "exact":
+    if len(result.get("batch", ())) > 1:
+        lines += [
+            f"- {b['item']}: {b['result']}"
+            + (f" ({b['landed']})" if b["landed"] else "")
+            + (f", {b['why'][0]}" if b["why"] else "")
+            for b in result["batch"]
+        ]
+    if result["result"] not in ("exact", "would-land"):
         lines += [*(f"why: {w}" for w in result["why"]), f"file: {result['file']}", f"brief: {result['brief']}"]
     return lines
 
@@ -253,12 +286,15 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--twin", choices=("yes", "no"), help="only items with (yes) or without (no) a landed twin")
     one.add_argument("--max-size", type=int, help="largest item in bytes")
     one.add_argument("--order", choices=("small", "large"), help="smallest or largest first (default: largest)")
+    one.add_argument("--count", type=int, default=0, help="declarations: plan this many of the best-ranked names")
+    one.add_argument("--dry", action="store_true", help="declarations: show the batches and change sets, lease nothing")
     one = verb("work", "run the tool rungs on an item; prints once at exit, and a large item can take minutes")
     one.add_argument("item")
     one.add_argument("--kind", choices=("declaration",), help="work the declaration item of this name")
     one.add_argument("--no-submit", action="store_true")
     one = verb("try", "prove the candidate file")
     one.add_argument("item")
+    one.add_argument("--dry", action="store_true", help="declarations: measure the batch, land nothing")
     one = verb("look", "show a prototype, type, field or global")
     one.add_argument("name")
     one = verb("skip", "release an item with a reason")

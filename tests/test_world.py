@@ -102,3 +102,26 @@ def test_an_empty_write_and_a_deletion_are_different_overlays(tmp_path):
 
     empty, gone = world.overlay(Snap(), {"include/a.h": b""}), world.overlay(Snap(), {"include/a.h": None})
     assert empty.digest != gone.digest and empty.overlays == {"include/a.h": b""}
+
+
+def test_asm_path_reads_the_fact_files_once_for_any_number_of_members_and_again_when_they_change(tmp_path, monkeypatch):
+    facts = {"f": (0x80000400, 0x1100, 8, "func"), "d": (0x80001000, 0x2100, 4, "u32")}
+    reads = []
+
+    def symbols(config, version):
+        reads.append(version)
+        return dict(facts)
+
+    monkeypatch.setattr(world.api, "symbols", symbols)
+    (tmp_path / "versions/a").mkdir(parents=True)
+    table = tmp_path / "versions/a/symbol_addrs.txt"
+    table.write_text("f = 0x80000400;\n")
+    segments = [SimpleNamespace(rom=0x1000, name="s1"), SimpleNamespace(rom=0x2000, name="s2")]
+    project = SimpleNamespace(root=tmp_path, version={"a": SimpleNamespace(segments=segments)})
+    config = SimpleNamespace(project=project)
+    assert world.asm_path(config, "a", "f") == tmp_path / "asm/a/nonmatchings/s1/f.s"
+    assert world.asm_path(config, "a", "d") == tmp_path / "asm/a/data/s2/d.s"
+    assert [world.asm_path(config, "a", "f") for _ in range(50)] and reads == ["a"]
+    table.write_text("f = 0x80000400; // changed\n")
+    world.asm_path(config, "a", "f")
+    assert reads == ["a", "a"]

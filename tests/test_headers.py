@@ -82,3 +82,13 @@ def test_normal_blanks_attributes_and_plain_spells_gnu_words():
     out = headers.normal(text)
     assert "__attribute__" not in out and out.count("\n") == text.count("\n")
     assert '# 1 "a.h"\n' in out and "static inline int g(void);" in out
+
+
+def test_the_source_and_header_suffixes_are_the_ones_of_unbakes_unit_contract():
+    from unbake import config
+
+    for path in ("a.c", "A.CPP", "src/x/y_2.cpp", "a.h", "A.H", "a.s", "a.txt", "a.hpp", "a.cc"):
+        assert headers.is_source(path) == config.is_source(path) and headers.is_source(path) == (
+            path.lower().endswith((".c", ".cpp"))
+        )
+        assert headers.is_header(path) >= config.is_header(path)  # unbake's headers are among ours

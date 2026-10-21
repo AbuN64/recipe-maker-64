@@ -217,6 +217,33 @@ def rom_bytes(version: Version, start: int, end: int) -> bytes:
     return bytes(image[start:end])
 
 
+def _symbol_table(
+    config: Config, version: str
+) -> tuple[dict[str, tuple[int, int | None, int | None, str]], list[tuple[int, str]]]:
+    """One version's symbol facts and its segments sorted by rom, read once while the fact files stay as they are:
+    `api.asm_path` parses both fact files on every call, which cost 4000 parses (194 CPU s) in a cold scan."""
+    root = config.project.root
+    stamps = []
+    for name in (f"versions/{version}/symbol_addrs.txt", f"versions/{version}/aliases.txt"):
+        try:
+            seen = (root / name).stat()
+            stamps.append((name, seen.st_mtime_ns, seen.st_size))
+        except FileNotFoundError:
+            stamps.append((name, 0, 0))
+
+    def build() -> tuple[dict[str, tuple[int, int | None, int | None, str]], list[tuple[int, str]]]:
+        rows = sorted((s.rom, s.name) for s in config.project.version[version].segments)
+        return dict(api.symbols(config, version)), rows
+
+    return api.memo(("recipe.symbol-table", str(root), version, tuple(stamps)), build)
+
+
 def asm_path(config: Config, version: str, name: str) -> Path:
     """The extracted assembly of a symbol, absolute."""
-    return config.project.root / api.asm_path(config, version, name)
+    facts, segments = _symbol_table(config, version)
+    row = facts.get(name)
+    held = [segment for start, segment in segments if row and row[1] is not None and start <= row[1]]
+    if row is None or row[1] is None or not held:  # unknown or unplaced: unbake names the refusal
+        return config.project.root / api.asm_path(config, version, name)
+    folder = "nonmatchings" if row[3] == "func" else "data"
+    return config.project.root / f"asm/{version}/{folder}/{held[-1]}/{name}.s"

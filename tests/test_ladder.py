@@ -267,7 +267,7 @@ def test_a_two_file_change_set_is_submitted_once_with_the_header_as_an_extra_and
     fakes.scores.append(1.0)
     proofs, drain = ladder.land_set(fakes.config, fakes.snapshot, unit, edits)
     assert all(p.exact for p in proofs) and fakes.calls["judge.submit"] == 1
-    assert fakes.extras == {"include/a.h": b"extern int gX;\n"}  # the unit's own file travels as the source
+    assert fakes.extras == edits  # the unit's own edited file travels too: the candidate is spliced into its text
     assert [row["member"] for row in drain["landed"]] == ["func_a"] and drain["refused"] == []
 
 

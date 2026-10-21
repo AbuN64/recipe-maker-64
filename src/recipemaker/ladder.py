@@ -382,11 +382,9 @@ def run(config: Config, member: str, *, submit: bool) -> Outcome:
     return _finish(config, snapshot, item, submit, kind == "data")
 
 
-def land_set(
-    config: Config, snapshot: Snapshot, unit: world.Unit, edits: dict[str, bytes]
-) -> tuple[tuple[Proof, ...], Json]:
-    """Prove a landed function of the unit with the edited files overlaid; when it is exact, submit the edits as one
-    change set under it and land it. Returns the proofs and the drain ({} when nothing was submitted)."""
+def carrier(snapshot: Snapshot, unit: world.Unit, edits: Mapping[str, bytes]) -> tuple[str, str]:
+    """The landed function of `unit` (and its body, from the edited source when the set edits it) that carries a change
+    set through the compiler."""
     layout = world.of(snapshot)
     source = (edits.get(unit.path) or snapshot.read(unit.path)).decode(errors="replace")
     landed = [n for n in unit.members if n in layout.members and layout.members[n].kind == "function"]
@@ -395,16 +393,61 @@ def land_set(
         raise Refusal(
             Finding("land.request", f"{unit.path} defines no function to carry the change set", path=unit.path)
         )
-    name, body = found
+    return found
+
+
+def land_set(
+    config: Config, snapshot: Snapshot, unit: world.Unit, edits: dict[str, bytes]
+) -> tuple[tuple[Proof, ...], Json]:
+    """Prove a landed function of the unit with the edited files overlaid; when it is exact, submit the edits as one
+    change set under it and land it. Returns the proofs and the drain ({} when nothing was submitted)."""
+    name, body = carrier(snapshot, unit, edits)
     with host.work(config) as work:
         file = work / f"{host.stem(name)}.c"
         host.write(file, body.encode())
-        others = {p: t for p, t in edits.items() if p != unit.path}
+        others = dict(edits)  # the unit's own file too: the candidate is spliced into its edited text
         verdict = judge.score(config, file, name, others)
         if not verdict.exact:
             return verdict.proofs, {}
         result = judge.submit(config, file, name, others)
     return verdict.proofs, result.get("drain") or {}
+
+
+def submit_set(config: Config, snapshot: Snapshot, unit: world.Unit, edits: dict[str, bytes]) -> Json:
+    """Submit a change set that `screen` found exact: unbake proves it in every version again and lands it, so the
+    drain says what happened (landed rows, refused rows; empty when it took nothing). One proof less than `land_set`."""
+    name, body = carrier(snapshot, unit, edits)
+    with host.work(config) as work:
+        file = work / f"{host.stem(name)}.c"
+        host.write(file, body.encode())
+        result = judge.submit(config, file, name, dict(edits))
+    drain: Json = result.get("drain") or {}
+    return drain
+
+
+def screen(
+    config: Config, snapshot: Snapshot, sets: Sequence[tuple[world.Unit, Mapping[str, bytes]]]
+) -> list[judge.Verdict]:
+    """The verdict of each change set measured through its carrier, all in one unbake process on every core and in the
+    reference version only: a set that is not exact here is not worth the full proof. A set unbake cannot measure at
+    all (it refuses the whole call) is split out: the others are measured again without it."""
+    if not sets:
+        return []
+    with host.work(config) as work:
+        rows = []
+        for n, (unit, edits) in enumerate(sets):
+            name, body = carrier(snapshot, unit, edits)
+            file = work / f"{n}-{host.stem(name)}.c"
+            host.write(file, body.encode())
+            rows.append((file, name, dict(edits)))
+        try:
+            return judge.score_many(config, rows)
+        except Refusal as refusal:
+            if len(sets) == 1:
+                reason = "; ".join(f.reason for f in refusal.findings)[-600:]
+                return [judge.Verdict((judge.proof_failed(rows[0][1], reason),), False, ())]
+    half = len(sets) // 2
+    return [*screen(config, snapshot, sets[:half]), *screen(config, snapshot, sets[half:])]
 
 
 def commits(drain: Json | None, member: str | None = None) -> dict[str, str]:

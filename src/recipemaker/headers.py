@@ -23,6 +23,16 @@ def _blank(text: str) -> str:
     return re.sub(r"/\*.*?\*/|//[^\n]*", lambda m: re.sub(r"[^\n]", " ", m[0]), text, flags=re.S)
 
 
+def is_source(path: str) -> bool:
+    """A C source by suffix, case aside (the suffixes of unbake's unit contract; a test keeps them equal)."""
+    return path.lower().endswith(_SOURCE)
+
+
+def is_header(path: str) -> bool:
+    """A header by suffix, case aside."""
+    return path.lower().endswith(_HEADER)
+
+
 def _kind_of(suffix: str) -> Callable[[str], bool]:
     """ ".c" any source (.c, .cpp, any case), ".h" any header, else that exact suffix."""
     if suffix in (".c", ".h"):
