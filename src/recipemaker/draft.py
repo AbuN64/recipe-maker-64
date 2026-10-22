@@ -442,7 +442,7 @@ def data_text(snapshot: Snapshot, member: str) -> str:
     for at in range(0, len(raw), 4) if code == "I" else ():
         value = int.from_bytes(raw[at : at + 4], "big")
         if code_alias(snapshot, held, version, placements[0].vram + at, words, at // 4) is not None:
-            # a code pointer through KUSEG: spelled by the alias row the version has (`recipe text` adds missing rows)
+            # a code pointer through KUSEG: spelled by the alias row the version has, else a number
             alias = alias_name(snapshot, (version,), value)
             if alias is not None and alias in snapshot.versions[version].symbols:
                 referenced[alias] = f"extern char {alias}[];"

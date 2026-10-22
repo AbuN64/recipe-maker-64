@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, crack, errors, lifecycle, naming, retext, state, structure, style, work, world
+from recipemaker import advice, brief, crack, errors, lifecycle, naming, state, structure, style, work, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -30,7 +30,6 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "apply": structure.apply,
     "name": naming.run,
     "style": style.run,
-    "text": retext.run,
 }
 
 
@@ -244,15 +243,6 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "apply": _render_apply,
     "name": _render_name,
     "style": _render_style,
-    "text": lambda result: [
-        f"{'retyped' if result['written'] else 'would retype'} {len(result['items'])} text arrays"
-        f" in {len(result['files'])} files",
-        *(f"{i['symbol']} in {i['file']}: {i['size']} bytes" for i in result["items"]),
-        f"{'pointed' if result['written'] else 'would point'} {len(result['pointers'])} code words at their"
-        f" functions ({result['rows']} alias rows)",
-        *(f"{p['symbol']}[{p['word']}] in {p['file']}: &{p['alias']} ({p['function']})" for p in result["pointers"]),
-        *(f"kept {k['symbol']}: {k['why']}" for k in result["kept"]),
-    ],
 }
 
 
@@ -333,9 +323,6 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("paths", nargs="*", help="check only these paths")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
-    one = verb("text", "retype integer arrays: text as char arrays, KUSEG code words as alias references")
-    one.add_argument("--write", action="store_true", help="edit the unit sources (default: only list)")
-    one.add_argument("--only", help="comma list of unit source paths")
     verb("status", "sessions, leases and counts")
     return parser
 
