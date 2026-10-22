@@ -141,6 +141,21 @@ def session() -> str:
     return os.environ.get("RECIPE_SESSION") or str(os.getppid())
 
 
+def _dead(owner: str) -> bool:
+    """True when `owner` is a process id that no longer exists on this host; named sessions are never dead."""
+    try:
+        os.kill(int(owner), 0)
+    except ProcessLookupError:
+        return True
+    except (ValueError, OSError):
+        return False
+    return False
+
+
+def _held(current: Lease, now: float) -> str:
+    return f"live, held {max(0, round((now - current.started) / 60))} min"
+
+
 def _root(config: Config) -> Path:
     return config.project.root / ".unbake" / "recipe"
 
@@ -171,7 +186,8 @@ def lost(item: str, current: Lease | None, now: float) -> Refusal:
     elif current.expires <= now:
         reason = f"{item} was leased to session {current.session} and expired at {stamp(current.expires)}"
     else:
-        reason = f"{item} has been leased to session {current.session} since {stamp(current.started)}"
+        since = f"{stamp(current.started)} ({_held(current, now)})"
+        reason = f"{item} has been leased to session {current.session} since {since}"
     return stop("recipe.not-leased", reason, unit=item, action="recipe next")
 
 
@@ -194,11 +210,14 @@ def take(config: Config, item: str, now: float) -> Lease:
     with host.exclusive(config, "recipe", wait=True):
         current = lease(config, item)
         live = current is not None and current.expires > now
+        if current is not None and live and current.session != session() and _dead(current.session):
+            current = replace(current, session=session())
         if current is not None and live and current.session != session():
             raise Refusal(
                 Finding(
                     "recipe.leased",
-                    f"{item} is leased to session {current.session} until {stamp(current.expires)}",
+                    f"{item} is leased to session {current.session} ({_held(current, now)}) until "
+                    f"{stamp(current.expires)}",
                     unit=item,
                     action="recipe next",
                 )
@@ -215,6 +234,9 @@ def take(config: Config, item: str, now: float) -> Lease:
 
 def held(config: Config, item: str, now: float) -> Lease:
     current = lease(config, item)
+    if current is not None and current.expires > now and current.session != session() and _dead(current.session):
+        current = replace(current, session=session())  # no lock here: callers may already hold it
+        _write(config, current)
     if current is None or current.expires <= now or current.session != session():
         raise lost(item, current, now)
     return current

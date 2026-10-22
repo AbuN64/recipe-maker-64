@@ -241,3 +241,35 @@ def test_take_gives_the_same_session_its_expired_lease_back_with_its_tries_and_n
     state.count_try(fakes.config, "func_a", NOW + 1, False)
     again = state.take(fakes.config, "func_a", NOW + 5000)
     assert (again.session, again.tries, again.expires) == ("s1", 1, NOW + 5000 + 900)
+
+
+def _dead_owner(fakes, monkeypatch, stalls=2):
+    monkeypatch.setenv("RECIPE_SESSION", "4194999")
+    state.take(fakes.config, "func_a", NOW)
+    state._write(fakes.config, replace(state.lease(fakes.config, "func_a"), tries=stalls))
+    monkeypatch.setenv("RECIPE_SESSION", "4194998")
+
+
+def test_take_and_held_take_over_a_lease_whose_owner_process_is_dead_keeping_its_stalls(fakes, monkeypatch):
+    monkeypatch.setattr(state, "_dead", lambda owner: owner == "4194999")
+    _dead_owner(fakes, monkeypatch)
+    assert state.held(fakes.config, "func_a", NOW + 5).session == "4194998"
+    assert state.lease(fakes.config, "func_a").tries == 2
+    state.release(fakes.config, "func_a")
+    _dead_owner(fakes, monkeypatch)
+    taken = state.take(fakes.config, "func_a", NOW + 5)
+    assert (taken.session, taken.tries) == ("4194998", 2)
+
+
+def test_a_live_or_named_session_lease_is_refused_naming_the_holder_and_its_age(fakes, monkeypatch):
+    monkeypatch.setattr(state, "_dead", lambda owner: False)
+    _dead_owner(fakes, monkeypatch)
+    with pytest.raises(Refusal, match=r"session 4194999 \(live, held 2 min\)"):
+        state.take(fakes.config, "func_a", NOW + 120)
+    assert state._dead("some-name") is False
+
+
+def test_a_dead_owner_takeover_inside_the_project_lock_does_not_deadlock(fakes, monkeypatch):
+    monkeypatch.setattr(state, "_dead", lambda owner: owner == "4194999")
+    _dead_owner(fakes, monkeypatch)
+    assert state._extend(fakes.config, "func_a", NOW + 5, None).session == "4194998"
