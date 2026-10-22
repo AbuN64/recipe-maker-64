@@ -24,10 +24,6 @@ _ACCESS = dict(w.split("=") for w in _WIDTH.split())
 WINDOW = 0x40  # bytes either side of a symbol that count as its neighbours
 
 
-def percents(score: Json) -> str:
-    return ", ".join(state.percent(value) for value in score.values())
-
-
 def scores(score: Json) -> str:
     return ", ".join(f"{version} {state.percent(value)}" for version, value in score.items())
 

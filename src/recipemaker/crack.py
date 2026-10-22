@@ -7,7 +7,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from importlib import metadata
 
-from unbake.contracts import Finding, Json, Proof, Refusal, Snapshot, digest
+from unbake.contracts import Config, Finding, Json, Proof, Refusal, Snapshot, digest
 
 from recipemaker import advice, draft, errors, host, index, judge, regions, signatures, state, twin, world
 from recipemaker.state import Attempt
@@ -214,3 +214,21 @@ def packet(snapshot: Snapshot, member: str) -> Json:
                 "declarations": list(signatures.declarations(snapshot, names).values()),
             },
         }
+
+
+def run(config: Config, params: Json) -> Json:
+    """`recipe crack F`: the permuter's search over the shape of the candidate's body (temporaries, statement order,
+    reassigned pointers, conditions), its best body scored in every version, as a file `recipe try` takes."""
+    item, seconds = params["item"], int(params.get("seconds") or state.settings().permute_seconds)
+    path = config.project.root / f".unbake/recipe/work/{host.stem(item)}.c"
+    if not path.is_file():
+        raise Refusal(Finding("land.request", f"{item} has no candidate", action=f"recipe work {item}"))
+    out, here, tool = path.with_suffix(".cracked.c"), draft.measured(path), str(state.tool("permuter"))
+    args = ["--function", item, "--permute", str(seconds), "--out", str(out), "--permuter", tool]
+    found = judge.call(config, "score", str(here), *args)["permute"]
+    base, after = (judge.score(config, f, item) for f in (here, out if found["candidate"] else here))
+    was, now = (min((p.score for p in v.proofs), default=0.0) for v in (base, after))
+    better = f"cp {out} {path}; recipe try {item}"
+    worse = f"no better shape in {seconds} s: apply `unbake score --alloc` edits, or crack {seconds * 3} s"
+    return {"item": item, "permuter": [found["base_score"], found["best_score"]], "score": [was, now],
+            "diff": "\n".join(after.diff[:12]), "next": better if now > was else worse}  # fmt: skip

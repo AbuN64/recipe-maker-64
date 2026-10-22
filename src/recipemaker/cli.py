@@ -15,11 +15,12 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, errors, lifecycle, naming, retext, state, structure, style, work, world
+from recipemaker import advice, brief, crack, errors, lifecycle, naming, retext, state, structure, style, work, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
     "work": work.work,
+    "crack": crack.run,
     "try": work.try_,
     "skip": work.skip,
     "look": work.look_,
@@ -232,6 +233,10 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "next": _render_next,
     "work": _render_work,
     "try": _render_try,
+    "crack": lambda r: [
+        f"permuter {r['permuter'][0]} -> {r['permuter'][1]} score {r['score'][0]:.1%} -> {r['score'][1]:.1%}",
+        *r["diff"].splitlines(),
+    ],
     "skip": lambda result: [f"skipped {result['item']} as {result['reason']}"],
     "look": _render_look,
     "status": _render_status,
@@ -297,6 +302,11 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--kind", choices=("declaration", "type"), help="work the declaration or type item of this name")
     one.add_argument("--arg", type=int, help="type items: the parameter (default: the first void * the code reaches)")
     one.add_argument("--no-submit", action="store_true")
+    one = verb(
+        "crack", "search the candidate's shape with the permuter; writes a better candidate file when it finds one"
+    )
+    one.add_argument("item")
+    one.add_argument("--seconds", type=int, help="permuter run (default the recipe.toml budget.permute_seconds)")
     one = verb("try", "prove the candidate file")
     one.add_argument("item")
     one.add_argument("--dry", action="store_true", help="declarations: measure the batch, land nothing")

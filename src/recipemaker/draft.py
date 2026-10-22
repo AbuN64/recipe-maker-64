@@ -328,11 +328,6 @@ def kuseg_function(snapshot: Snapshot, version: str, value: int) -> Member | Non
     return _starts(snapshot, version).get(value | KSEG0) if 0 < value < KSEG0 else None
 
 
-def _image(snapshot: Snapshot, member: Member, version: str) -> bytes:
-    parts = sorted((p for p in member.placements if p.version == version and p.section != ".bss"), key=_vram)
-    return b"".join(world.rom_bytes(snapshot.versions[version], p.rom_start, p.rom_end) for p in parts)
-
-
 def _aliases(snapshot: Snapshot) -> dict[str, frozenset[int]]:
     """Per version, every word of its data rows (each up to the next row) that names a function through KUSEG: the
     data an assembly file or a blob holds counts as much as a member's."""

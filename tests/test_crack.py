@@ -306,3 +306,32 @@ def test_an_attempt_made_against_one_prototype_is_stale_once_a_type_item_changed
     before = crack.stamp(snapshot, MEMBER)
     declared[MEMBER] = ("h.h", 1, "extern void func_80000400(Obj *);")
     assert crack.stamp(snapshot, MEMBER) != before
+
+
+def test_crack_runs_the_permuter_and_offers_the_better_candidate_to_recipe_try(lane, monkeypatch):
+    config = lane[0].config
+    work = config.project.root / ".unbake/recipe/work"
+    work.mkdir(parents=True)
+    (work / f"{MEMBER}.c").write_text(SOURCE.decode())
+    asked = []
+    monkeypatch.setattr(crack.state, "tool", lambda name: "/bin/permuter")
+    monkeypatch.setattr(crack.state, "settings", lambda: SimpleNamespace(permute_seconds=60))
+
+    def call(cfg, command, *args):
+        asked.append(args)
+        return {"permute": {"base_score": 90, "best_score": 40, "candidate": str(work / f"{MEMBER}.cracked.c")}}
+
+    scores = iter([(0.80, ["-a"]), (0.95, ["-x", "+y"])])
+
+    def score(cfg, file, member):
+        value, diff = next(scores)
+        return SimpleNamespace(proofs=(SimpleNamespace(score=value),), diff=diff)
+
+    monkeypatch.setattr(crack.judge, "call", call)
+    monkeypatch.setattr(crack.judge, "score", score)
+    got = crack.run(config, {"item": MEMBER})
+    assert got["score"] == [0.80, 0.95] and got["permuter"] == [90, 40] and got["diff"] == "-x\n+y"
+    assert got["next"].startswith("cp ") and got["next"].endswith(f"recipe try {MEMBER}")
+    assert "--permute" in asked[0] and "60" in asked[0] and "/bin/permuter" in asked[0]
+    with pytest.raises(Refusal):
+        crack.run(config, {"item": "func_missing"})
