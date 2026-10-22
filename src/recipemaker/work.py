@@ -28,6 +28,7 @@ from recipemaker import (
     regions,
     state,
     twin,
+    typeitem,
     world,
 )
 
@@ -164,6 +165,8 @@ def _compilable(
 def next_item(config: Config, params: Json) -> Json:
     now, rules = _now(), state.settings()
     snapshot = world.capture(config)
+    if params.get("kind") == "type":
+        return typeitem.next_item(config, snapshot, now)
     if params.get("kind") == "declaration":
         return declare.next_item(config, snapshot, now, params.get("count") or 0, bool(params.get("dry")))
     wanted_kind, wanted_twin = params.get("kind"), params.get("twin")
@@ -254,17 +257,28 @@ def _blockers(snapshot: Snapshot, item: str) -> dict[str, str]:
 def _skip_for(config: Config, item: str, reason: str, why: str, now: float) -> Json:
     snapshot = world.capture(config)
     deps = _deps(snapshot, item) if item in world.of(snapshot).members else ""
-    blockers = _blockers(snapshot, item) if reason in ("needs-header-change", "type-unresolved") else {}
+    blockers = _blockers(snapshot, item) if reason in typeitem.SKIPS else {}
+    wait = typeitem.route(config, snapshot, item) if reason in typeitem.SKIPS else None
+    if wait and item in index.get(snapshot).declarations:  # the type item changes this prototype: the item ranks again
+        blockers[item] = index.get(snapshot).declarations[item][2]
     if reason == "other" and "toolchain" in why:  # the evidence rides in the note so the pins can be batched
         packet = crack.packet(snapshot, item) if item in world.of(snapshot).members else {"why": []}
         why = "; ".join([why, *(w for w in packet["why"] if "MIPS-I load delays" in w)])
     state.skip(config, item, reason, why, _best(config, item), now, deps, blockers)
-    return {"item": item, "result": "skipped", "reason": reason, "why": why, "next": "recipe next"}
+    return {
+        "item": item,
+        "result": "skipped",
+        "reason": reason,
+        "why": why,
+        "next": wait["next"] if wait else "recipe next",
+    }
 
 
 def work(config: Config, params: Json) -> Json:
     item, now = params["item"], _now()
     snapshot = world.capture(config)
+    if params.get("kind") == "type" or typeitem.parse_item(item):
+        return _typed(config, snapshot, item, params, now)
     if params.get("kind") == "declaration" or not _is_open(snapshot, item):
         if row := next((r for r in declare.conflicts(config, snapshot) if r["name"] == item), None):
             return declare.take(config, snapshot, row, now)
@@ -286,6 +300,17 @@ def work(config: Config, params: Json) -> Json:
         if new:  # a command that fails must not leave a lease it took
             state.release(config, item)
         raise
+
+
+def _typed(config: Config, snapshot: Snapshot, item: str, params: Json, now: float) -> Json:
+    """Plan and lease the type item of a function's `void *` parameter (the first one its code reaches by offsets)."""
+    function, position = typeitem.parse_item(item) or (item, params.get("arg"))
+    if position is None:
+        found = typeitem.targets(snapshot, function)
+        if not found:
+            raise Refusal(Finding("recipe.no-type", f"{function} has no void * parameter its code reaches by offsets"))
+        position = found[0]
+    return typeitem.take(config, snapshot, function, int(position), now)
 
 
 def _landed(config: Config, snapshot: Snapshot, item: str) -> None:
@@ -654,7 +679,7 @@ def skip(config: Config, params: Json) -> Json:
         found = _skip_for(config, params["item"], params["reason"], params.get("note") or "", _now())
     finally:
         state.release(config, params["item"])  # a skip frees the lease even when recording it failed
-    return {"item": found["item"], "reason": found["reason"], "next": "recipe next"}
+    return {"item": found["item"], "reason": found["reason"], "next": found["next"]}
 
 
 def look_(config: Config, params: Json) -> Json:

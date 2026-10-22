@@ -71,7 +71,7 @@ def test_r4_processes_start_only_in_host(path):
     names = [a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names] + [
         (n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
     ]
-    allowed = {"tui.py": {"curses", "subprocess"}, "host.py": {"subprocess"}}.get(path.name, set())
+    allowed = {"host.py": {"subprocess"}}.get(path.name, set())
     assert [n for n in names if n in banned and n not in allowed] == []
 
 
@@ -113,7 +113,9 @@ def test_recipemaker_has_no_threads_hashing_code_tags_process_caches_or_abucache
 
 
 # Soft cap on the size of the Python source; raise it with the change that needs the room.
-HARD_CAP = 14030  # raw lines of recipe maker Python (debug catalog; KUSEG words; splits; declaration batches; leases)
+HARD_CAP = (
+    13953  # raw lines of recipe maker Python (debug catalog; KUSEG words; splits; declaration batches; type items)
+)
 
 
 def test_line_budget():

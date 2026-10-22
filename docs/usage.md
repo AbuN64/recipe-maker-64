@@ -27,3 +27,10 @@ a stand-in, so `settle` writes the set, runs `make check` through `unbake-run`, 
 its base (else the old bytes go back). A try spends at most about 100 CPU s landing; names it did not reach stay leased.
 A name with no landed definition, or whose header would break a unit that includes it, is reported with the names it
 waits for.
+
+Type items (a `void *` parameter the code reaches by offsets) are planned the same way: `recipe work F --kind type [--arg N]`
+builds one record from every access (the function, the callees it passes the object to, the functions handed the same
+object, the members the module's other functions already typed), declares the prototype once taking it, and leases the
+change set as item `F.argN`; `recipe try F.argN [--dry]` proves it like a declaration. Call sites are reported with what
+they pass, never cast. A function skipped as `needs-header-change` or `type-unresolved` names its type item as `next`
+(`recipe next --kind type` leases it) and ranks again when the prototype changes.

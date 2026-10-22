@@ -10,6 +10,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import Protocol
 
 from unbake import api
 from unbake.contracts import Snapshot
@@ -44,6 +45,7 @@ _STORES = {
 }
 _UNALIGNED = frozenset({"lwl", "lwr", "swl", "swr", "ldl", "ldr", "sdl", "sdr"})
 _NO_WRITE = frozenset({"mtc1", "dmtc1", "ctc1", "mult", "multu", "div", "divu", "dmult", "dmultu", "ddiv", "ddivu"})
+_IMMEDIATE = re.compile(r"-?(?:0x[0-9A-Fa-f]+|\d+)")
 _KEPT = re.compile(r"\$(?:s[0-7]|fp|sp|gp)")  # registers a call leaves as they were
 _TYPES = {
     ("i", 1, "s"): "s8",
@@ -84,6 +86,13 @@ class Flow:
 class Group:
     name: str  # neutral, from the address of the first table column entry: `Obj80137910`, `Obj80137910Arg1`
     nodes: tuple[Node, ...]  # the table entries first, then the callees, each once
+
+
+class Text(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    def text(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -157,7 +166,7 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
     """The accesses a function makes through its parameter `position` and the callee parameters it passes it to, by
     following the registers that hold it from the entry on. A register written with anything else, or not kept by a
     call, stops holding it. A word loaded through the object and then used as an address is a pointer member."""
-    bases = {f"$a{position}"}
+    bases = {f"$a{position}": 0}  # register -> bytes past the object's start (a pointer into it by addiu)
     loaded: dict[str, int] = {}  # register -> the access that loaded it from the object
     accesses: list[Access] = []
     passes: list[Node] = []
@@ -170,7 +179,7 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
             register = memory[2]
             if register in bases:
                 width, kind, sign = (0, "i", "") if name in _UNALIGNED else {**_LOADS, **_STORES}[name]
-                accesses.append(Access(int(memory[1], 0), width, kind, sign, function))
+                accesses.append(Access(int(memory[1], 0) + bases[register], width, kind, sign, function))
             elif register in loaded:
                 at = loaded[register]
                 accesses[at] = replace(accesses[at], kind="p", sign="")
@@ -180,17 +189,29 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
         target = _written(name, ops)
         if not target:
             return
-        copied = (name == "move" and len(ops) == 2 and ops[1] in bases) or (
-            name in _MOVES
+        source = ""
+        if name == "move" and len(ops) == 2:
+            source = ops[1]
+        elif name in _MOVES and len(ops) == 3 and "$zero" in ops[1:]:
+            source = ops[2] if ops[1] == "$zero" else ops[1]
+        delta = bases.get(source, 0)
+        copied = source in bases
+        if (
+            name in ("addiu", "daddiu")
             and len(ops) == 3
-            and "$zero" in ops[1:]
-            and (ops[2] if ops[1] == "$zero" else ops[1]) in bases
-        )
+            and ops[1] in bases
+            and ops[1] != target
+            and _IMMEDIATE.fullmatch(ops[2])
+        ):
+            copied, delta = (
+                True,
+                bases[ops[1]] + int(ops[2], 0),
+            )  # a pointer into the object; a loop's increment stops it
         through = bool(memory) and memory[2] in bases  # type: ignore[index]
-        bases.discard(target)
+        bases.pop(target, None)
         loaded.pop(target, None)
         if copied:
-            bases.add(target)
+            bases[target] = delta
         elif name == "lw" and through:
             loaded[target] = len(accesses) - 1
 
@@ -206,8 +227,8 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
                 step(slot)  # the delay slot runs before the call
                 at += 1
             if row[0] == "jal" and row[1]:
-                passes += [(row[1][0], k) for k in range(4) if f"$a{k}" in bases]
-            bases.intersection_update(r for r in bases if _KEPT.fullmatch(r))
+                passes += [(row[1][0], k) for k in range(4) if bases.get(f"$a{k}") == 0]
+            bases = {r: d for r, d in bases.items() if _KEPT.fullmatch(r)}
             loaded = {r: i for r, i in loaded.items() if _KEPT.fullmatch(r)}
             continue
         step(row)
@@ -439,7 +460,7 @@ def header(snapshot: Snapshot, nodes: Sequence[Node]) -> str:
     return min(sized, key=lambda p: (-sized[p], p)) if sized else ""
 
 
-def define(text: str, record_: Record, functions: Iterable[str] = ()) -> str:
+def define(text: str, record_: Text, functions: Iterable[str] = ()) -> str:
     """The header text with the record defined before the first prototype of a group function (which may come to name
     it), else at its end, inside its include guard: after every type its members use. The text as it was when it
     defines a record of that name already."""

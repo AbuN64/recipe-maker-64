@@ -549,12 +549,17 @@ def _score(config: Config, name: str) -> float:
     )
 
 
-def _banned(snapshot: Snapshot, name: str, edits: dict[str, bytes]) -> tuple[str, str, str] | None:
-    """(key, reason, action) when an edited source holds text no landing may have on a line the edit touched."""
+def _banned(snapshot: Snapshot, name: str, edits: dict[str, bytes], record: str = "") -> tuple[str, str, str] | None:
+    """(key, reason, action) when an edited source holds text no landing may have on a line the edit touched. A type
+    item's own cast of a byte view to the record it defines (`(Rec *)`) is none."""
     declared = index.get(snapshot).declarations
     for path, text in edits.items():
         touched = _changed(snapshot.peek(path), text)
-        hits = [h for h in errors.banned(text.decode(errors="replace"), declared) if h[3] in touched]
+        hits = [
+            h
+            for h in errors.banned(text.decode(errors="replace"), declared)
+            if h[3] in touched and not (record and f"({record} *)" in h[4])
+        ]
         if hits and headers.is_source(path):
             return hits[0][0], f"{path} holds {hits[0][1]} on line {hits[0][3]}", f"fix it, then run: recipe try {name}"
     return None
@@ -573,6 +578,8 @@ class _Try:
     exact: bool = False
     waiting: bool = False  # exact in the screen, left for the next `try`: this one spent its CPU budget
     risky: tuple[str, ...] = ()
+    message: str = ""  # a type item's commit message (planned with its change set)
+    function: str = ""  # a type item: the function that waits for the type
 
 
 def _prepare(config: Config, snapshot: Snapshot, name: str) -> _Try:
@@ -585,10 +592,18 @@ def _prepare(config: Config, snapshot: Snapshot, name: str) -> _Try:
             unit=name,
             action=f"edit the copies, then run: recipe try {name}",
         )
-    if hit := _banned(snapshot, name, edits):
+    side = _sidecar(config, name)
+    if hit := _banned(snapshot, name, edits, side.get("record", "")):
         raise state.stop(hit[0], hit[1], unit=name, action=hit[2])
     edits, fixed = _drop_repeats(snapshot, edits, name)
-    return _Try(name, edits, fixed, risky=tuple(_sidecar(config, name).get("risky", ())))
+    return _Try(
+        name,
+        edits,
+        fixed,
+        risky=tuple(side.get("risky", ())),
+        message=side.get("message", ""),
+        function=side.get("function", ""),
+    )
 
 
 def _screen(config: Config, snapshot: Snapshot, tries: list[_Try]) -> None:
@@ -607,6 +622,8 @@ def _cpu() -> float:
 
 def _message(one: _Try) -> str:
     """The commit message of a set: the bug it fixes, then what it changed."""
+    if one.message:
+        return one.message
     word = re.compile(rf"\b{re.escape(one.name)}\b")  # the edited header that now says the name is the one it goes in
     header = next((p for p, t in sorted(one.edits.items()) if headers.is_header(p) and word.search(t.decode())), "")
     where = f" in {header.removeprefix('include/')}" if header else ""
@@ -689,6 +706,13 @@ def run(config: Config, name: str, now: float, dry: bool = False) -> Json:
                 raise
             results[member] = _failed(member, refusal.findings[0].reason)
     _screen(config, snapshot, tries)
+    for one in tries:
+        if one.function and one.exact:  # the bodies a type item's call sites changed carry their provenance
+            for path, data in sorted(one.edits.items()):
+                if headers.is_source(path):
+                    state.record(
+                        config, one.name, now, "exact", {"us": 1.0}, text=data.decode(errors="replace"), path=path
+                    )
     if not dry:
         began = _cpu()
         for one in [t for t in tries if t.exact]:
@@ -718,6 +742,10 @@ def run(config: Config, name: str, now: float, dry: bool = False) -> Json:
             state.record(config, one.name, now, results[one.name]["result"], results[one.name]["score"])
             if one.landed:
                 state.release(config, one.name)
+                if one.function:
+                    from recipemaker import typeitem
+
+                    typeitem.done(config, one.function)
     mine = results[name]
     lease = state.lease(config, name)
     rules = state.settings()

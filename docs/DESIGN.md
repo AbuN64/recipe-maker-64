@@ -14,9 +14,9 @@ Command `recipe`, package `recipemaker`.
 ## 1. Layering and the boundary
 
 ```
- LLM agent (35B local, stronger models)        human (terminal, TUI)
+ LLM agent (35B local, stronger models)        human (terminal)
                   \                             /
-          +--------- recipe (cli.py, tui.py) ---------+
+          +--------- recipe (cli.py) ---------+
           | work model: leases budgets errors look    |   creative: may be wrong
           | ladder: twin data draft options permute   |
           | ledger  domains  knowledge cards  brief   |
@@ -35,7 +35,7 @@ Command `recipe`, package `recipemaker`.
 | R1 | recipe maker calls only unbake functions listed in the Public API table of unbake's shipped `resources/CONTRACTS.md` (read through `importlib.resources`). No `_private` names. | `tests/test_boundary.py`, the same AST walk as unbake's `tests/test_lint.py:100-121`. |
 | R2 | Verdicts: `try` calls `compare.run(config, params)` with the exact CLI params dict. Exploration rungs call `compare.bind`, `compare.measure`, `compare.measure_many`, then `land.submit` and `land.drain`, exactly as the moved `crack.run` does today. | Only `ladder.py` and `work.py` import `compare` and `land`. |
 | R3 | Writes go only under `<project>/.unbake/` and only through `store.write`, `store.append`, `store.put`. Tracked files (`src/`, `include/`, `layout.toml`, `symbols.toml`, `types.toml`, splits, configs) are never written. `.unbake/` is ignored by the generated `.gitignore` (`repo.toml:3`) and CONTRACTS invariant 6 already names it as the runtime area. | `test_boundary.py` greps for `open(..., "w")`, `write_text`, `write_bytes` outside the moved modules' existing calls under `.unbake/`. |
-| R4 | Processes start only through `process.run`, workers only through `pool.map`/`pool.gather`. One exception: `tui.py` hands the terminal to `$EDITOR`. | Same import grep as unbake invariant 7. |
+| R4 | Processes start only through `process.run`, workers only through `pool.map`/`pool.gather`. | Same import grep as unbake invariant 7. |
 | R5 | Dependency pin: `unbake @ git+https://github.com/AbuN64/cake-unbake-64@<sha>` in `pyproject.toml`. A version bump reruns `test_boundary.py`. | CI. |
 
 ### Where things live (decision on input 2)
@@ -78,7 +78,7 @@ Lines are estimates. "moved" means taken from unbake with only import lines chan
 | `domains.py` | 150 | new | snapshot groups (`segment`, `members`, `sdk`), `versions.rom_bytes`, `pool.map`, `store.cached` |
 | `brief.py` | 130 | new | packet JSON, `symptoms.diff` |
 | `llm.py` | 100 | new (last) | none (stdlib `urllib`) |
-| `tui.py` | 260 | new | the verbs above |
+| `typeitem.py` | 450 | new | `dispatch`, `declare`, `rungs`, `ledger` |
 | **Total** | **about 3,250** | of which about 790 moved | cap 5,000 (decision 3, raised a fourth time on 2026-10-10) |
 
 Moved modules keep their bodies. Only imports, the `.unbake/recipe/` path constants and the finding keys change (recipe maker keys live in `knowledge/errors.toml`, since unbake's `keys.toml` drops the draft keys).
@@ -105,7 +105,7 @@ Default output is short text that ends with one `next:` line. `--json` prints on
 | `recipe look NAME` | Prototype, struct layout, global type, landed path, callers. | `name kind text where fields[] seen_in[] next` |
 | `recipe skip ITEM --reason R [--note T]` | Releases the lease. `R` in `m2c-failed split-symbol type-unresolved jump-table needs-header-change budget other`. | `item reason next` |
 | `recipe status [--json]` | Sessions, leases, today's counts, error classes, feedback events. | section 10.2 |
-| `recipe tui` | Curses views over the verbs. | section 11 |
+| `recipe work F --kind type [--arg N]` | Types a `void *` parameter F's code reaches by offsets: plans one change set (section 11), leases it as item `F.argN`; `recipe try F.argN [--dry]` proves it exactly as a declaration item. `recipe next --kind type` leases the item a skipped function waits on. | section 11 |
 
 ### 3.2 Rules every verb follows
 
@@ -332,14 +332,20 @@ The index is one value per HEAD, stored with `store.cached(config, "recipe-index
  "feedback_events": 5, "open": 4120, "twin_ready": 212}
 ```
 
-## 11. TUI (`recipe tui`, stdlib curses)
+## 11. Type items (`recipe work F --kind type`)
 
-| View | Shows | Keys |
-|---|---|---|
-| Queue | ranked items: domain, size, twin flag, last result | `n` next, `/` domain filter |
-| Item | target asm, candidate, worst diff; budget and score per version | `w` work, `t` try, `e` `$EDITOR`, `l` look word, `s` skip |
-| Domains | per domain: items, bytes matched, open, top error classes | `enter` filter Queue |
-| Status | sessions, leases, exact per hour, feedback | `r` refresh |
+A skip with reason `needs-header-change` or `type-unresolved` is a dead end unless something does the header work. `skip` now
+records the type item the function waits on in `.unbake/recipe/needs.json` (`{function: {item, next}}`; `decomp owes` and
+`tas play --all` rank the item's `next` in the function's place) and lists the function's own prototype as a blocker, so the
+function ranks again when the prototype changes.
+
+| Step | What |
+|---|---|
+| Evidence | every access through the parameter by the function (including pointers made by `addiu`), the callees it passes the object to as it is (`dispatch.flow`), the functions other callers hand the same object (an argument naming the same object, a trailing member at offset 0 aside), and the record members the module's other functions already took (when all of a view's members fit the accesses: a vector read as three words keeps its project type and name) |
+| Record | `Obj<function address>`, members at the accessed offsets (`unkXXX`, padding between), an integer and a float access of one word read as the float; two widths or kinds at one offset refuse, naming both functions |
+| Change set | the record and the prototype in the unit's family header, other copies of the declaration deleted (the declaration machinery), the includes units need placed where the use can see them, and the headers of functions the call site's function calls that its unit does not see (a screen compiles that function) |
+| Call sites | reported with what each passes (`bytes`, `record T`, `unknown`); the compiler only warns, and a cast to a record is a banned line, so none is written |
+| Proof | `recipe try F.argN [--dry]` = `declare.run`: the screen, every candidate source recorded in the tries stream (the provenance gate of `decomp ship` reads it), then `make check` through `settle.land`, or `decomp ship --worktree` on the planned files |
 
 ## 12. Speed: just as fast and warm as unbake
 

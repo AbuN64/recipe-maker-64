@@ -388,7 +388,8 @@ def carrier(snapshot: Snapshot, unit: world.Unit, edits: Mapping[str, bytes]) ->
     set through the compiler."""
     layout = world.of(snapshot)
     source = (edits.get(unit.path) or snapshot.read(unit.path)).decode(errors="replace")
-    landed = [n for n in unit.members if n in layout.members and layout.members[n].kind == "function"]
+    every = [n for n in unit.members if n in layout.members and layout.members[n].kind == "function"]
+    landed = [n for n in every if layout.members[n].landed] or every  # a body behind NON_MATCHING is not what builds
     found = next(((n, body) for n in landed if (body := twin.function(source, n))), None)
     if found is None:
         raise Refusal(

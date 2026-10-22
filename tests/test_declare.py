@@ -8,7 +8,7 @@ import pytest
 from fakes import unit as make_unit
 from unbake.contracts import Refusal
 
-from recipemaker import cli, declare, state, work
+from recipemaker import cli, declare, host, state, typeitem, work
 
 NOW = 1_000_000.0
 ROW = {
@@ -456,3 +456,27 @@ def test_leasing_a_name_again_clears_the_copies_an_earlier_lease_left_in_its_fol
     state.release(world.config, "gX")
     declare.next_item(world.config, world.snapshot, NOW)
     assert not (where / "batch.json").exists() and not (where / "include/old.h").exists()
+
+
+def test_a_type_item_lands_under_its_own_message_and_leaves_each_edited_source_as_a_recorded_candidate(
+    world, monkeypatch
+):
+    edited(world)
+    where = declare.folder(world.config, "gX")
+    (where / "plan.json").write_text(
+        json.dumps({"batch": ["gX"], "function": "func_a", "record": "R", "message": "Type it"})
+    )
+    seen = land(world, monkeypatch)
+    monkeypatch.setattr(typeitem, "done", lambda config, function: seen.update(done=function))
+    work.try_(world.config, {"item": "gX", "dry": True})
+    rows = [r for r in host.rows(world.config, "recipe/tries") if r["item"] == "gX"]
+    assert [r["path"] for r in rows] == ["src/a.c"] and "func_a" in rows[0]["text"] and not seen.get("message")
+    world.screens.extend([1.0] * 4)
+    work.try_(world.config, {"item": "gX"})
+    assert seen["message"] == "Type it" and seen["done"] == "func_a"
+
+
+def test_a_cast_of_the_record_a_type_item_defines_is_no_banned_cast(world):
+    edits = {"src/a.c": b"void g(void) { f((R *) buf); }\n"}
+    assert declare._banned(world.snapshot, "gX", edits)
+    assert declare._banned(world.snapshot, "gX", edits, "R") is None

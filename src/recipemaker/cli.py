@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, errors, flags, lifecycle, naming, retext, state, structure, style, tui, work
+from recipemaker import advice, brief, errors, flags, lifecycle, naming, retext, state, structure, style, work
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -71,8 +71,12 @@ def _render_next(result: Json) -> list[str]:
         return [f"none: {result['why']}"]
     if result.get("dry"):
         return _render_plan(result)
-    shape = "" if result["kind"] == "declaration" else f"   size: {result['size']} bytes   regions: {result['regions']}"
-    brief_line = [f"brief: {result['brief']}"] if result["kind"] == "declaration" else []
+    shape = (
+        ""
+        if result["kind"] in ("declaration", "type")
+        else f"   size: {result['size']} bytes   regions: {result['regions']}"
+    )
+    brief_line = [f"brief: {result['brief']}"] if result["kind"] in ("declaration", "type") else []
     return [
         f"item: {result['item']}",
         f"kind: {result['kind']}{shape}",
@@ -85,8 +89,10 @@ def _render_next(result: Json) -> list[str]:
 
 
 def _render_work(result: Json) -> list[str]:
-    if result.get("kind") == "declaration":
-        return [*_render_next(result), f"wall: {result['wall_s']} s"]
+    if result.get("kind") in ("declaration", "type"):
+        more = [f"record: {result['record']}", *[f"  {x}" for x in result["fields"]]] if result.get("record") else []
+        more += [f"conflict: {x}" for x in result.get("conflicts", [])]
+        return [*_render_next(result), *more, f"wall: {result['wall_s']} s"]
     if result["result"] == "skipped":
         return [f"skipped {result['item']} as {result['reason']}: {result['why']}"]
     lines = [*_landing(result), f"result: {result['result']}"]
@@ -282,7 +288,7 @@ def _parser() -> argparse.ArgumentParser:
         return one
 
     one = verb("next", "lease the best open item")
-    one.add_argument("--kind", choices=("function", "data", "declaration"))
+    one.add_argument("--kind", choices=("function", "data", "declaration", "type"))
     one.add_argument("--twin", choices=("yes", "no"), help="only items with (yes) or without (no) a landed twin")
     one.add_argument("--max-size", type=int, help="largest item in bytes")
     one.add_argument("--order", choices=("small", "large"), help="smallest or largest first (default: largest)")
@@ -290,7 +296,8 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--dry", action="store_true", help="declarations: show the batches and change sets, lease nothing")
     one = verb("work", "run the tool rungs on an item; prints once at exit, and a large item can take minutes")
     one.add_argument("item")
-    one.add_argument("--kind", choices=("declaration",), help="work the declaration item of this name")
+    one.add_argument("--kind", choices=("declaration", "type"), help="work the declaration or type item of this name")
+    one.add_argument("--arg", type=int, help="type items: the parameter (default: the first void * the code reaches)")
     one.add_argument("--no-submit", action="store_true")
     one = verb("try", "prove the candidate file")
     one.add_argument("item")
@@ -328,7 +335,6 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--write", action="store_true", help="edit the unit sources (default: only list)")
     one.add_argument("--only", help="comma list of unit source paths")
     verb("status", "sessions, leases and counts")
-    verb("tui", "curses views over the verbs")
     return parser
 
 
@@ -355,8 +361,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise Refusal(Finding("config.missing", "no host config: pass --host or set UNBAKE_HOST"))
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
             loaded = api.load(args.project or Path.cwd(), host)
-            if args.verb == "tui":
-                return tui.run(loaded)
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb in ("structure", "apply", "name", "flags"):  # these verbs call unbake
                 given["host"] = host

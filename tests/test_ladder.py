@@ -558,3 +558,11 @@ def test_an_exact_candidate_held_by_placeholders_meets_the_rungs_and_only_fewer_
     assert "group record a" in names(out)
     assert path.read_text() == (proposed if replaced else held)
     assert (out.submitted == "id-func_a") is replaced
+
+
+def test_the_carrier_of_a_set_is_a_function_that_builds_not_one_behind_non_matching(monkeypatch):
+    members = {n: SimpleNamespace(kind="function", landed=ok) for n, ok in (("func_nm", False), ("func_ok", True))}
+    monkeypatch.setattr(ladder.world, "of", lambda snapshot: SimpleNamespace(members=members))
+    snapshot = SimpleNamespace(read=lambda path: b"void func_nm(void) {\n}\nvoid func_ok(void) {\n}\n")
+    unit = SimpleNamespace(path="src/a.c", members=("func_nm", "func_ok"))
+    assert ladder.carrier(snapshot, unit, {})[0] == "func_ok"
