@@ -1,7 +1,5 @@
 """A recipe command ends with its caller: a signal or an orphaned process unwinds it, so no slot outlives it."""
 
-from __future__ import annotations
-
 import os
 import signal
 from collections.abc import Iterator

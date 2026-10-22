@@ -1,7 +1,5 @@
 """Leases, budgets, tries, skips and feedback under `.unbake/recipe/`, plus the attempt record."""
 
-from __future__ import annotations
-
 import json
 import os
 import tomllib

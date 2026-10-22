@@ -2,8 +2,6 @@
 declaration deleted, the include added where a unit loses sight of it, and explicit scalar casts only at call sites
 whose old declaration took another type. Pure functions of text; nothing here reads the project."""
 
-from __future__ import annotations
-
 import posixpath
 import re
 from collections.abc import Callable, Mapping

@@ -3,8 +3,6 @@ family header, the other copies deleted, the includes and the casts the compiler
 commit, every touched unit proved exact. `next` plans a batch of independent names, `try` proves it: the batch is
 measured in one process, every exact name lands as its own commit, a name that fails is retried alone."""
 
-from __future__ import annotations
-
 import difflib
 import json
 import posixpath

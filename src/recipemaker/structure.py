@@ -6,8 +6,6 @@ the captured tree's symbol tables. It carries no call, load or object-edge facts
 proposes from them: a module is cut only where an evidence row or the size cap says, keeps its origin's folder, and no
 header is merged or deleted."""
 
-from __future__ import annotations
-
 import difflib
 import json
 import os

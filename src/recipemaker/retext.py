@@ -3,8 +3,6 @@ code pointers through KUSEG become references to the function's alias symbol; by
 The rules are draft.text_like and draft.code_alias (one derivation each, shared with the data draft); this module
 only finds each member's definition in its unit source, swaps in the draft's spelling and adds the alias rows."""
 
-from __future__ import annotations
-
 import re
 
 from unbake.contracts import Config, Json, Snapshot

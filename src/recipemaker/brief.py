@@ -1,7 +1,5 @@
 """The brief a reader gets: asm, candidate, worst diff and what was auto-fixed."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Sequence
 from itertools import zip_longest

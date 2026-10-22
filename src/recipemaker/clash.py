@@ -3,8 +3,6 @@
 A unit's definitions are the struct/union/enum bodies and the typedefs in its own text plus every header it includes.
 Prototype and extern disagreements are not read here: unbake compose localizes them."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Callable
 from pathlib import Path

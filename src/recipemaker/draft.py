@@ -1,7 +1,5 @@
 """First-draft C for one function: m2c output with GBI rewrites (moved from unbake)."""
 
-from __future__ import annotations
-
 import math
 import os
 import re

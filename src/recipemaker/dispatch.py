@@ -4,8 +4,6 @@ record their accesses through it show. A record is built only from what the code
 offset and width some group function accesses, the rest is placeholder bytes, and two functions disagreeing at an
 offset refuse the record, naming both."""
 
-from __future__ import annotations
-
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -73,6 +71,7 @@ class Access:
     kind: str  # "i" integer, "f" float, "p" pointer
     sign: str  # "s" | "u" | "" (a store, or a float or pointer)
     function: str
+    via: int = 0  # the object offset of the derived pointer the access went through (0: the object's own pointer)
 
 
 @dataclass(frozen=True)
@@ -80,6 +79,9 @@ class Flow:
     accesses: tuple[Access, ...]
     passes: tuple[Node, ...]  # the callee parameters the object reaches as it is
     pointees: tuple[tuple[int, Access], ...] = ()  # (member offset, access) through a pointer member's value
+    derived: tuple[tuple[int, Node], ...] = ()  # (offset, callee parameter) a pointer into the object is passed to
+    returned: tuple[tuple[str, Access], ...] = ()  # (callee, access) through the pointer a callee returned
+    extents: tuple[tuple[str, int], ...] = ()  # (callee, bytes) a returned pointer's end address is taken at
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,10 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
     accesses: list[Access] = []
     passes: list[Node] = []
     pointees: list[tuple[int, Access]] = []
+    derived: list[tuple[int, Node]] = []
+    returned: list[tuple[str, Access]] = []
+    extents: dict[str, int] = {}
+    rets: dict[str, tuple[str, int]] = {}  # register -> (callee, bytes past the start of the object it returned)
 
     def step(row: tuple[str, list[str]]) -> None:
         name, ops = row
@@ -179,13 +185,19 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
             register = memory[2]
             if register in bases:
                 width, kind, sign = (0, "i", "") if name in _UNALIGNED else {**_LOADS, **_STORES}[name]
-                accesses.append(Access(int(memory[1], 0) + bases[register], width, kind, sign, function))
+                accesses.append(
+                    Access(int(memory[1], 0) + bases[register], width, kind, sign, function, bases[register])
+                )
             elif register in loaded:
                 at = loaded[register]
                 accesses[at] = replace(accesses[at], kind="p", sign="")
                 if name not in _UNALIGNED:
                     width, kind, sign = {**_LOADS, **_STORES}[name]
                     pointees.append((accesses[at].offset, Access(int(memory[1], 0), width, kind, sign, function)))
+            elif register in rets and name not in _UNALIGNED:
+                width, kind, sign = {**_LOADS, **_STORES}[name]
+                callee, delta = rets[register]
+                returned.append((callee, Access(int(memory[1], 0) + delta, width, kind, sign, function)))
         target = _written(name, ops)
         if not target:
             return
@@ -196,6 +208,18 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
             source = ops[2] if ops[1] == "$zero" else ops[1]
         delta = bases.get(source, 0)
         copied = source in bases
+        held = rets.get(source)
+        if name in ("addiu", "daddiu") and len(ops) == 3 and ops[1] in rets and _IMMEDIATE.fullmatch(ops[2]):
+            callee, start = rets[ops[1]]
+            reach = start + int(ops[2], 0)
+            held = (callee, reach) if ops[1] != target and int(ops[2], 0) > 0 else None
+            if held:  # a pointer into the returned object, or its end address
+                extents[callee] = max(extents.get(callee, 0), reach)
+            elif ops[1] == target and extents.get(callee):
+                held = (callee, extents[callee])  # a loop's advance: it ends where the end address was taken
+        rets.pop(target, None)
+        if held:
+            rets[target] = held
         if (
             name in ("addiu", "daddiu")
             and len(ops) == 3
@@ -216,6 +240,7 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
             loaded[target] = len(accesses) - 1
 
     at = 0
+    kept: tuple[dict[str, int], dict[str, int], dict[str, tuple[str, int]]] | None = None
     while at < len(code):
         row = code[at]
         at += 1
@@ -228,11 +253,33 @@ def flow(code: Sequence[Row], position: int, function: str = "") -> Flow:
                 at += 1
             if row[0] == "jal" and row[1]:
                 passes += [(row[1][0], k) for k in range(4) if bases.get(f"$a{k}") == 0]
+                derived += [(bases[f"$a{k}"], (row[1][0], k)) for k in range(4) if bases.get(f"$a{k}", 0) > 0]
             bases = {r: d for r, d in bases.items() if _KEPT.fullmatch(r)}
             loaded = {r: i for r, i in loaded.items() if _KEPT.fullmatch(r)}
+            rets = {r: v for r, v in rets.items() if _KEPT.fullmatch(r)}
+            if row[0] == "jal" and row[1] and not row[1][0].startswith("."):
+                rets["$v0"] = (row[1][0], 0)
+            continue
+        if re.match(r"b(?!al)", row[0]) or row[0] in ("j", "jr"):
+            step(row)
+            slot = code[at] if at < len(code) else None
+            if slot is not None:
+                step(slot)
+                at += 1
+            if row[0] in ("j", "jr") and kept:  # the code after a jump is reached from a label: the state at the branch
+                bases, loaded, rets = dict(kept[0]), dict(kept[1]), dict(kept[2])
+            elif row[0] not in ("j", "jr"):
+                kept = (dict(bases), dict(loaded), dict(rets))
             continue
         step(row)
-    return Flow(tuple(accesses), tuple(dict.fromkeys(passes)), tuple(pointees))
+    return Flow(
+        tuple(accesses),
+        tuple(dict.fromkeys(passes)),
+        tuple(pointees),
+        tuple(dict.fromkeys(derived)),
+        tuple(returned),
+        tuple(extents.items()),
+    )
 
 
 def _code(snapshot: Snapshot, name: str) -> list[Row]:

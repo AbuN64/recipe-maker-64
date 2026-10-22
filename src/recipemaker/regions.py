@@ -1,7 +1,5 @@
 """Regions of a function: the target's basic-block runs, the names each reads, and which of them the build matches."""
 
-from __future__ import annotations
-
 import re
 from bisect import bisect_right
 from collections.abc import Mapping, Sequence

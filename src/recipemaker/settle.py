@@ -3,8 +3,6 @@ declarations has none, and its proof is the whole build: every version's ROM sti
 written, `make check` builds the ROMs through the host's slot pool (`unbake-run`, the build every proof build uses),
 and the set is committed when they match; when they do not, the old bytes go back and nothing is committed."""
 
-from __future__ import annotations
-
 import sys
 from collections.abc import Mapping
 from pathlib import Path

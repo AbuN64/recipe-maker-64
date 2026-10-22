@@ -1,7 +1,5 @@
 """What the verbs read of the project (declarations, identities, callers), each built on first read."""
 
-from __future__ import annotations
-
 import pickle
 import re
 from bisect import bisect_right

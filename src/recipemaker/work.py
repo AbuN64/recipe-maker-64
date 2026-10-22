@@ -1,7 +1,5 @@
 """The verbs behind `recipe`: next, work, try, skip, look, status. Each returns the JSON object the CLI prints."""
 
-from __future__ import annotations
-
 import pickle
 import re
 import time
@@ -465,8 +463,12 @@ def _prepare(config: Config, item: str, last: Json | None) -> list[str]:
     if hits:
         key, what, why = hits[0][:3]
         lines = ", ".join([str(n) for k, _, _, n, _ in hits if k == key][:5])
-        action = f"remove each, then run: recipe try {item}"
+        action = f"recipe work {item}"
         extra = brief.neighbours(snapshot, key, what)
+        if key == "recipe.cast":  # casts that reach a typed or typable object at offsets its record lacks: add them
+            wanted, members = typeitem.casts(snapshot, item, [h[4] for h in hits if h[0] == key])
+            if wanted:
+                action, extra = f"recipe work {wanted} --kind type", f"; the record lacks {', '.join(members[:8])}"
         raise _refuse(item, key, f"the candidate holds {what} (lines {lines}){extra}", action, why)
     if done:
         host.write(path, text.encode())

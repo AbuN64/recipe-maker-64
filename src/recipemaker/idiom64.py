@@ -5,8 +5,6 @@ must be the halves of one 64-bit value, or the expression must equal the compari
 the rewrites turned into a whole 64-bit value is bracketed until the end, and a pair that something still reads as
 two words is left alone, together with every rewrite that needed it."""
 
-from __future__ import annotations
-
 import operator
 import random
 import re

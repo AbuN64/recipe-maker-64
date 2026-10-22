@@ -1,8 +1,6 @@
 """What the project's headers and sources declare: the header list, the first header declaration of each name, the
 externs a source makes, the units a header reaches, and the names declared more than one way."""
 
-from __future__ import annotations
-
 import posixpath
 import re
 from collections import defaultdict

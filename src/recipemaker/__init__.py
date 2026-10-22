@@ -1,7 +1,5 @@
 """Candidate C for N64 decompilation. unbake proves and lands it; this package only proposes."""
 
-from __future__ import annotations
-
 import tomllib
 from importlib import resources
 

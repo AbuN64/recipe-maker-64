@@ -1,7 +1,5 @@
 """Compiler and unbake errors translated into a class, a line, a plain statement and a fix."""
 
-from __future__ import annotations
-
 import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence

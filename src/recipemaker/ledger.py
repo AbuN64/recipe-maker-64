@@ -1,7 +1,5 @@
 """The type ledger: views of one type join into identities; M2C_FIELD resolves only through the declared type."""
 
-from __future__ import annotations
-
 import dataclasses
 import re
 from collections.abc import Iterable, Mapping, Sequence

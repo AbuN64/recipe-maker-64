@@ -1,7 +1,5 @@
 """The recipe ladder: guard, resume, clone, data literal, draft, proposals. The rungs explore; only a gain lands."""
 
-from __future__ import annotations
-
 import json
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -271,7 +269,7 @@ def primary(snapshot: Snapshot, edits: Mapping[str, bytes]) -> str | None:
     edited = next((p for p in sorted(units) if p in edits), None)
     if edited:
         return edited
-    reached = set(headers.consumers(snapshot, [p for p in edits if p.endswith(".h")]))  # through other headers too
+    reached = set(headers.consumers(snapshot, [p for p in edits if headers.is_header(p)]))  # through other headers too
     return next((p for p in sorted(units) if p in reached), None)
 
 

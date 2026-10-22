@@ -3,8 +3,6 @@ that keeps that definition redefines the header's struct and never compiles. The
 header's own definition: each field the header names keeps its header line, padding m2c split becomes m2c's fields,
 and the draft keeps only its code. Pure text in, text out; the caller overlays and proves the header edits."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass

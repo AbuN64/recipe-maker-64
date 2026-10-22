@@ -3,13 +3,11 @@ from every observed access (the function's, the callees it passes the object to 
 object, the members the module's other functions already typed), the prototype once in the unit's family header taking
 it, every other copy of the declaration gone. The call sites are reported, not cast. Landing is `declare.run`'s."""
 
-from __future__ import annotations
-
 import itertools
 import json
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from unbake.contracts import Config, Json, Snapshot
 
@@ -36,6 +34,7 @@ class Made:
     sites: list[str] = field(default_factory=list)  # every call and what it passes
     conflicts: list[str] = field(default_factory=list)  # calls passing another type: the compiler only warns
     shared: list[str] = field(default_factory=list)  # functions whose evidence went into the record
+    records: list[str] = field(default_factory=list)  # embedded sub-records and callee-return records, with members
     risky: tuple[str, ...] = ()
     skip: str = ""
 
@@ -77,20 +76,46 @@ def _view(snapshot: Snapshot, function: str, position: int) -> list[dispatch.Acc
 
 
 def _accesses(snapshot: Snapshot, node: tuple[str, int]) -> list[dispatch.Access]:
-    return list(dispatch.flows(snapshot, node).accesses) or _view(snapshot, *node)
+    own = [a for a in dispatch.flows(snapshot, node).accesses if not a.via]
+    return own or ([] if dispatch.flows(snapshot, node).accesses else _view(snapshot, *node))
 
 
-def _closure(snapshot: Snapshot, function: str, position: int) -> tuple[list[dispatch.Access], list[str]]:
-    """Every access through the object by the function and the callees it passes it to as it is."""
-    todo, rows = [(function, position)], []
+@dataclass
+class Reach:
+    """What the code does with the object: its own accesses and the callees it is passed to as it is, the parts a
+    pointer into it reaches (offset -> accesses relative to it), and the records callees return (callee -> accesses
+    through the result, and the bytes its end address was taken at)."""
+
+    rows: list[dispatch.Access] = field(default_factory=list)
+    passed: list[str] = field(default_factory=list)
+    subs: dict[int, list[dispatch.Access]] = field(default_factory=dict)
+    returns: dict[str, list[dispatch.Access]] = field(default_factory=dict)
+    extents: dict[str, int] = field(default_factory=dict)
+
+
+def _closure(snapshot: Snapshot, function: str, position: int, depth: int = 0) -> Reach:
+    """Every access through the object by the function and the callees it passes it to as it is; a pointer to a part
+    of it kept or passed on makes that part's accesses (and the callee's) members at its offset."""
+    reach, todo = Reach(), [(function, position)]
     seen: set[tuple[str, int]] = set()
     while todo and len(seen) < MAX_NODES:
         node = todo.pop(0)
-        if node not in seen:
-            seen.add(node)
-            rows += _accesses(snapshot, node)
-            todo += list(dispatch.flows(snapshot, node).passes)
-    return rows, sorted({n for n, _ in seen} - {function})
+        if node in seen:
+            continue
+        seen.add(node)
+        one = dispatch.flows(snapshot, node)
+        reach.rows += [a for a in one.accesses if not a.via] or ([] if one.accesses else _view(snapshot, *node))
+        for a in one.accesses:
+            if a.via:
+                reach.subs.setdefault(a.via, []).append(replace(a, offset=a.offset - a.via, via=0))
+        for at, callee in one.derived if depth < 2 else ():
+            reach.subs.setdefault(at, []).extend(_closure(snapshot, *callee, depth + 1).rows)
+        for callee, a in one.returned:
+            reach.returns.setdefault(callee, []).append(a)
+        reach.extents.update({c: max(reach.extents.get(c, 0), n) for c, n in one.extents})
+        todo += list(one.passes)
+    reach.passed = sorted({n for n, _ in seen} - {function})
+    return reach
 
 
 def _calls(text: str, only: str = "") -> list[tuple[str, int, int, int]]:
@@ -240,13 +265,89 @@ class _Defined:
         return self.body
 
 
-def _body(name: str, members: list[tuple[int, int, str, str]]) -> str:
+def _body(name: str, members: list[tuple[int, int, str, str]], size: int = 0) -> str:
     lines, at = [], 0
-    for offset, size, ctype, label in members:
+    for offset, width, ctype, label in sorted(members):
         lines += [f"    char pad{at:X}[0x{offset:X} - 0x{at:X}];"] * (offset > at)
         lines.append(f"    {ctype}{'' if ctype.endswith('*') else ' '}{label};")
-        at = offset + size
+        at = offset + width
+    lines += [f"    char pad{at:X}[0x{size:X} - 0x{at:X}];"] * (size > at)
     return f"typedef struct {name} {{\n" + "\n".join(lines) + f"\n}} {name};\n"
+
+
+_REACH = re.compile(r"\b(\w+)\s*\+\s*(0x[0-9A-Fa-f]+|\d+)\b")
+
+
+def casts(snapshot: Snapshot, function: str, lines: Sequence[str]) -> tuple[str, list[str]]:
+    """(type item, offsets) when the cast lines reach a parameter's object at offsets no member of its record (or a
+    `void *`'s accesses) sits at: the item that adds them. ("", []) otherwise."""
+    owner = ledger.owners(index.get(snapshot).identities)
+    for position, kind in enumerate((_prototype(snapshot, function) or ("", []))[1]):
+        held = ledger._owner(owner, kind.replace("const", "").strip(" *"))
+        at = {f.offset for f in held.fields} if held else {a.offset for a in _accesses(snapshot, (function, position))}
+        reached = {int(o, 0) for line in lines for b, o in _REACH.findall(line) if b == f"arg{position}"}
+        missing = [f"arg{position} + 0x{o:X}" for o in sorted(reached - at) if o >= 0x10]
+        if missing and (held or position in targets(snapshot, function)):
+            return item_name(function, position), missing
+    return "", []
+
+
+def _fits(snapshot: Snapshot, rows: Sequence[dispatch.Access], extent: int) -> str:
+    """A header record whose members sit exactly where `rows` access (and whose size is `extent` if known), else ""."""
+    for identity in dict.fromkeys(ledger.owners(index.get(snapshot).identities).values()):
+        spans = [(f.offset, f.size * f.count) for f in identity.fields if f.count]
+        fits = all(any(o == a.offset and n >= a.width for o, n in spans) for a in rows)
+        if spans and fits and headers.is_header(identity.views[0].path) and extent in (0, max(o + n for o, n in spans)):
+            return identity.views[0].name
+    return ""
+
+
+def _members(fields: Sequence[tuple[int, int, str]]) -> list[tuple[int, int, str, str]]:
+    return [(o, w, t, f"unk{o:X}") for o, w, t in fields]
+
+
+def _inner(
+    snapshot: Snapshot, made: Made, reach: Reach, rest: list[dispatch.Access]
+) -> tuple[str, list[tuple[int, int, str, str]], list[dispatch.Access], str]:
+    """The parts a pointer into the object reaches become members of a record of their own at their offset, taking in
+    the direct accesses inside; a record a callee returns that the code dereferences or copies gets a type (a header
+    record that fits, else one of the observed size), and a part with its members is a copy of it.
+    (typedefs, members, the accesses left for the object itself, why not)."""
+    text, parts = "", dict(reach.subs)
+    members: list[tuple[int, int, str, str]] = []
+    copied: list[tuple[int, str]] = []
+    for callee, rows in sorted(reach.returns.items()):
+        extent = reach.extents.get(callee, 0)
+        for d in [d for d, r in parts.items() if extent >= 0x40 and {a.offset for a in r} <= {a.offset for a in rows}]:
+            rows = rows + parts.pop(d) + [replace(a, offset=a.offset - d) for a in rest if d <= a.offset < d + extent]
+            rest = [a for a in rest if not d <= a.offset < d + extent]
+            copied.append((d, callee))
+        reach.returns[callee] = rows
+    for callee, rows in sorted(reach.returns.items()):
+        extent, tag = reach.extents.get(callee, 0), f"Ret{callee[5:13]}"
+        fit = _fits(snapshot, rows, extent)
+        got = None if fit else _record(rows, tag)
+        if isinstance(got, str):
+            return "", [], rest, f"the result of {callee} cannot be one record: {got}"
+        size = max([extent, *(o + w for o, w, _ in got.fields)] if got else [extent])
+        text += _body(tag, _members(got.fields), size) if got else ""
+        members += [(d, size, fit or tag, f"copy{d:X}") for d, c in copied if c == callee]
+        made.records.append(f"{callee} returns {fit or tag}" + (f" ({size} bytes)" if got else ""))
+        made.shared.append(f"{callee} (its result)")
+    for offset, accesses in sorted(parts.items()):
+        tag, end = f"{made.name}At{offset:X}", max(a.offset + a.width for a in accesses)
+        got = _record(
+            accesses + [replace(a, offset=a.offset - offset) for a in rest if offset <= a.offset < offset + end], tag
+        )
+        if isinstance(got, str):
+            return "", [], rest, f"the part at 0x{offset:X} cannot be one record: {got}"
+        rest = [a for a in rest if not offset <= a.offset < offset + end]
+        size = max(o + w for o, w, _ in got.fields)
+        members.append((offset, size, tag, f"sub{offset:X}"))
+        text += _body(tag, _members(got.fields))
+        made.records.append(f"0x{offset:X} {size} {tag}")
+        made.shared.append(f"the part at 0x{offset:X} (a pointer into the object)")
+    return text, members, rest, ""
 
 
 def plan(snapshot: Snapshot, function: str, position: int) -> Made:
@@ -256,7 +357,8 @@ def plan(snapshot: Snapshot, function: str, position: int) -> Made:
     if given is None or declared is None or position >= len(given[1]):
         made.skip = f"{function} has no prototype to take the type"
         return made
-    rows, passed = _closure(snapshot, function, position)
+    reach = _closure(snapshot, function, position)
+    rows, passed = reach.rows, reach.passed
     found = sites(snapshot, function, position)
     made.sites = [f"{p}:{n} [{what}] {arg}" for p, n, arg, what in found]
     mates = _mates(snapshot, function, found)
@@ -272,20 +374,48 @@ def plan(snapshot: Snapshot, function: str, position: int) -> Made:
     numbered = re.search(r"func_([0-9A-F]{8})", function)
     made.name = f"Obj{numbered[1] if numbered else format(index.get(snapshot).addresses.get(function, 0), '08X')}"
     made.name += f"Arg{position}" * bool(position)
+    held = ledger._owner(
+        ledger.owners(index.get(snapshot).identities), given[1][position].replace("const", "").strip(" *")
+    )
+    if held and headers.is_header(held.views[0].path):
+        made.name = held.views[0].name.removeprefix("struct ")  # typed already: the record is widened, not replaced
     rest = [a for a in rows if not any(lo <= a.offset < hi for lo, hi in spans)]
+    extra, inner, rest, made.skip = _inner(snapshot, made, reach, rest)
+    if made.skip:
+        return made
     got = _record(rest, made.name) if rest else dispatch.Record(made.name, ())
     if isinstance(got, str):
         made.skip = f"the accesses cannot share one record: {got}"
         return made
-    members = [(o, w, t, f"unk{o:X}") for o, w, t in got.fields] + [
-        (f.offset, f.size * f.count, t, f.name) for f, t in reused
-    ]
+    members = _members(got.fields) + [(f.offset, f.size * f.count, t, f.name) for f, t in reused] + inner
     members.sort()
     if any(a[0] + a[1] > b[0] for a, b in itertools.pairwise(members)):
         made.skip = "reused members overlap the accessed ones"
         return made
     made.fields = [f"0x{o:X} {w} {t} {n}" for o, w, t, n in members]
-    return _edit(snapshot, made, given, declared, _Defined(made.name, _body(made.name, members)))
+    if held and headers.is_header(held.views[0].path):
+        return _widen(snapshot, made, held, extra + _body(made.name, members), members)
+    return _edit(snapshot, made, given, declared, _Defined(made.name, extra + _body(made.name, members)))
+
+
+def _widen(
+    snapshot: Snapshot, made: Made, held: ledger.Identity, text: str, members: list[tuple[int, int, str, str]]
+) -> Made:
+    """The parameter's record is in a header already (an earlier type item, from fewer accesses): its definition
+    becomes the new one, the sub-records and callee records before it."""
+    path = held.views[0].path
+    old = (snapshot.peek(path) or b"").decode(errors="replace")
+    lost = [
+        f.name
+        for f in held.fields
+        if not any(o <= f.offset and f.offset + f.size * f.count <= o + w for o, w, _, _ in members)
+    ]
+    found = re.search(rf"^typedef struct (?:{made.name})? ?\{{\n.*?^\}} {made.name};\n", old, re.M | re.S)
+    if lost or not found:
+        made.skip = f"the record {made.name} has members the accesses lack: {', '.join(lost[:6]) or 'its definition'}"
+        return made
+    made.header, made.edits = path, {path: (old[: found.start()] + text + old[found.end() :]).encode()}
+    return made
 
 
 def _edit(
@@ -392,7 +522,9 @@ def take(config: Config, snapshot: Snapshot, function: str, position: int, now: 
         "",
         f"record {made.name} in {made.header}:",
     ]
-    brief += [f"  {x}" for x in made.fields] + ["", "evidence from:"] + [f"  {x}" for x in made.shared or ["none"]]
+    brief += [f"  {x}" for x in made.fields]
+    brief += ["", "records inside it and records callees return:"] + [f"  {x}" for x in made.records or ["none"]]
+    brief += ["", "evidence from:"] + [f"  {x}" for x in made.shared or ["none"]]
     brief += [
         "",
         "call sites:",
@@ -417,6 +549,7 @@ def take(config: Config, snapshot: Snapshot, function: str, position: int, now: 
         "why": made.skip or f"{made.name}: {len(made.fields)} members, {len(made.sites)} call sites",
         "record": made.name,
         "fields": made.fields,
+        "records": made.records,
         "sites": made.sites,
         "conflicts": made.conflicts,
         "evidence": "; ".join(made.shared),

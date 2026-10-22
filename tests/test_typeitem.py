@@ -10,8 +10,8 @@ from recipemaker import dispatch, state, typeitem, work
 NOW = 1_000_000.0
 
 
-def access(offset, width=4, kind="i", sign="s", function="f"):
-    return dispatch.Access(offset, width, kind, sign, function)
+def access(offset, width=4, kind="i", sign="s", function="f", via=0):
+    return dispatch.Access(offset, width, kind, sign, function, via)
 
 
 def test_a_pointer_made_by_addiu_adds_its_distance_and_one_stepped_by_a_loop_stops_the_walk():
@@ -104,3 +104,67 @@ def test_other_skip_reasons_route_nowhere(fakes, reason):
     state.take(fakes.config, "func_a", NOW)
     assert work.skip(fakes.config, {"item": "func_a", "reason": reason})["next"] == "recipe next"
     assert typeitem.needs(fakes.config) == {}
+
+
+def test_a_pointer_into_the_object_passed_to_a_callee_is_a_part_at_that_offset_with_its_own_accesses():
+    found = dispatch.flow(
+        code(
+            "addiu $s0, $a0, 0x190",
+            "lw $v0, 0x50($s0)",  # through the part: offset 0x50 of the part at 0x190
+            "jal g",
+            "addu $a0, $s0, $zero",  # the part is the callee's first argument
+        ),
+        0,
+        "f",
+    )
+    assert found.derived == ((0x190, ("g", 0)),) and found.passes == ()
+    assert [(a.offset, a.via) for a in found.accesses] == [(0x1E0, 0x190)]
+
+
+def test_a_callee_result_that_is_read_and_whose_end_address_is_taken_is_a_record_of_that_size():
+    found = dispatch.flow(
+        code(
+            "jal h",
+            "nop",
+            "beqz $v0, .Lout",  # the not-taken side may clobber $v0: the state at the branch is kept for the label
+            "addiu $a1, $v0, 0x180",
+            "lw $t1, 4($v0)",
+            "j .Lend",
+            "addu $v0, $zero, $zero",
+            "lw $t2, 8($v0)",
+        ),
+        0,
+        "f",
+    )
+    assert found.extents == (("h", 0x180),)
+    assert [(c, a.offset) for c, a in found.returned] == [("h", 4), ("h", 8)]
+
+
+def test_the_closure_types_a_part_and_a_callee_result_and_a_part_that_mirrors_it_is_a_copy_of_it(monkeypatch):
+    flows = {
+        ("f", 0): dispatch.Flow(
+            (access(0, via=0), access(0x1E0, via=0x190)),
+            (),
+            derived=((0x190, ("g", 0)),),
+            returned=(("h", access(0)), ("h", access(4))),
+            extents=(("h", 0x80),),
+        ),
+        ("g", 0): dispatch.Flow((access(0x40, function="g"),), ()),
+    }
+    monkeypatch.setattr(dispatch, "flows", lambda snapshot, node: flows.get(node, dispatch.Flow((), ())))
+    reach = typeitem._closure(None, "f", 0)
+    assert [a.offset for a in reach.rows] == [0]
+    assert sorted(a.offset for a in reach.subs[0x190]) == [0x40, 0x50]
+    assert sorted(a.offset for a in reach.returns["h"]) == [0, 4] and reach.extents == {"h": 0x80}
+
+
+def test_the_cast_lines_reaching_offsets_no_member_sits_at_name_the_missing_members(monkeypatch):
+    monkeypatch.setattr(typeitem, "_prototype", lambda snapshot, function: ("void", ["Obj *", "s32"]))
+    held = SimpleNamespace(fields=(SimpleNamespace(offset=0), SimpleNamespace(offset=0x10)))
+    monkeypatch.setattr(typeitem, "_accesses", lambda snapshot, node: [])
+    monkeypatch.setattr(typeitem.index, "get", lambda snapshot: SimpleNamespace(identities=()))
+    monkeypatch.setattr(typeitem.ledger, "owners", lambda known: {})
+    monkeypatch.setattr(typeitem.ledger, "_owner", lambda owner, kind: held if kind == "Obj" else None)
+    lines = ["((T *)((char *)arg0 + 0x190))->a = 1;", "x = *(s32 *)((char *)arg0 + 0x10);"]
+    assert typeitem.casts(None, "f", lines) == ("f.arg0", ["arg0 + 0x190"])
+    assert typeitem.casts(None, "f", lines[1:]) == ("", [])

@@ -6,8 +6,6 @@ The evidence is the structure document (`structure.evidence`: modules, segments,
 calls and loads of the extracted assembly of each member's version (`api.asm_path`). Unbake produces no string,
 catalog-name or header-graph facts, so there is no catalog step (N0), no string evidence and no type renames."""
 
-from __future__ import annotations
-
 import json
 import re
 from collections import Counter

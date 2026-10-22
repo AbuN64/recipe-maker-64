@@ -1,8 +1,6 @@
 """The source tree as Recipe Maker reads it: members, the module that owns each, and its placements per version.
 Built from `api.snapshot` (the captured tree and its symbol facts); nothing here reads unbake's internals."""
 
-from __future__ import annotations
-
 import dataclasses
 import mmap
 import posixpath

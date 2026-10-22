@@ -1,7 +1,5 @@
 """Preprocess context through the same toolchain contract as unbake's build."""
 
-from __future__ import annotations
-
 from unbake import api
 from unbake.contracts import Config
 

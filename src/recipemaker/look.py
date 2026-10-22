@@ -1,7 +1,5 @@
 """`recipe look`: prototypes, struct layouts and fields from the index."""
 
-from __future__ import annotations
-
 import difflib
 from typing import Any
 

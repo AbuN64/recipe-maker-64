@@ -1,8 +1,6 @@
 """unbake's verdicts through its command line: score a candidate, score many, compare and submit. Each call runs
 `unbake` in the project with the host config and reads its one JSON line; a refusal comes back as a `Refusal`."""
 
-from __future__ import annotations
-
 import json
 import sys
 from collections.abc import Mapping, Sequence

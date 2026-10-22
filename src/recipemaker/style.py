@@ -2,8 +2,6 @@
 per file content (a parse cache keyed by the text digest), and the rules run on the facts, so a rule change reparses
 nothing."""
 
-from __future__ import annotations
-
 import json
 import re
 from collections import Counter, defaultdict

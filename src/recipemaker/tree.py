@@ -4,8 +4,6 @@ Everything here is a pure function of the evidence document. The libraries, call
 of the structure design (rules L, Y, D) need call and load edges, which unbake 0.5.5 produces nowhere, so a proposed
 module stays in the folder of the module it comes from."""
 
-from __future__ import annotations
-
 import posixpath
 import re
 import statistics

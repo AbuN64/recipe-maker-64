@@ -1,7 +1,5 @@
 """The rung contract: a rung proposes candidates, the ladder measures them all in one pool batch and keeps the best."""
 
-from __future__ import annotations
-
 import dataclasses
 import re
 from collections.abc import Callable, Mapping, Sequence

@@ -1,7 +1,5 @@
 """Twin rung: a landed function of the same shape in this tree, renamed for the open one."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass

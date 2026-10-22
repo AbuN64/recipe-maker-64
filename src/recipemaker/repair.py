@@ -1,8 +1,6 @@
 """Repairs of m2c drafts for errors the compiler would name: stack names m2c left undeclared, small-number symbols
 used as field offsets, and scalars that are dereferenced. Each is a text rewrite of the draft, never of a header."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Callable, Mapping
 

@@ -1,7 +1,5 @@
 """The `recipe` command line: short text ending in one `next:` line, or one JSON object with `--json`."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -16,7 +14,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, errors, flags, lifecycle, naming, retext, state, structure, style, work
+from recipemaker import advice, brief, errors, lifecycle, naming, retext, state, structure, style, work
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -27,7 +25,6 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "status": work.status,
     "structure": structure.run,
     "apply": structure.apply,
-    "flags": flags.run,
     "name": naming.run,
     "style": style.run,
     "text": retext.run,
@@ -41,6 +38,14 @@ def _landing(result: Json) -> list[str]:
     if result["saved"]:
         return [f"saved as nonmatching {brief.scores(result['score'])} ({result['saved']})"]
     return []
+
+
+def _render_style(result: Json) -> list[str]:
+    counts = ", ".join(f"{k} {v}" for k, v in result["census"].items() if v)
+    lines = [f"{result['files']} files, {result['parsed']} parsed: {counts or 'no findings'}"]
+    lines += [f"{r} rose from {a} to {b}" for r, (a, b) in sorted(result["rose"].items())]
+    lines += [f"{f['rule']} {f['path']} {f['detail']}".rstrip() for f in result["findings"][:50]]
+    return [*lines, *(["baseline written"] * result["baseline"])]
 
 
 def _render_plan(result: Json) -> list[str]:
@@ -91,7 +96,9 @@ def _render_next(result: Json) -> list[str]:
 def _render_work(result: Json) -> list[str]:
     if result.get("kind") in ("declaration", "type"):
         more = [f"record: {result['record']}", *[f"  {x}" for x in result["fields"]]] if result.get("record") else []
-        more += [f"conflict: {x}" for x in result.get("conflicts", [])]
+        more += [f"inside: {x}" for x in result.get("records", [])] + [
+            f"conflict: {x}" for x in result.get("conflicts", [])
+        ]
         return [*_render_next(result), *more, f"wall: {result['wall_s']} s"]
     if result["result"] == "skipped":
         return [f"skipped {result['item']} as {result['reason']}: {result['why']}"]
@@ -216,22 +223,6 @@ def _render_name(result: Json) -> list[str]:
     return [f"{len(result['files'])} banner candidates, {result['skipped']} skipped"]
 
 
-def _render_style(result: Json) -> list[str]:
-    counts = ", ".join(f"{k} {v}" for k, v in result["census"].items() if v)
-    lines = [f"{result['files']} files, {result['parsed']} parsed: {counts or 'no findings'}"]
-    lines += [f"{r} rose from {a} to {b}" for r, (a, b) in sorted(result["rose"].items())]
-    lines += [f"{f['rule']} {f['path']} {f['detail']}".rstrip() for f in result["findings"][:50]]
-    return [*lines, *(["baseline written"] * result["baseline"])]
-
-
-def _render_flags(result: Json) -> list[str]:
-    lines = [f"lattice {result['lattice']} sets over {result['fuzzy']} fuzzy functions in {result['wall_s']} s"]
-    lines += [f"options {r['module']} {' '.join(r['flags'])} (for {r['for']})" for r in result["options"]]
-    lines += [f"split {r['function']} into {r['module']} with {' '.join(r['flags'])}" for r in result["splits"]]
-    lines += [f"cut {r['left']}|{r['right']} decided by {' '.join(r['by'])}" for r in result["decided_cuts"]]
-    return lines
-
-
 _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "next": _render_next,
     "work": _render_work,
@@ -241,7 +232,6 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "status": _render_status,
     "structure": _render_structure,
     "apply": _render_apply,
-    "flags": _render_flags,
     "name": _render_name,
     "style": _render_style,
     "text": lambda result: [
@@ -311,8 +301,6 @@ def _parser() -> argparse.ArgumentParser:
     one = verb("structure", "propose module structure: one JSON object {patch, files, moves} on stdout")
     one.add_argument("--segment", help="only these segments (comma list)")
     one.add_argument("--paths", nargs="+", metavar="FILE", help="only the modules holding these files and linked moves")
-    one = verb("flags", "one flag set per object: score the flag lattice, propose options moves and flag splits")
-    one.add_argument("--segment", help="only fuzzy functions and option units of these segments (comma list)")
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
     one.add_argument("action", choices=("next", "submit", "banners"))
     one.add_argument("file", nargs="?", help="the names file for submit")
@@ -362,7 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
             loaded = api.load(args.project or Path.cwd(), host)
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
-            if args.verb in ("structure", "apply", "name", "flags"):  # these verbs call unbake
+            if args.verb in ("structure", "apply", "name"):  # these verbs call unbake
                 given["host"] = host
             result = dict(_VERBS[args.verb](loaded, given))
             code = int(result.pop("exit", 0))

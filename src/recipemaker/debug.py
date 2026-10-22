@@ -8,8 +8,6 @@ member offsets agree with exactly one original record takes the original type an
 --step T`); a function or global whose address in a version is where the record puts it may take the record's name
 (`debug NAME` evidence); and the source file of each function is a module boundary for `recipe structure`."""
 
-from __future__ import annotations
-
 import json
 import re
 import sys

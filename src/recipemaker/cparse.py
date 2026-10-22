@@ -1,7 +1,5 @@
 """Struct views read from the project's headers: where each named field sits and how big it is."""
 
-from __future__ import annotations
-
 import re
 from bisect import bisect_left
 from collections.abc import Callable, Iterable
