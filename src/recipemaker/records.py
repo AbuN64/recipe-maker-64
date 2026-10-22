@@ -91,6 +91,15 @@ def arguments(text: str) -> list[str]:
     return [part.strip() for part in split(text, ",")]
 
 
+def call(text: str, at: int) -> tuple[list[str], int]:
+    """The arguments of the call whose `(` ends just before `at`, and the index after its `)`."""
+    depth, end = 1, at
+    while end < len(text) and depth:
+        depth += (text[end] == "(") - (text[end] == ")")
+        end += 1
+    return arguments(text[at : end - 1]), end
+
+
 def _statements(body: str) -> list[tuple[str, frozenset[str]]]:
     """Each member declaration of a struct body as one line with the names it holds: `T a, *b;` is one line per
     declarator, and a nested record member (`union { .. } u;`, or an anonymous one) stays whole on one line, holding

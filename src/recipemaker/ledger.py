@@ -97,11 +97,7 @@ class Result:
 def uses(text: str) -> list[Use]:
     out = []
     for found in _USE.finditer(text):
-        depth, at = 1, found.end()
-        while at < len(text) and depth:
-            depth += (text[at] == "(") - (text[at] == ")")
-            at += 1
-        parts = records.arguments(text[found.end() : at - 1])
+        parts, at = records.call(text, found.end())
         if len(parts) != 3 or not re.fullmatch(r"-?(0[xX][0-9A-Fa-f]+|\d+)", parts[2]):
             continue
         kind = parts[1].rstrip().removesuffix("*").strip()

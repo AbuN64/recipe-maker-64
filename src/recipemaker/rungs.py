@@ -352,11 +352,7 @@ def evidence(snapshot: Snapshot, member: str, position: int) -> list[str | None]
         body = twin.function(index.source(snapshot, unit.path), caller) or ""
         local = ledger.declared_types(body)
         for call in re.finditer(rf"\b{re.escape(member)}\s*\(", body):
-            depth, at = 1, call.end()
-            while at < len(body) and depth:
-                depth += (body[at] == "(") - (body[at] == ")")
-                at += 1
-            args = records.arguments(body[call.end() : at - 1])
+            args, _ = records.call(body, call.end())
             out.append(_type_of(args[position], local, declared) if position < len(args) else None)
     return out
 
@@ -365,11 +361,7 @@ def passed(snapshot: Snapshot, text: str, name: str) -> list[str]:
     """The record type of each callee parameter the draft passes `name` to as it is, from the callee's prototype."""
     owner, declared, out = ledger.owners(index.get(snapshot).identities), index.get(snapshot).declarations, []
     for call in re.finditer(r"\b(\w+)\s*\(", text):
-        depth, at = 1, call.end()
-        while at < len(text) and depth:
-            depth += (text[at] == "(") - (text[at] == ")")
-            at += 1
-        args = records.arguments(text[call.end() : at - 1])
+        args, _ = records.call(text, call.end())
         proto = re.search(rf"\b{call[1]}\s*\(([^;{{]*)\)", declared.get(call[1], ("", 0, ""))[2])
         given = records.arguments(proto[1]) if proto else []
         for arg, param in zip(args, given, strict=False):

@@ -11,7 +11,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Finding, Snapshot, digest
 
-from recipemaker import world
+from recipemaker import records, world
 
 _SOURCE = (".c", ".cpp")
 _HEADER = (".h", ".hpp")
@@ -390,10 +390,7 @@ def _rows(paths: list[str], scans: list[dict[str, Any]]) -> tuple[dict[str, str]
 def normal(text: str) -> str:
     """C text pycparser reads: attributes blanked, line-marker flags dropped, GNU spellings made plain."""
     while match := re.search(r"\b__attribute__\s*\(", text):
-        end, depth = match.end(), 1
-        while end < len(text) and depth:
-            depth += (text[end] == "(") - (text[end] == ")")
-            end += 1
+        end = records.call(text, match.end())[1]
         text = text[: match.start()] + re.sub(r"[^\n]", " ", text[match.start() : end]) + text[end:]
     text = re.sub(r'^(# \d+ "[^"\n]*")(?: \d+)+[ \t]*$', r"\1", text, flags=re.M)
     text = re.sub(r"\b(?:__extension__|__restrict)\b", "", text)
