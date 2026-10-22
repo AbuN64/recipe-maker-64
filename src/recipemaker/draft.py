@@ -514,11 +514,53 @@ def _text_starts(layout: world.Layout) -> dict[tuple[str, int], str]:
     return starts
 
 
+def _prologue(word: int) -> bool:  # addiu $sp, $sp, -N
+    return word >> 16 == 0x27BD and bool(word & 0x8000)
+
+
+def leading_pad(snapshot: Snapshot, member: str) -> list[tuple[str, int, int, int]]:
+    """(version, rom, vram, word) of each alignment pad word `member` owns before its code. The original linker rounds
+    an object's code up to 16 bytes and leaves garbage there (`sll $v0,$a1,3`); splat starts the next function at the
+    word after the previous return, so no C body can match, every byte and jump target sitting four off. The pad is
+    data of the object before (the `_padding_` units, precedent func_80255C3C_us_rev1). Evidence is the ROM alone: a
+    return and its delay slot end the word before, the address is 12 mod 16, the word is no stack prologue and the next
+    word is one."""
+    layout = world.of(snapshot)
+    item = layout.members.get(member)
+    ends = {(p.version, p.rom_end) for m in layout.members.values() for p in m.placements if p.section == ".text"}
+    found = []
+    for p in item.placements if item and item.kind == "function" else ():
+        if p.section != ".text" or p.size < 12 or p.vram % 16 != 12 or (p.version, p.rom_start) not in ends:
+            continue
+        word = [
+            int.from_bytes(world.rom_bytes(snapshot.versions[p.version], p.rom_start + at, p.rom_start + at + 4), "big")
+            for at in (-8, 0, 4)
+        ]
+        if _ends(word[0]) and _prologue(word[2]) and not (_prologue(word[1]) or _delay_slot(word[1])):
+            found.append((p.version, p.rom_start, p.vram, word[1]))
+    return found
+
+
 def refuse_fragment(snapshot: Snapshot, member: str) -> None:
     successor = split_slot(snapshot, member)
     if successor is not None:
         reason = f"{member} ends on a branch or jump whose delay slot is the first word of {successor}"
         raise Refusal(Finding("member.split-delay-slot", reason, unit=member))
+    pads = leading_pad(snapshot, member)
+    if pads:
+        steps = [
+            f"{v}: in versions/{v}/symbol_addrs.txt write `D_auto_{member}_padding_{rom:X} = 0x{vram:X}; "
+            f"// rom:0x{rom:X}` and move the row of {member} to 0x{vram + 4:X} rom:0x{rom + 4:X} (size 4 less); "
+            f"the word is 0x{word:08X}"
+            for v, rom, vram, word in pads
+        ]
+        steps.append(
+            "INCLUDE_DATA the pad after the previous function (unbake sync appends it); the function must not share a "
+            "file with the code before it (give it a file of its own, as func_80255C3C_us_rev1 has); every version "
+            "that has the function needs the same split"
+        )
+        reason = f"{member} owns an alignment pad word before its prologue: the body sits four bytes off the ROM's"
+        raise Refusal(Finding("member.leading-pad", reason, unit=member, missing=tuple(steps)))
 
 
 # m2c's own annotations

@@ -332,7 +332,7 @@ def _work(config: Config, params: Json, lease: state.Lease, now: float) -> Json:
         outcome = ladder.run(config, item, submit=not params.get("no_submit"))
     except Refusal as refusal:
         found = refusal.findings[0]
-        if found.key == "member.split-delay-slot":
+        if found.key in ("member.split-delay-slot", "member.leading-pad"):
             return _skip_for(config, item, "split-symbol", found.reason, now)
         raise
     landed, saved = _commits(outcome.drain or {}, item)

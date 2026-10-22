@@ -757,3 +757,31 @@ def test_data_draft_spells_a_kuseg_code_word_by_the_alias_row_the_version_has(tm
     snapshot.versions["a"].symbols["D_00000400"] = 0x400
     text = draft.data_text(snapshot, "d")
     assert "extern char D_00000400[];" in text and "(unsigned int)D_00000400" in text
+
+
+PREVIOUS = _words(0x27BDFFE0, 0x03E00008, 0x27BD0020)  # ends at 0x8000040C with a return and its delay slot
+
+
+def _padded(tmp_path: Path, second: bytes) -> Snapshot:
+    code = {"func_80000400": {"a": (0x1000, PREVIOUS)}, "func_8000040C": {"a": (0x100C, second)}}
+    return _snapshot(tmp_path, functions=code, versions=("a",))
+
+
+def test_a_word_before_a_prologue_after_a_return_is_a_leading_pad_and_work_refuses_with_the_split(
+    tmp_path: Path, toolchains: Any
+) -> None:
+    snapshot = _padded(tmp_path / "a", _words(0x000510C0, 0x27BDFFC0, 0x03E00008, 0x27BD0040))
+    assert draft.leading_pad(snapshot, "func_8000040C") == [("a", 0x100C, 0x8000040C, 0x000510C0)]
+    assert draft.leading_pad(snapshot, "func_80000400") == []
+    with pytest.raises(Refusal) as caught:
+        draft.refuse_fragment(snapshot, "func_8000040C")
+    (finding,) = caught.value.findings
+    assert finding.key == "member.leading-pad"
+    assert "D_auto_func_8000040C_padding_100C = 0x8000040C; // rom:0x100C" in finding.missing[0]
+    assert "0x80000410 rom:0x1010" in finding.missing[0] and "func_80255C3C_us_rev1" in finding.missing[1]
+
+
+def test_a_function_that_opens_with_its_prologue_owns_no_pad(tmp_path: Path, toolchains: Any) -> None:
+    snapshot = _padded(tmp_path, _words(0x27BDFFC0, 0x27BD0040, 0x03E00008, 0x27BD0040))
+    assert draft.leading_pad(snapshot, "func_8000040C") == []
+    draft.refuse_fragment(snapshot, "func_8000040C")

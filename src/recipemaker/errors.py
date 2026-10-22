@@ -30,7 +30,7 @@ def unbuilt(message: str) -> bool:
 
 
 # keys unbake's sentence table may not know
-_OWN = ("recipe.", "draft.", "types.m2c", "member.split-delay-slot", "move.")
+_OWN = ("recipe.", "draft.", "types.m2c", "member.split-delay-slot", "member.leading-pad", "move.")
 
 
 def own(finding: Finding) -> bool:
