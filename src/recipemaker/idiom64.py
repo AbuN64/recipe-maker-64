@@ -11,6 +11,8 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from recipemaker import records
+
 HELPERS = {
     "__udivdi3": "/",
     "__divdi3": "/",
@@ -143,18 +145,6 @@ def _adjacent(hi: str, lo: str) -> bool:
 
 def _sext(value: int) -> int:
     return value - (1 << 32) if value >> 31 & 1 else value
-
-
-def _split(args: str) -> list[str]:
-    out: list[str] = []
-    depth, current = 0, ""
-    for char in args:
-        depth += (char == "(") - (char == ")")
-        if char == "," and not depth:
-            out, current = [*out, current.strip()], ""
-        else:
-            current += char
-    return [*out, current.strip()]
 
 
 def _result(lines: list[str], i: int, r: str) -> tuple[str, int, str, str] | None:
@@ -537,7 +527,7 @@ def _convert(text: str, run: _Run) -> str:
     of a whole value, as the cast of that value to f32."""
 
     def swap(m: re.Match[str]) -> str:
-        args = _split(m["p"])
+        args = records.arguments(m["p"])
         hi, lo = m["h"], m["l"]
         if not (
             run.helpers.get(m["cmp"]) == "cmp"
@@ -574,7 +564,9 @@ def _divide(text: str, run: _Run) -> str:
     for i, line in enumerate(lines):
         m = _ASSIGN.match(line)
         call = _CALL.fullmatch(m[3]) if m else None
-        if not (m and call and call[1] in divide and counts[m[2]] == 1 and len(args := _split(call[2])) == 4):
+        if not (
+            m and call and call[1] in divide and counts[m[2]] == 1 and len(args := records.arguments(call[2])) == 4
+        ):
             continue
         hi, lo = args[2:]
         res = _result(lines, i, m[2])

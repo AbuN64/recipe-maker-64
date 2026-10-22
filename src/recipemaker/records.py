@@ -86,6 +86,11 @@ def split(text: str, mark: str) -> list[str]:
     return [*parts, text[start:]]
 
 
+def arguments(text: str) -> list[str]:
+    """The comma-separated parts of a call's or a prototype's argument text, each stripped."""
+    return [part.strip() for part in split(text, ",")]
+
+
 def _statements(body: str) -> list[tuple[str, frozenset[str]]]:
     """Each member declaration of a struct body as one line with the names it holds: `T a, *b;` is one line per
     declarator, and a nested record member (`union { .. } u;`, or an anonymous one) stays whole on one line, holding

@@ -5,6 +5,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
+from recipemaker import records
 from recipemaker.cparse import FLOATS, SCALARS, Field, Layout
 
 _USE = re.compile(r"M2C_FIELD\(")
@@ -93,16 +94,6 @@ class Result:
     left: tuple[Left, ...]
 
 
-def _split(args: str) -> list[str]:
-    parts, depth, start = [], 0, 0
-    for at, char in enumerate(args):
-        depth += (char in "([") - (char in ")]")
-        if char == "," and not depth:
-            parts.append(args[start:at].strip())
-            start = at + 1
-    return [*parts, args[start:].strip()]
-
-
 def uses(text: str) -> list[Use]:
     out = []
     for found in _USE.finditer(text):
@@ -110,7 +101,7 @@ def uses(text: str) -> list[Use]:
         while at < len(text) and depth:
             depth += (text[at] == "(") - (text[at] == ")")
             at += 1
-        parts = _split(text[found.end() : at - 1])
+        parts = records.arguments(text[found.end() : at - 1])
         if len(parts) != 3 or not re.fullmatch(r"-?(0[xX][0-9A-Fa-f]+|\d+)", parts[2]):
             continue
         kind = parts[1].rstrip().removesuffix("*").strip()

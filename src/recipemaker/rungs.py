@@ -148,7 +148,7 @@ def parameters(text: str, member: str) -> list[str]:
     found = re.search(rf"^[^\n;{{}}#]*\b{re.escape(member)}\s*\(([^;{{]*)\)\s*\{{$", text, re.M)
     if found is None or found[1].strip() in ("", "void"):
         return []
-    return ledger._split(found[1])
+    return records.arguments(found[1])
 
 
 def _type_of(expression: str, local: Mapping[str, str], declared: Mapping[str, tuple[str, int, str]]) -> str | None:
@@ -356,7 +356,7 @@ def evidence(snapshot: Snapshot, member: str, position: int) -> list[str | None]
             while at < len(body) and depth:
                 depth += (body[at] == "(") - (body[at] == ")")
                 at += 1
-            args = ledger._split(body[call.end() : at - 1])
+            args = records.arguments(body[call.end() : at - 1])
             out.append(_type_of(args[position], local, declared) if position < len(args) else None)
     return out
 
@@ -369,9 +369,9 @@ def passed(snapshot: Snapshot, text: str, name: str) -> list[str]:
         while at < len(text) and depth:
             depth += (text[at] == "(") - (text[at] == ")")
             at += 1
-        args = [a.strip() for a in ledger._split(text[call.end() : at - 1])]
+        args = records.arguments(text[call.end() : at - 1])
         proto = re.search(rf"\b{call[1]}\s*\(([^;{{]*)\)", declared.get(call[1], ("", 0, ""))[2])
-        given = ledger._split(proto[1]) if proto else []
+        given = records.arguments(proto[1]) if proto else []
         for arg, param in zip(args, given, strict=False):
             kind = re.match(r"(?:const\s+)?(?:struct\s+)?(\w+)\s*\*(?!\s*\*)", param)
             if arg == name and kind and ledger._owner(owner, kind[1]):
@@ -427,7 +427,7 @@ def _param_typed(
         proto = re.search(rf"^([^\n;{{}}#]*\b{re.escape(member)}\s*\()([^;{{]*)(\)\s*;)", header, re.M)
         if proto is None:
             return None
-        given = ledger._split(proto[2]) if proto[2].strip() not in ("", "void") else []
+        given = records.arguments(proto[2]) if proto[2].strip() not in ("", "void") else []
         if len(given) != len(params):
             return None
         edits[declared[0]] = header[: proto.start(2)] + _retyped(given, position, spelled) + header[proto.end(2) :]
