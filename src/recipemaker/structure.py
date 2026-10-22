@@ -23,7 +23,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal, file_facts
 
-from recipemaker import clash, debug, state, tree, world
+from recipemaker import clash, cparse, debug, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
@@ -441,29 +441,6 @@ def _blocks(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
-def _brace_end(text: str, at: int) -> int:
-    """The index after the `}` that closes the `{` at `at`, skipping strings, characters and comments."""
-    depth, i = 0, at
-    while i < len(text):
-        two, one = text[i : i + 2], text[i]
-        if two == "/*":
-            i = text.find("*/", i + 2) + 1 or len(text)
-        elif two == "//":
-            i = text.find("\n", i) if "\n" in text[i:] else len(text)
-        elif one in "\"'":
-            i += 1
-            while i < len(text) and text[i] != one:
-                i += 1 + (text[i] == "\\")
-        elif one == "{":
-            depth += 1
-        elif one == "}":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-        i += 1
-    return len(text)
-
-
 def cut(text: str, name: str) -> tuple[str, str] | None:
     """(the text without the unit of `name`, the unit): its INCLUDE_* line or its C definition, or the whole
     `#ifdef NON_MATCHING` block that holds either. None when the text has neither."""
@@ -474,7 +451,7 @@ def cut(text: str, name: str) -> tuple[str, str] | None:
         head = re.search(rf"^[ \t]*(?:static[ \t]+)?[\w \t*]*?\b{re.escape(name)}[ \t]*\([^;{{]*\)\s*\{{", text, re.M)
         if not head:
             return None
-        lo, hi = head.start(), _brace_end(text, head.end() - 1)
+        lo, hi = head.start(), cparse.close(text, head.end() - 1) + 1
         hi += text[hi : hi + 1] == "\n"
     lines = text.splitlines(keepends=True)
     starts = [0]
@@ -736,7 +713,7 @@ _RECORD_HEAD = re.compile(r"\b(?:struct|union)\s*(\w+)?\s*\{")
 def _bodies(text: str) -> Iterator[tuple[int, int, str, str]]:
     """(start, end, tag, typedef alias) of the inside of every record body a text defines."""
     for head in _RECORD_HEAD.finditer(text):
-        end = _brace_end(text, head.end() - 1)  # just past the closing brace
+        end = cparse.close(text, head.end() - 1) + 1  # just past the closing brace
         alias = re.match(r"\s*(\w+)\s*;", text[end:])
         typedef = text[: head.start()].rstrip().endswith("typedef")
         yield head.end(), end - 1, head[1] or "", alias[1] if alias and typedef else ""

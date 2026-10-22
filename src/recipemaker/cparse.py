@@ -61,11 +61,25 @@ def _clean(text: str) -> str:
 
 
 def close(text: str, start: int) -> int:
-    depth = 0
-    for at in range(start, len(text)):
-        depth += (text[at] == "{") - (text[at] == "}")
-        if depth == 0:
-            return at
+    """The index of the `}` that closes the `{` at `start`, skipping strings, characters and comments."""
+    depth, i = 0, start
+    while i < len(text):
+        two, one = text[i : i + 2], text[i]
+        if two == "/*":
+            i = text.find("*/", i + 2) + 1 or len(text)
+        elif two == "//":
+            i = text.find("\n", i) if "\n" in text[i:] else len(text)
+        elif one in "\"'":
+            i += 1
+            while i < len(text) and text[i] != one:
+                i += 1 + (text[i] == "\\")
+        elif one == "{":
+            depth += 1
+        elif one == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
     return len(text)
 
 
