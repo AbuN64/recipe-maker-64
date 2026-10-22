@@ -334,7 +334,7 @@ def _work(config: Config, params: Json, lease: state.Lease, now: float) -> Json:
     except Refusal as refusal:
         found = refusal.findings[0]
         if found.key in ("member.split-delay-slot", "member.leading-pad"):
-            return _skip_for(config, item, "split-symbol", found.reason, now)
+            return {**_skip_for(config, item, "split-symbol", found.reason, now), "next": found.action or "recipe next"}
         raise
     landed, saved = _commits(outcome.drain or {}, item)
     try:

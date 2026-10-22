@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -777,8 +778,12 @@ def test_a_word_before_a_prologue_after_a_return_is_a_leading_pad_and_work_refus
         draft.refuse_fragment(snapshot, "func_8000040C")
     (finding,) = caught.value.findings
     assert finding.key == "member.leading-pad"
-    assert "D_auto_func_8000040C_padding_100C = 0x8000040C; // rom:0x100C" in finding.missing[0]
-    assert "0x80000410 rom:0x1010" in finding.missing[0] and "func_80255C3C_us_rev1" in finding.missing[1]
+    assert "0x000510C0 at 0x8000040C (rom 0x100C)" in finding.missing[0]
+    manifest = snapshot.config.project.root / ".unbake/recipe/work/func_8000040C.pads.json"
+    assert json.loads(manifest.read_text()) == [
+        {"member": "func_8000040C", "version": "a", "rom": 0x100C, "vram": 0x8000040C}
+    ]
+    assert finding.action.startswith(f"unbake submit --pad-split {manifest} --patch ")
 
 
 def test_a_function_that_opens_with_its_prologue_owns_no_pad(tmp_path: Path, toolchains: Any) -> None:

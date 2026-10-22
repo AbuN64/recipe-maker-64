@@ -262,7 +262,7 @@ def render(verb: str, result: Json) -> str:
 
 def _action(action: str, item: str | None) -> str:
     """An unbake action names an unbake command; the recipe verb that does it is try, or skip when only S can."""
-    if "unbake " not in action:
+    if "unbake " not in action or "--pad-split" in action:
         return action or "recipe status"
     if item is None:
         return "recipe status"

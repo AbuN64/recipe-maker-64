@@ -1,5 +1,6 @@
 """First-draft C for one function: m2c output with GBI rewrites (moved from unbake)."""
 
+import json
 import math
 import os
 import re
@@ -543,19 +544,20 @@ def refuse_fragment(snapshot: Snapshot, member: str) -> None:
         raise Refusal(Finding("member.split-delay-slot", reason, unit=member))
     pads = leading_pad(snapshot, member)
     if pads:
+        file = snapshot.config.project.root / f".unbake/recipe/work/{host.stem(member)}.pads.json"
+        rows = [{"member": member, "version": v, "rom": rom, "vram": vram} for v, rom, vram, _ in pads]
+        host.write(file, json.dumps(rows).encode())
         steps = [
-            f"{v}: in versions/{v}/symbol_addrs.txt write `D_auto_{member}_padding_{rom:X} = 0x{vram:X}; "
-            f"// rom:0x{rom:X}` and move the row of {member} to 0x{vram + 4:X} rom:0x{rom + 4:X} (size 4 less); "
-            f"the word is 0x{word:08X}"
+            f"{v}: the word 0x{word:08X} at 0x{vram:X} (rom 0x{rom:X}) is the previous object's data"
             for v, rom, vram, word in pads
         ]
-        steps.append(
-            "INCLUDE_DATA the pad after the previous function (unbake sync appends it); the function must not share a "
-            "file with the code before it (give it a file of its own, as func_80255C3C_us_rev1 has); every version "
-            "that has the function needs the same split"
-        )
         reason = f"{member} owns an alignment pad word before its prologue: the body sits four bytes off the ROM's"
-        raise Refusal(Finding("member.leading-pad", reason, unit=member, missing=tuple(steps)))
+        patch = file.with_suffix(".patch")
+        steps.append(
+            f"then ship the patch: decomp ship --patch LANE={patch}:MESSAGE; the function reads again as recipe work"
+        )
+        run = f"unbake submit --pad-split {file} --patch {patch}"
+        raise Refusal(Finding("member.leading-pad", reason, unit=member, missing=tuple(steps), action=run))
 
 
 # m2c's own annotations

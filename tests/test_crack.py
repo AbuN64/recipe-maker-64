@@ -319,7 +319,14 @@ def test_crack_runs_the_permuter_and_offers_the_better_candidate_to_recipe_try(l
 
     def call(cfg, command, *args):
         asked.append(args)
-        return {"permute": {"base_score": 90, "best_score": 40, "candidate": str(work / f"{MEMBER}.cracked.c"), "diff": "-x\n+y"}}
+        return {
+            "permute": {
+                "base_score": 90,
+                "best_score": 40,
+                "candidate": str(work / f"{MEMBER}.cracked.c"),
+                "diff": "-x\n+y",
+            }
+        }
 
     scores = iter([(0.80, ["-a"]), (0.95, ["-x", "+y"])])
 
