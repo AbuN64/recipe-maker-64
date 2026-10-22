@@ -210,10 +210,6 @@ def _render_structure(result: Json) -> list[str]:
     ]
 
 
-def _render_apply(result: Json) -> list[str]:
-    return [f"applied {result['patch']}, {result['left']} patches left, unbake sync done"]
-
-
 def _render_name(result: Json) -> list[str]:
     if result["action"] == "next":
         pack = f"pack {result['pack']} holds {result['targets']} targets, " if result["pack"] else ""
@@ -240,7 +236,7 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "look": _render_look,
     "status": _render_status,
     "structure": _render_structure,
-    "apply": _render_apply,
+    "apply": lambda r: [f"applied {r['patch']}, {r['left']} patches left, unbake sync done"],
     "name": _render_name,
     "style": _render_style,
 }
@@ -348,8 +344,20 @@ def _default_host() -> Path | None:
     return path if path.is_file() else None
 
 
+def _parked(root: Path) -> list[str]:
+    """decomp ship's notices of set-aside changes that no longer applied, said by every command until the patch goes."""
+    path = root / ".unbake/ship-parked.json"
+    rows = json.loads(path.read_text()) if path.is_file() else []
+    say = "ship.parked: {} no longer apply; owners: {}; git apply --3way {} then delete it"
+    return [
+        say.format(" ".join(r["files"]), ", ".join(r["owners"]), r["patch"]) for r in rows if Path(r["patch"]).is_file()
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(list(sys.argv[1:] if argv is None else argv))
+    for line in _parked(args.project or Path.cwd()):
+        sys.stderr.write(line + "\n")
     began = time.monotonic()
     host = args.host or (Path(os.environ["UNBAKE_HOST"]) if os.environ.get("UNBAKE_HOST") else None)
     host = host or _default_host()

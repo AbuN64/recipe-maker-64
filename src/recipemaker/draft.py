@@ -6,7 +6,7 @@ import os
 import re
 import struct
 from bisect import bisect_right
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -592,11 +592,6 @@ def _unread(text: str) -> str:
     return re.sub(r"^[ \t]*(unksp\w+) = [^\n]*;\n", lambda m: "" if text.count(m[1]) == 1 else m[0], text, flags=re.M)
 
 
-def _single_use(text: str) -> Callable[[re.Match[str]], str]:
-    """A substitution that drops a match whose captured name occurs in `text` only there."""
-    return lambda m: "" if text.count(m[1]) == 1 else m[0]
-
-
 def _stages(
     snapshot: Snapshot,
     member: str,
@@ -616,7 +611,7 @@ def _stages(
         raw = re.sub(r"^extern [^;(]*?\b(\w+);\n", lambda m: "" if m[1] in defined else m[0], raw, flags=re.M)
         raw = _unread(raw)
         raw = idiom64.collapse(raw, helpers)
-        raw = re.sub(r"struct (_m2c_stack_\w+) \{[^}]*\};\n*", _single_use(raw), raw)
+        raw = re.sub(r"struct (_m2c_stack_\w+) \{[^}]*\};\n*", lambda m, t=raw: "" if t.count(m[1]) == 1 else m[0], raw)
         kind = known.get(member, "").partition(member)[0]  # the project declares the function: define it the same way
         if kind:  # an undeclared function keeps the return type m2c gave it
             raw = re.sub(

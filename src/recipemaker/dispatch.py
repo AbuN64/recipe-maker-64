@@ -424,11 +424,6 @@ def _name(first: int, position: int) -> str:
     return f"Obj{first:08X}" + (f"Arg{position}" if position else "")
 
 
-def _ctype(kind: str, width: int, signs: set[str]) -> str:
-    sign = "u" if signs == {"u"} else "s" if kind == "i" else ""
-    return _TYPES.get((kind, width, sign), "")
-
-
 def record(name: str, accesses: Iterable[Access], spelled: Mapping[int, str] | None = None) -> Record | str:
     """The record holding every access, or why none can: an unaligned or negative access, two widths or kinds at one
     offset, signed and unsigned loads of one member, or members that overlap. Each refusal names the functions.
@@ -463,7 +458,7 @@ def record(name: str, accesses: Iterable[Access], spelled: Mapping[int, str] | N
         given = spelled.get(offset, "")
         pointer = width == 4 and kinds <= {"i", "p"} and ("p" in kinds or given.endswith("*"))
         kind = "f" if "f" in kinds else "p" if pointer else "i"
-        ctype = _ctype(kind, width, signs)
+        ctype = _TYPES.get((kind, width, "u" if signs == {"u"} else "s" if kind == "i" else ""), "")
         if kind == "i" and not signs and _TYPES.get(("i", width, "u")) == given:
             ctype = given  # a member only stored to: the draft's spelling of it
         if not ctype or offset % min(width, 8):

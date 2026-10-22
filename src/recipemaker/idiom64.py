@@ -143,10 +143,6 @@ def _adjacent(hi: str, lo: str) -> bool:
     return bool(m[0] and m[1] and int(m[1][1], 16) == int(m[0][1], 16) + 4)
 
 
-def _sext(value: int) -> int:
-    return value - (1 << 32) if value >> 31 & 1 else value
-
-
 def _result(lines: list[str], i: int, r: str) -> tuple[str, int, str, str] | None:
     """(addend text, lines consumed, hi store, lo store) of the statements that store the division result; the
     stores are adjacent globals, or temps that become one u64 temp and its low word."""
@@ -165,7 +161,7 @@ def _result(lines: list[str], i: int, r: str) -> tuple[str, int, str, str] | Non
         lo = re.fullmatch(rf"\s*(\w+) = (?:\(s32\) )?{add[1]};", rest[k + 2]) if len(rest) > k + 2 else None
         if hi and not (pre and x != pre[1]):
             word = pre[2] if pre else x
-            off = _sext(int(pre[3], 16)) if pre else 0
+            off = (int(pre[3], 16) ^ 0x80000000) - 0x80000000 if pre else 0  # sign-extended
             tail = f" + ({word} {'-' if off < 0 else '+'} {abs(off)})" if off else f" + {word}"
             if not pre and re.fullmatch(r"0x[0-9A-Fa-f]+", x):
                 tail = f" + {x}ULL"
@@ -176,10 +172,6 @@ def _result(lines: list[str], i: int, r: str) -> tuple[str, int, str, str] | Non
     hi = re.fullmatch(rf"\s*(\w+) = {r};", rest[0]) if rest else None
     lo = re.fullmatch(rf"\s*(\w+) = (?:\(s32\) )?(?:\(u32\) )?(?:\(u64\) )?{r};", rest[1]) if len(rest) > 1 else None
     return ("", 2, hi[1], lo[1]) if hi and lo and _adjacent(hi[1], lo[1]) else None
-
-
-def _pure_temp(line: str) -> bool:
-    return bool((m := _ASSIGN.match(line)) and m[2].startswith("temp_") and not re.search(r"\w\(", line))
 
 
 def _drop(s: str, reads: dict[str, int]) -> tuple[str, str]:
@@ -553,6 +545,10 @@ def _halved(args: list[str], temp: str | None, hi: str, lo: str, value: int) -> 
     got = [_value(a, env) for a in args[:2]]
     want = (value >> 1) | (value & 1)
     return None not in got and (got[0] & 0xFFFFFFFF, got[1] & 0xFFFFFFFF) == (want >> 32, want & 0xFFFFFFFF)  # type: ignore[operator]
+
+
+def _pure_temp(line: str) -> bool:
+    return bool((m := _ASSIGN.match(line)) and m[2].startswith("temp_") and not re.search(r"\w\(", line))
 
 
 def _divide(text: str, run: _Run) -> str:
