@@ -496,7 +496,7 @@ def try_(config: Config, params: Json) -> Json:
         if not _is_open(snapshot, item):
             _landed(config, snapshot, item)
     if lease is None or lease.session != state.session():
-        raise state.lost(item, lease, now)
+        lease = state.held(config, item, now)  # a dead owner's lease is taken over; anything else is refused
     if lease.expires <= now:  # idle time alone never ends a lease this session holds: the verb renews it
         lease = state.take(config, item, now)
     if lease.tries >= rules.stall_tries:

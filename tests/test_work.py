@@ -223,6 +223,17 @@ def test_a_spent_budget_names_the_fenced_fallback_and_the_behave_proof(fakes):
     assert last["next"].startswith("match budget spent")
 
 
+def test_try_takes_over_a_lease_whose_owner_process_has_exited(fakes, monkeypatch):
+    monkeypatch.setenv("RECIPE_SESSION", "4194999")
+    lease(fakes)
+    candidate(fakes)
+    monkeypatch.setenv("RECIPE_SESSION", "4194998")
+    monkeypatch.setattr(state, "_dead", lambda owner: owner == "4194999")
+    fakes.run_result = failing_result("bytes")
+    assert work.try_(fakes.config, {"item": "func_a"})["brief"]
+    assert state.lease(fakes.config, "func_a").session == "4194998"
+
+
 def test_try_renews_this_sessions_lease_after_idle_time_instead_of_spending_the_budget(fakes, monkeypatch):
     lease(fakes)
     candidate(fakes)
