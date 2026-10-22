@@ -231,4 +231,4 @@ def run(config: Config, params: Json) -> Json:
     better = f"cp {out} {path}; recipe try {item}"
     worse = f"no better shape in {seconds} s: apply `unbake score --alloc` edits, or crack {seconds * 3} s"
     return {"item": item, "permuter": [found["base_score"], found["best_score"]], "score": [was, now],
-            "diff": "\n".join(after.diff[:12]), "next": better if now > was else worse}  # fmt: skip
+            "diff": "\n".join(found["diff"].splitlines()[:30]), "next": better if now > was else worse}  # fmt: skip
