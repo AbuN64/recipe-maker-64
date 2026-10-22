@@ -16,13 +16,14 @@ from recipemaker.state import Attempt
 
 
 def stamp(snapshot: Snapshot, member: str) -> str:
-    """What an attempt at `member` is made from: this recipe release and the member's reference assembly."""
+    """What an attempt at `member` is made from: this recipe release, the member's reference assembly and its
+    prototype (an attempt made against a `void *` is stale once a type item typed it)."""
     entry = world.of(snapshot).members.get(member)
     try:
         asm = index.asm(snapshot, member, entry.reference(snapshot.config.project.names_from)) if entry else ""
     except (Refusal, OSError):  # a member without assembly (data) is made from the release alone
         asm = ""
-    return digest((metadata.version("recipemaker"), asm))
+    return digest((metadata.version("recipemaker"), asm, index.get(snapshot).declarations.get(member, ("", 0, ""))[2]))
 
 
 def feedback(

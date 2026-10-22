@@ -198,6 +198,9 @@ def _module(
         read.append(f"{name} ({kind})")
         assert identity is not None
         for one in identity.records:
+            inner = ledger._owner(owner, one.type)
+            if inner is None or not headers.is_header(inner.views[0].path):
+                continue  # a record only a source defines has no members a header's users can name
             body = records.bodies(
                 identity.views[0].path, (snapshot.peek(identity.views[0].path) or b"").decode(errors="replace")
             )

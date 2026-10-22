@@ -296,3 +296,13 @@ def test_a_load_delay_nop_only_the_target_has_is_a_toolchain_signature_and_a_mat
     assert crack.load_delay(both) == ""
     reverse = " 80000000: lw $v1, 0($a0)\n+80000004: nop\n-80000004: addiu $a1, $a1, 1\n"
     assert "build has a nop" in crack.load_delay(reverse)
+
+
+def test_an_attempt_made_against_one_prototype_is_stale_once_a_type_item_changed_it(lane, monkeypatch):
+    snapshot, _ = lane
+    declared = {MEMBER: ("h.h", 1, "extern void func_80000400(void *);")}
+    monkeypatch.setattr(crack.index, "get", lambda snapshot: SimpleNamespace(declarations=declared))
+    monkeypatch.setattr(crack.index, "asm", lambda *a, **k: "asm")
+    before = crack.stamp(snapshot, MEMBER)
+    declared[MEMBER] = ("h.h", 1, "extern void func_80000400(Obj *);")
+    assert crack.stamp(snapshot, MEMBER) != before
