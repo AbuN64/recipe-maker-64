@@ -377,14 +377,9 @@ def _summary(
         seed = f"resumed seed holds {len({n for _, _, _, n, _ in hits})} refusable lines ({what}): lines {lines}"
     unresolved = list(dict.fromkeys(f"{u.base} at 0x{u.offset:X}" for u in outcome.left))
     classes = dict(Counter(u.why for u in outcome.left if u.why))  # the census: what keeps each placeholder
-    finished = outcome.exact and bool(landed or params.get("no_submit"))
-    if finished:
-        state.release(config, item)
     form = outcome.exact and any(k in ("recipe.cast", "recipe.unused") for k, *_ in hits)
     after = (
-        "recipe next"
-        if finished
-        else f"match budget spent: {_fallback(config, item)}"
+        f"match budget spent: {_fallback(config, item)}"
         if lease.tries >= rules.stall_tries
         else f"the exact form needs refused text: recipe skip {item} --reason other --note refused-form"
         if form

@@ -163,12 +163,12 @@ def test_work_returns_rungs_candidate_brief_and_a_try_command(fakes):
     assert got["budget"]["stall_tries"] == 4 and got["landed"] == "id-func_a" and got["score"] == {"a": 0.5, "b": 0.5}
 
 
-def test_an_exact_work_lands_releases_the_lease_and_sends_the_agent_on(fakes):
+def test_an_exact_work_keeps_its_lease_so_the_try_after_it_shares_it(fakes):
     lease(fakes)
     fakes.scores.append(1.0)
     got = work.work(fakes.config, {"item": "func_a"})
-    assert got["result"] == "exact" and got["next"] == "recipe next" and got["brief"] == ""
-    assert state.leases(fakes.config, NOW) == []
+    assert got["result"] == "exact" and got["next"] == "recipe try func_a" and got["brief"] == ""
+    assert [x.item for x in state.leases(fakes.config, NOW)] == ["func_a"]
 
 
 def test_work_takes_the_lease_itself_and_refuses_one_another_session_holds(fakes, monkeypatch):
@@ -623,7 +623,7 @@ def test_an_exact_result_is_said_to_be_not_landed_when_nothing_was_submitted(fak
     got = work.work(fakes.config, {"item": "func_a", "no_submit": True})
     text = cli.render("work", {**got, "wall_s": 1})
     assert got["result"] == "exact" and got["landed"] == "" and "not landed: not submitted" in text
-    assert got["next"] == "recipe next" and state.leases(fakes.config, NOW) == []
+    assert got["next"] == "recipe try func_a" and [x.item for x in state.leases(fakes.config, NOW)] == ["func_a"]
 
 
 def test_an_exact_result_that_was_not_sent_keeps_its_lease_and_points_at_try(fakes):
