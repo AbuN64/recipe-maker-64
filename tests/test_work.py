@@ -384,7 +384,9 @@ def test_a_failed_try_translates_the_error_and_points_at_the_line(fakes, monkeyp
     candidate(fakes)
     fakes.run_result = failing_result("compile.error: f.c:41: too many arguments to function `func_80012345'", 0.0)
     got = work.try_(fakes.config, {"item": "func_a"})
-    assert got["result"] == "failed" and got["compiled"] is False and (got["stalled"], got["stall_tries"]) == (1, 4)
+    assert (
+        got["result"] == "failed" and got["compiled"] is False and (got["stalled"], got["stall_tries"]) == (0, 4)
+    )  # a compile error costs no try
     assert got["error"] == {"class": "call-arity", "line": 41, "what": "func_80012345 takes fewer", "fix": "drop one"}
     assert got["next"] == "edit line 41, then run: recipe try func_a"
     assert state.status(fakes.config, NOW)["error_classes"] == {"call-arity": 1}

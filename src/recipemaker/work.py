@@ -595,17 +595,17 @@ def _report(
     matched = sum(r["kind"] == "match" for r in areas)
     last = next((r["regions"] for r in reversed(tries) if r.get("regions")), None)
     more = last is not None and bool(areas) and matched > last[0]
+    missing = [m for p in proofs for m in p.missing]
+    compiled = not any(errors.unbuilt(m) for m in missing)
     if landed or saved:
         lease = state.lease(config, item) or state.Lease(item, "", now, now, 0)
-    elif result["exact"] and refused:
+    elif (result["exact"] and refused) or not compiled:  # a compile error is no try at the match: it costs no budget
         lease = state.renew(config, item, now)
     else:
         lease = state.count_try(config, item, now, more or state.worst(result["score"]) > before)
     gaps = [_finding(g) for g in result["gaps"]]
-    missing = [m for p in proofs for m in p.missing]
     done = exact
     landing = brief.refusals(refused) if result["exact"] else []
-    compiled = not any(errors.unbuilt(m) for m in missing)
     found = [*gaps, *refused] if compiled else []
     translated = None if done or saved else errors.translate(snapshot, path.read_text(encoding="utf-8"), missing, found)
     if translated and landing and translated.cls in ("not-exact", "unknown"):
