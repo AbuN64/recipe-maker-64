@@ -10,7 +10,7 @@ from fakes import unit as make_unit
 from unbake import effort
 from unbake.contracts import Refusal
 
-from recipemaker import cli, errors, host, index, ladder, state, work
+from recipemaker import cli, errors, host, index, ladder, state, work, world
 from recipemaker.state import SKIP_REASONS
 from recipemaker.world import Group
 
@@ -121,6 +121,14 @@ def test_next_prefers_a_twin_ready_item_over_a_bigger_one_and_twin_filters_split
     assert (twinless["item"], twinless["twin"]) == ("func_b", "none")
     state.release(fakes.config, "func_b")
     assert work.next_item(fakes.config, {"twin": "yes"})["item"] == "func_a"
+
+
+def test_next_ranks_an_item_open_only_in_another_version_behind_one_live_in_the_target_version(fakes):
+    fakes.items = [row("func_a", 20), row("func_b", 900)]
+    members = world.of(fakes.snapshot).members
+    members["func_a"] = replace(members["func_a"], standing=("a",))
+    members["func_b"] = replace(members["func_b"], standing=("b",))  # names_from is "a": b's work is elsewhere
+    assert work.next_item(fakes.config, {})["item"] == "func_a"
 
 
 def test_next_filters_by_kind(fakes):

@@ -1,6 +1,7 @@
 """`recipe look`: prototypes, struct layouts and fields from the index."""
 
 import difflib
+import re
 from typing import Any
 
 from unbake.contracts import Config, Json, Snapshot
@@ -78,6 +79,13 @@ def _unknown(snapshot: Snapshot, name: str, idx: index.Index) -> Json:
     nearest = ", ".join(f"{n} ({idx.declarations[n][0]})" if n in idx.declarations else n for n in near)
     member = world.of(snapshot).members.get(name)
     said = "no header declares it; declare its prototype in your file (from the brief's Types line)"
+    source = snapshot.peek(member.group) if member else None
+    own = re.search(
+        rf"^[^\n#;{{}}]*\b{re.escape(name)}\s*\([^;{{}}]*\)\s*[;{{]", (source or b"").decode(errors="replace"), re.M
+    )
+    if own and member:
+        line = own.string.count("\n", 0, own.start()) + 1
+        said = f"no header declares it, but its own module does: {member.group}:{line}"
     text = (
         f"{name} is a function: {said}"
         if member and member.kind == "function"

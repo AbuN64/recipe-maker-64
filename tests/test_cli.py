@@ -8,7 +8,7 @@ from r1_fake_api import fake_api  # noqa: F401
 from unbake import api
 from unbake.contracts import Finding, Refusal
 
-from recipemaker import cli, work, world
+from recipemaker import cli, state, work, world
 
 RESULTS = {
     "structure": {
@@ -229,10 +229,11 @@ def test_no_host_config_is_a_refusal_naming_the_fix(monkeypatch, capsys, tmp_pat
     assert "no host config" in out and "~/.config/unbake/unbake.toml" in out
 
 
-def test_skip_accepts_only_the_listed_reasons(capsys):
-    with pytest.raises(SystemExit):
-        cli.main(["skip", "func_a", "--reason", "tired"])
-    assert "invalid choice" in capsys.readouterr().err
+def test_skip_refuses_an_unlisted_reason_with_the_list():
+    with pytest.raises(Refusal) as refused:
+        state.skip(object(), "func_a", "tired", "", 0.0, 0.0)  # type: ignore[arg-type]
+    (finding,) = refused.value.findings
+    assert "valid: m2c-failed" in finding.reason and finding.action.startswith("recipe skip func_a --reason other")
 
 
 def _refused_next(monkeypatch, capsys, action, verb="try", *more):

@@ -269,6 +269,9 @@ def _finding(finding: Finding, item: str | None = None) -> list[str]:
     return [*lines[:-1], f"next: {_action(finding.action, item)}"]
 
 
+_RETRY = ("internal.race", "land.rebase", "recipe.reason")  # the same command again is their one fix
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="recipe", epilog=advice("sessions"), formatter_class=argparse.RawDescriptionHelpFormatter
@@ -301,7 +304,7 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("name")
     one = verb("skip", "release an item with a reason")
     one.add_argument("item")
-    one.add_argument("--reason", required=True, choices=state.SKIP_REASONS)
+    one.add_argument("--reason", required=True, help="one of: " + ", ".join(state.SKIP_REASONS))
     one.add_argument("--note", default="")
     one = verb("structure", "propose module structure: one JSON object {patch, files, moves} on stdout")
     one.add_argument("--segment", help="only these segments (comma list)")
@@ -411,7 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             first += [f"saved as nonmatching ({landed.saved})"] if landed.saved else []
         lines = [*first, *[line for f in findings for line in _finding(f, item)]]
         refused = " ".join(["recipe", args.verb, item or ""]).strip()
-        if lines[-1].startswith(f"next: {refused}") and findings[-1].key != "internal.race":
+        if lines[-1].startswith(f"next: {refused}") and findings[-1].key not in _RETRY:
             # a refusal never sends the agent back to its command, a race with an extraction does
             lines[-1] = "next: recipe status"
         document = {

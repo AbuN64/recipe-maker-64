@@ -100,3 +100,14 @@ def test_a_global_lists_its_conflicts_and_the_functions_that_touch_it(fakes, mon
 def test_an_undefined_name_gets_the_nearest_known_names(fakes, monkeypatch):
     world(fakes, monkeypatch)
     assert "nearest known: Actor" in look.look(fakes.config, "Acter")["text"]
+
+
+def test_a_function_prototyped_in_its_own_module_names_that_module_not_a_missing_header(monkeypatch):
+    member = SimpleNamespace(kind="function", group="src/p/m.CPP")
+    monkeypatch.setattr(look.world, "of", lambda snap: SimpleNamespace(members={"func_z": member}))
+    snapshot = SimpleNamespace(
+        peek=lambda path: b"#include <x.h>\nextern s32 func_z(Actor *a);\ns32 func_z(Actor *a) {\n"
+    )
+    idx = SimpleNamespace(declarations={}, identities=())
+    got = look._unknown(snapshot, "func_z", idx)  # type: ignore[arg-type]
+    assert "its own module does: src/p/m.CPP:2" in got["text"]

@@ -292,8 +292,13 @@ def skip(
     blockers: Json | None = None,
 ) -> None:
     if reason not in SKIP_REASONS:
-        action = "reasons: " + " ".join(SKIP_REASONS)
-        raise Refusal(Finding("recipe.reason", f"{reason} is not a skip reason", action=action))
+        raise Refusal(
+            Finding(
+                "recipe.reason",
+                f"{reason!r} is not a skip reason; valid: {', '.join(SKIP_REASONS)}",
+                action=f"recipe skip {item} --reason other --note '{reason}'",
+            )
+        )
     held_now = lease(config, item)
     row = {"time": now, "session": session(), "item": item, "reason": reason, "note": note, "best_score": best}
     host.append(

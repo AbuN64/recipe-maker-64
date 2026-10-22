@@ -162,7 +162,7 @@ def _compilable(
 
 def next_item(config: Config, params: Json) -> Json:
     now, rules = _now(), state.settings()
-    snapshot = world.capture(config)
+    snapshot, names_from = world.capture(config), config.project.names_from
     if params.get("kind") == "type":
         return typeitem.next_item(config, snapshot, now)
     if params.get("kind") == "declaration":
@@ -190,6 +190,7 @@ def next_item(config: Config, params: Json) -> Json:
     rows.sort(
         key=lambda r: (
             r["member"] not in again,
+            names_from not in world.of(snapshot).members[r["member"]].standing,  # only live in the target version
             _sdk(snapshot, r["member"]),
             r["member"] not in ready,
             r["size"] < 16,

@@ -36,6 +36,7 @@ class Member:
     group: str  # the path of the module that owns it
     placements: tuple[Placement, ...]  # sorted by version
     landed: bool = False  # defined as C (not behind a stand-in, not fuzzy) in every version that holds it
+    standing: tuple[str, ...] = ()  # the versions where it is still a stand-in or fuzzy: where work on it is live
 
     def holders(self) -> tuple[str, ...]:
         return tuple(sorted({p.version for p in self.placements}))
@@ -153,7 +154,8 @@ def _build(snapshot: Snapshot) -> Layout:
                 continue
             kind = "function" if tables[places[0].version][name][3] == "func" else "data"
             landed = name not in module.fuzzy and not any(name in stand[p.version] for p in places)
-            members[name] = Member(name, kind, module.path, tuple(places), landed)
+            live = tuple(p.version for p in places if name in stand[p.version] or name in module.fuzzy)
+            members[name] = Member(name, kind, module.path, tuple(places), landed, live)
             if name in module.fuzzy:
                 fuzzy[name] = module.path
         if not order:
