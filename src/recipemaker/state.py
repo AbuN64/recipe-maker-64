@@ -42,7 +42,6 @@ class Settings:
 
 @dataclass(frozen=True)
 class Structure:
-    batch_moves: int = 400
     dir_max: int = 32
 
 

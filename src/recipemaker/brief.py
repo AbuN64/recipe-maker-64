@@ -17,7 +17,6 @@ _ERRORS = 5  # compiler error lines shown
 _REGIONS = 40  # differing regions listed
 _SHOWN = 2  # differing regions whose lines are shown
 _DUMP = 12  # data rows shown, 16 bytes each
-_FACTS = 12  # landed-code facts shown
 _USERS = 8  # functions that reference a data item shown
 _WIDTH = "lb=s8 lbu=u8 lh=s16 lhu=u16 lw=32 lwc1=f32 ldc1=f64 sb=8 sh=16 sw=32 swc1=f32 sdc1=f64"
 _ACCESS = dict(w.split("=") for w in _WIDTH.split())
