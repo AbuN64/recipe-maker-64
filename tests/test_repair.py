@@ -153,3 +153,15 @@ def test_scalar_prototypes_and_unknown_structs_are_left_alone_and_the_struct_tab
 
     assert repair.by_value(_FLAT, "f", "extern void f(void *, s32, f32, f32, f32, s32, s32, s32, f32);", never) == _FLAT
     assert repair.by_value(_FLAT, "f", _PROTO, lambda: {}) == _FLAT
+
+
+def test_a_prototype_with_parameter_names_and_a_struct_tag_gets_the_same_rewrite():
+    flat = (
+        "extern int f(void *arg0, s32 arg1, s32 arg2_unk0, s32 arg2_unk4, s32 arg2_unk8, s32 arg3) {\n"
+        "    return arg2_unk4 + arg3;\n}\n"
+    )
+    out = repair.by_value(flat, "f", "extern int f(void *arg0, int arg1, CVector3 arg2, int arg3);", lambda: _VEC)
+    assert "f(void *arg0, int arg1, CVector3 arg2_unk0, int arg3) {" in out and "return arg2_unk0.y + arg3;" in out
+    tagged = "extern int f(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {\n    return arg1;\n}\n"
+    out = repair.by_value(tagged, "f", "extern int f(s32, struct CVector3);", lambda: _VEC)
+    assert "f(s32 arg0, struct CVector3 arg1) {" in out and "return arg1.x;" in out
