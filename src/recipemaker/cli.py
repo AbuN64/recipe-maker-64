@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, crack, errors, lifecycle, naming, state, structure, style, work, world
+from recipemaker import advice, brief, crack, errors, fuzzy, lifecycle, naming, state, structure, style, work, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -30,6 +30,7 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "apply": structure.apply,
     "name": naming.run,
     "style": style.run,
+    "fuzzy": fuzzy.run,
 }
 
 
@@ -236,6 +237,7 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "skip": lambda result: [f"skipped {result['item']} as {result['reason']}"],
     "look": _render_look,
     "status": _render_status,
+    "fuzzy": fuzzy.render,
     "structure": _render_structure,
     "apply": lambda r: [f"applied {r['patch']}, {r['left']} patches left, unbake sync done"],
     "name": _render_name,
@@ -318,6 +320,16 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("paths", nargs="*", help="check only these paths")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
+    one = verb("fuzzy", "m2c drafts of every function with no C, landed as NON_MATCHING bodies (private worktree)")
+    one.add_argument("--version", action="append", help="only functions this version holds (repeatable)")
+    one.add_argument("--only", nargs="+", help="only these functions")
+    one.add_argument("--limit", type=int, help="the first N targets")
+    one.add_argument("--failed", help="where the failed list goes (default .unbake/recipe/fuzzy-failed.json)")
+    one.add_argument("--remote", help="git remote to push (default github)")
+    one.add_argument("--branch", help="branch to push (default main)")
+    one.add_argument("--dry", action="store_true", help="draft and gate, land nothing")
+    one.add_argument("--rename-patch", help="land a rename-only patch (renameproof, no ROM build)")
+    one.add_argument("--subject", help="with --rename-patch: the one-line commit subject")
     verb("status", "sessions, leases and counts")
     return parser
 
