@@ -411,7 +411,7 @@ def test_every_verb_runs_inside_the_lifecycle_guard_so_a_dead_caller_ends_it(wir
     assert seen == ["enter", "verb", "exit"]
 
 
-def test_the_verbs_that_read_the_tree_run_inside_the_tree_lock_and_a_status_does_not(wired, monkeypatch, capsys):
+def test_only_apply_holds_the_tree_lock_for_its_run(wired, monkeypatch, capsys):
     held = []
 
     @contextmanager
@@ -421,9 +421,7 @@ def test_the_verbs_that_read_the_tree_run_inside_the_tree_lock_and_a_status_does
 
     monkeypatch.setattr(api, "tree_lock", lock)
     monkeypatch.setitem(cli._VERBS, "try", lambda config, params: dict(RESULTS["try"]))
-    monkeypatch.setitem(cli._VERBS, "status", lambda config, params: dict(RESULTS["status"]))
     monkeypatch.setitem(cli._VERBS, "apply", lambda config, params: dict(RESULTS["apply"]))
     cli.main(["--host", "/work/host.toml", "try", "func_a", "--json"])
-    cli.main(["--host", "/work/host.toml", "status", "--json"])
     cli.main(["--host", "/work/host.toml", "apply", "--json"])
-    assert held == [(False, "try func_a"), (True, "apply ")]  # a ship's window waits for the first, never the status
+    assert held == [(True, "apply")]  # a try holds none: its unbake commands take the shared lock one by one

@@ -511,7 +511,8 @@ def _tracked(config: Config) -> dict[str, str]:
 def _wrote(config: Config, before: dict[str, str], candidate: Path) -> str:
     """The first tracked path this try changed besides its candidate, "" when there is none."""
     own = str(candidate.relative_to(config.project.root)) if candidate.is_absolute() else str(candidate)
-    return next((p for p, d in _tracked(config).items() if p != own and before.get(p) != d), "")
+    mine = (p for p, d in _tracked(config).items() if p != own and before.get(p) != d and not p.startswith("versions/"))
+    return next(mine, "")  # versions/ is unbake sync's, never a try's
 
 
 def try_(config: Config, params: Json) -> Json:
@@ -532,7 +533,7 @@ def try_(config: Config, params: Json) -> Json:
         spent = f"budget spent ({lease.tries} tries without progress), skipped as budget"
         reason = f"{spent}. Best kept: {state.percent(best)}. Fallback: {_fallback(config, item)}"
         raise Refusal(Finding("recipe.budget", reason, unit=item, action="recipe next"))
-    baseline = _tracked(config)
+    baseline, epoch = _tracked(config), api.tree_epoch(config)
     if declare.is_item(config, item):
         return declare.run(config, item, now, bool(params.get("dry")))
     tries = [r for r in host.rows(config, "recipe/tries") if r["item"] == item]
@@ -540,7 +541,9 @@ def try_(config: Config, params: Json) -> Json:
     fixes = _prepare(config, item, tries[-1] if tries else None)
     before = _best(config, item)
     result = _prove(config, item, path)
-    if not any(_commits(result.get("drain") or {}, item)) and (wrote := _wrote(config, baseline, path)):
+    # a writer's window (a ship: its epoch moved) rewrites tracked files under any try; only a try's own write counts
+    wrote = "" if api.tree_epoch(config) != epoch else _wrote(config, baseline, path)
+    if not any(_commits(result.get("drain") or {}, item)) and wrote:
         why = "a candidate may change only its own file; another writer's changes are never a reason to refuse"
         reason = f"this try changed a tracked project file other than the candidate: {config.project.root / wrote}"
         raise _refuse(item, "recipe.dirty", reason, f"git -C {config.project.root} diff -- {wrote}", why)

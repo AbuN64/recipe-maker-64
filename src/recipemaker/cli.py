@@ -32,9 +32,6 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
 }
 
 
-_TREE = frozenset({"next", "work", "try", "look", "apply", "text"})  # the verbs that read or write the tree's files
-
-
 def _say(text: str) -> None:
     sys.stderr.write(text + "\n")
 
@@ -373,8 +370,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb in ("structure", "apply", "name"):  # these verbs call unbake
                 given["host"] = host
-            guard = api.tree_lock(loaded, exclusive=args.verb == "apply", who=f"{args.verb} {item or ''}", say=_say)
-            with guard if args.verb in _TREE else nullcontext():  # a ship rewrites the tree: wait for it, never fail
+            # each unbake command a verb runs takes the shared tree lock itself; a try holds none across its compiles of a
+            # private candidate, which read nothing a ship rewrites. Only `apply` writes the tree.
+            with (
+                api.tree_lock(loaded, exclusive=True, who="apply", say=_say) if args.verb == "apply" else nullcontext()
+            ):
                 result = dict(_VERBS[args.verb](loaded, given))
             code = int(result.pop("exit", 0))
     except Refusal as refusal:
