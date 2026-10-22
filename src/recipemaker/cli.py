@@ -7,6 +7,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,13 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "style": style.run,
     "text": retext.run,
 }
+
+
+_TREE = frozenset({"next", "work", "try", "look", "apply", "text"})  # the verbs that read or write the tree's files
+
+
+def _say(text: str) -> None:
+    sys.stderr.write(text + "\n")
 
 
 def _landing(result: Json) -> list[str]:
@@ -365,7 +373,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb in ("structure", "apply", "name"):  # these verbs call unbake
                 given["host"] = host
-            result = dict(_VERBS[args.verb](loaded, given))
+            guard = api.tree_lock(loaded, exclusive=args.verb == "apply", who=f"{args.verb} {item or ''}", say=_say)
+            with guard if args.verb in _TREE else nullcontext():  # a ship rewrites the tree: wait for it, never fail
+                result = dict(_VERBS[args.verb](loaded, given))
             code = int(result.pop("exit", 0))
     except Refusal as refusal:
         code, findings = 1, list(refusal.findings)
