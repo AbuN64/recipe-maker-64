@@ -9,6 +9,7 @@ never ride this path; a draft that needs them stays in the failed list for the f
 import fcntl
 import json
 import re
+import sys
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
@@ -332,27 +333,13 @@ def _write(root: Path, texts: dict[str, str]) -> None:
         host.write(root / path, text.encode())
 
 
-def run(config: Config, params: Json) -> Json:
-    """`recipe fuzzy`: draft, gate and land NON_MATCHING bodies for every function with no C."""
+def _chunk(
+    config: Config, snapshot: Snapshot, layout: world.Layout, chunk: list[str], remote: str, branch: str, dry: bool
+) -> tuple[dict[str, str], dict[str, float], list[Json], dict[str, str]]:
+    """One batch: draft, gate and land; (failed, scores, landed files, bodies)."""
     root = config.project.root
-    remote, branch = params.get("remote") or _REMOTE, params.get("branch") or _BRANCH
-    dry = bool(params.get("dry"))
-    if params.get("rename_patch"):
-        one = land_renames(config, Path(params["rename_patch"]), params.get("subject") or "", remote, branch)
-        return {"rename": one, "next": "recipe status"}
-    if not private(root):
-        raise Refusal(
-            Finding("fuzzy.tree", f"{root} is not a linked worktree: run `recipe fuzzy --project <your worktree>`")
-        )
-    if _git(root, "status", "--porcelain", "--untracked-files=no").strip():
-        raise Refusal(Finding("fuzzy.dirty", f"{root} has tracked changes; fuzzy needs a clean private worktree"))
     sync(root, remote, branch)
-    snapshot = api.snapshot(config)
-    layout = world.of(snapshot)
-    names = targets(snapshot, params.get("version") or (), params.get("only") or ())
-    if params.get("limit"):
-        names = names[: int(params["limit"])]
-    rows = drafts(snapshot, names)
+    rows = drafts(snapshot, chunk)
     failed: dict[str, str] = {r["member"]: r["why"] for r in rows if r["why"]}
     bodies = {r["member"]: r["text"] for r in rows if not r["why"]}
     by_module: dict[str, list[str]] = {}
@@ -388,7 +375,6 @@ def run(config: Config, params: Json) -> Json:
             break
     _git(root, "checkout", "-q", "--", ".")  # the private tree is clean again: each module lands from the branch tip
     landed: list[Json] = []
-    refused: Counter[str] = Counter()
     for path, ms in live.items():
         ms = [m for m in ms if m not in failed]
         if not ms:
@@ -402,8 +388,47 @@ def run(config: Config, params: Json) -> Json:
         one = land_file(root, remote, branch, path, base[path], final, sorted(ms))
         landed.append({"path": path, "functions": sorted(ms), **one})
         if not one["landed"]:
-            refused[one["why"]] += 1
             failed.update({m: one["why"] for m in ms})
+    return failed, scores, landed, bodies
+
+
+def run(config: Config, params: Json) -> Json:
+    """`recipe fuzzy`: draft, gate and land NON_MATCHING bodies for every function with no C."""
+    root = config.project.root
+    remote, branch = params.get("remote") or _REMOTE, params.get("branch") or _BRANCH
+    dry = bool(params.get("dry"))
+    if params.get("rename_patch"):
+        one = land_renames(config, Path(params["rename_patch"]), params.get("subject") or "", remote, branch)
+        return {"rename": one, "next": "recipe status"}
+    if not private(root):
+        raise Refusal(
+            Finding("fuzzy.tree", f"{root} is not a linked worktree: run `recipe fuzzy --project <your worktree>`")
+        )
+    if _git(root, "status", "--porcelain", "--untracked-files=no").strip():
+        raise Refusal(Finding("fuzzy.dirty", f"{root} has tracked changes; fuzzy needs a clean private worktree"))
+    sync(root, remote, branch)
+    snapshot = api.snapshot(config)
+    layout = world.of(snapshot)
+    names = targets(snapshot, params.get("version") or (), params.get("only") or ())
+    if params.get("limit"):
+        names = names[: int(params["limit"])]
+    failed: dict[str, str] = {}
+    scores: dict[str, float] = {}
+    bodies: dict[str, str] = {}
+    landed: list[Json] = []
+    size = int(params.get("chunk") or 16)
+    for at in range(0, len(names), size):
+        f, sc, ld, bd = _chunk(config, snapshot, layout, names[at : at + size], remote, branch, dry)
+        failed.update(f)
+        scores.update(sc)
+        landed += ld
+        bodies.update(bd)
+        sys.stderr.write(
+            f"fuzzy: {min(at + size, len(names))}/{len(names)} drafted, {len(landed)} files\n"
+        )
+    refused: Counter[str] = Counter(
+        r["why"] for r in landed if r.get("why") and not r.get("landed") and r["why"] != "dry"
+    )
     done = {n for r in landed if r.get("landed") for n in r["functions"]}
     path = Path(params["failed"]) if params.get("failed") else root / ".unbake/recipe/fuzzy-failed.json"
     listing = [

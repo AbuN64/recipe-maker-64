@@ -324,6 +324,7 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--version", action="append", help="only functions this version holds (repeatable)")
     one.add_argument("--only", nargs="+", help="only these functions")
     one.add_argument("--limit", type=int, help="the first N targets")
+    one.add_argument("--chunk", type=int, help="functions per draft-gate-land batch (default 16)")
     one.add_argument("--failed", help="where the failed list goes (default .unbake/recipe/fuzzy-failed.json)")
     one.add_argument("--remote", help="git remote to push (default github)")
     one.add_argument("--branch", help="branch to push (default main)")
