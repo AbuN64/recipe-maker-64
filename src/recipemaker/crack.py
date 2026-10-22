@@ -228,7 +228,7 @@ def run(config: Config, params: Json) -> Json:
     found = judge.call(config, "score", str(here), *args)["permute"]
     base, after = (judge.score(config, f, item) for f in (here, out if found["candidate"] else here))
     was, now = (min((p.score for p in v.proofs), default=0.0) for v in (base, after))
-    better = f"cp {out} {path}; recipe try {item}"
     worse = f"no better shape in {seconds} s: apply `unbake score --alloc` edits, or crack {seconds * 3} s"
     return {"item": item, "permuter": [found["base_score"], found["best_score"]], "score": [was, now],
-            "diff": "\n".join(found["diff"].splitlines()[:30]), "next": better if now > was else worse}  # fmt: skip
+            "diff": "\n".join(found["diff"].splitlines()[:30]), "budget": found.get("budget"),
+            "next": f"cp {out} {path}; recipe try {item}" if now > was else worse}  # fmt: skip

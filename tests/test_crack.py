@@ -325,6 +325,7 @@ def test_crack_runs_the_permuter_and_offers_the_better_candidate_to_recipe_try(l
                 "best_score": 40,
                 "candidate": str(work / f"{MEMBER}.cracked.c"),
                 "diff": "-x\n+y",
+                "budget": "cut to 2 jobs; UNBAKE_PERMUTE_CPU=600 extends",
             }
         }
 
@@ -338,6 +339,7 @@ def test_crack_runs_the_permuter_and_offers_the_better_candidate_to_recipe_try(l
     monkeypatch.setattr(crack.judge, "score", score)
     got = crack.run(config, {"item": MEMBER})
     assert got["score"] == [0.80, 0.95] and got["permuter"] == [90, 40] and got["diff"] == "-x\n+y"
+    assert got["budget"].startswith("cut to 2 jobs")
     assert got["next"].startswith("cp ") and got["next"].endswith(f"recipe try {MEMBER}")
     assert "--permute" in asked[0] and "60" in asked[0] and "/bin/permuter" in asked[0]
     with pytest.raises(Refusal):

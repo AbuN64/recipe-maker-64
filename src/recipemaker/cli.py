@@ -230,6 +230,7 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "try": _render_try,
     "crack": lambda r: [
         f"permuter {r['permuter'][0]} -> {r['permuter'][1]} score {r['score'][0]:.1%} -> {r['score'][1]:.1%}",
+        *([f"budget: {r['budget']}"] if r.get("budget") else []),
         *r["diff"].splitlines(),
     ],
     "skip": lambda result: [f"skipped {result['item']} as {result['reason']}"],
@@ -288,9 +289,7 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--kind", choices=("declaration", "type"), help="work the declaration or type item of this name")
     one.add_argument("--arg", type=int, help="type items: the parameter (default: the first void * the code reaches)")
     one.add_argument("--no-submit", action="store_true")
-    one = verb(
-        "crack", "search the candidate's shape with the permuter; writes a better candidate file when it finds one"
-    )
+    one = verb("crack", "permuter search of the candidate's shape; writes a better candidate file if it finds one")
     one.add_argument("item")
     one.add_argument("--seconds", type=int, help="permuter run (default the recipe.toml budget.permute_seconds)")
     one = verb("try", "prove the candidate file")
