@@ -246,3 +246,8 @@ def test_a_local_that_is_only_assigned_is_banned_and_one_that_is_read_or_declare
 )
 def test_a_proof_message_about_a_compile_or_preprocess_failure_is_unbuilt(message, unbuilt):
     assert errors.unbuilt(message) is unbuilt
+
+
+def test_comments_and_strings_are_no_code_for_the_unused_local_and_cast_rules():
+    text = 'void f(void) {\n    /* the counter\n       stays 0 after; (Foo *) x */\n    g("(Foo *) p");\n}\n'
+    assert errors.banned(text, {}) == []

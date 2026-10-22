@@ -140,10 +140,6 @@ _RANK = {"include": 1, "macro": 2, "type": 3, "extern": 4, "prototype": 5}
 _STATEMENT = ("if", "while", "for", "switch", "return")
 
 
-def _disordered(order: Sequence[int]) -> bool:
-    return any(rank < max(order[:i], default=0) for i, rank in enumerate(order))
-
-
 def _statement(head: str, body: str, facts: dict[str, Any], ranks: list[tuple[int, int]], at: int) -> None:
     """Classify one top-level statement as a type, a function (defined or declared) or a variable."""
     static = bool(re.search(r"\bstatic\b", head))
@@ -198,7 +194,7 @@ def _facts(text: str) -> Json:
         "macros": [m[1] for m in defines],
         "guard": guard[1] if guard else "",
         "includes": re.findall(r'^[ \t]*#[ \t]*include[ \t]+[<"]([^>"]+)[>"]', text, re.M),
-        "disorder": _disordered([rank for _, rank in sorted(ranks)]),
+        "disorder": (order := [rank for _, rank in sorted(ranks)]) != sorted(order),
         "banners": banners,
         "notes": [m[1] for c in re.finditer(r"/\*.*?\*/", text, re.S) if (m := re.match(notes, c[0]))],
         "m2c": len(facts["locals"]),

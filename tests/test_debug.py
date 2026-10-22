@@ -387,3 +387,11 @@ def test_step_t_for_one_target_keeps_only_what_its_candidate_spells_and_ships_th
     (work / "func_80001000.c").write_text("void func_80001000(void) {\n}\n")
     naming.run(named, params)
     assert named.ops == [{"op": "symbol", "subject": "func_80001000", "target": "Warp_Init"}]
+
+
+def test_submit_of_a_pack_or_types_report_says_it_is_no_names_file(named):
+    report = named.project.root / "types-15.json"
+    report.write_text("{}")
+    params = {"host": None, "action": "submit", "step": None, "count": 40, "file": str(report)}
+    with pytest.raises(Exception, match="no names file"):
+        naming.run(named, params)

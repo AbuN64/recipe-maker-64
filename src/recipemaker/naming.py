@@ -629,8 +629,9 @@ def next_(config: Config, params: Json) -> Json:
 def submit(config: Config, params: Json) -> Json:
     """`recipe name submit FILE`: validate every row, append the accepted ones as moves and write their banners."""
     path = Path(params["file"])
-    if not path.is_file():
-        raise state.stop("recipe.name", f"{path} does not exist", action="recipe name next")
+    if not path.is_file() or path.suffix != ".jsonl":  # a pack or types report is read, never submitted
+        why = "does not exist" if not path.is_file() else "is no names file (one JSON row per line, .jsonl)"
+        raise state.stop("recipe.name", f"{path} {why}", action="recipe name next")
     doc = structure.evidence(config, params["host"])
     ctx = Map(config, doc, reads(config, doc))
     rows: list[Json] = []

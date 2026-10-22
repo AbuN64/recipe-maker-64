@@ -267,7 +267,8 @@ def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
     differs = {  # a copy that took no parameters says nothing about the types the calls passed
         p: s
         for p, s in old.items()
-        if not (declplan.same(s[0], new[0]) and _same_params(s[1], new[1])) and (s[1] or not new[1])
+        if not (declplan.same(s[0], new[0]) and len(s[1]) == len(new[1]) and all(map(declplan.same, s[1], new[1])))
+        and (s[1] or not new[1])
     }
     for path, signature in sorted(differs.items()):
         if (text := read(path)) is not None and headers.is_source(path) and path != where:
@@ -290,10 +291,6 @@ def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
         name, edits, header, removed, added, cast_count, weight, bool(differs), tuple(dict.fromkeys(blocked)), left,
         risky=tuple(sorted(differs)),
     )  # fmt: skip
-
-
-def _same_params(a: list[str], b: list[str]) -> bool:
-    return len(a) == len(b) and all(declplan.same(x, y) for x, y in zip(a, b, strict=True))
 
 
 def groups(plans: list[Plan], size: int = BATCH, budget: int = FILE_BUDGET) -> list[list[Plan]]:

@@ -62,6 +62,7 @@ _BANNED = (
         "cast",
     ),
 )
+_PROSE = re.compile(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\\n])*\"", re.S)  # comments and strings: no code
 _CAST = re.compile(r"(?<!sizeof)\(\s*(?:const\s+)?(struct\s+|union\s+)?([A-Za-z_]\w*)\s*\)\s*[\w&(*\"'-]")
 _VALUE = re.compile(r"[suf]\d+|vu\d+|int|char|short|long|float|double|unsigned|signed|void|size_t")
 
@@ -117,12 +118,14 @@ def banned(
 ) -> list[tuple[str, str, str, int, str]]:
     """(key, what, why, line number, line) per candidate line holding text no landing may have, minus `old`'s lines."""
     lines = text.splitlines()
+    code = _PROSE.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), text)  # the rules below read code, never prose
     found = (
         [
             (key, what, advice(why), number, line.strip())
-            for number, line in enumerate(text.splitlines(), 1)
+            for number, (line, bare) in enumerate(zip(lines, code.splitlines(), strict=True), 1)
             for key, pattern, what, why in _BANNED
-            if pattern.search(line) or (key == "recipe.cast" and _cast(line, declared, text))
+            if pattern.search(bare if key == "recipe.cast" else line)
+            or (key == "recipe.cast" and _cast(bare, declared, text))
         ]
         + [
             (
@@ -132,11 +135,11 @@ def banned(
                 number,
                 text.splitlines()[number - 1].strip(),
             )
-            for number, name in _neighbours(text, declared).items()
+            for number, name in _neighbours(code, declared).items()
         ]
         + [
             ("recipe.unused", f"an unused local {name}", advice("unused"), number, lines[number - 1].strip())
-            for number, name in _unused(text).items()
+            for number, name in _unused(code).items()
         ]
     )
     kept = {line.strip() for line in old.splitlines()}
