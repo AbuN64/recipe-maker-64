@@ -32,13 +32,9 @@ RESULTS = {
         "next": "recipe apply",
     },
     "style": {
-        "mode": "census",
         "files": 12,
         "parsed": 3,
-        "census": {"function-name": 2, "m2c-local": 0},
-        "rose": {"function-name": [1, 2]},
-        "findings": [],
-        "baseline": False,
+        "findings": [{"rule": "function-name", "path": "src/a.c", "detail": "f"}] * 2,
         "next": "recipe status",
     },
     "next": {
@@ -387,13 +383,13 @@ def test_name_json_prints_one_object_and_gets_the_host(wired, monkeypatch, capsy
     assert seen[0]["step"] == "N2" and seen[0]["count"] == 7 and str(seen[0]["host"]) == "/work/host.toml"
 
 
-def test_style_exits_one_when_the_ratchet_rose_and_zero_otherwise(wired, monkeypatch, capsys):
+def test_style_exits_one_when_a_finding_is_an_error_and_zero_otherwise(wired, monkeypatch, capsys):
     monkeypatch.setitem(cli._VERBS, "style", lambda c, p: {**RESULTS["style"], "ok": False, "exit": 1})
-    assert cli.main(["--host", "/work/host.toml", "style", "--census", "--json"]) == 1
+    assert cli.main(["--host", "/work/host.toml", "style", "--json"]) == 1
     body = json.loads(capsys.readouterr().out)
-    assert body["ok"] is False and body["rose"] == {"function-name": [1, 2]} and "exit" not in body
-    monkeypatch.setitem(cli._VERBS, "style", lambda c, p: {**RESULTS["style"], "rose": {}})
-    assert cli.main(["--host", "/work/host.toml", "style", "--census", "src/a.c"]) == 0
+    assert body["ok"] is False and len(body["findings"]) == 2 and "exit" not in body
+    monkeypatch.setitem(cli._VERBS, "style", lambda c, p: {**RESULTS["style"], "findings": []})
+    assert cli.main(["--host", "/work/host.toml", "style", "src/a.c"]) == 0
     assert capsys.readouterr().out.splitlines()[-1] == "next: recipe status"
 
 

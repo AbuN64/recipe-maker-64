@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import traceback
+from collections import Counter
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict
@@ -47,11 +48,10 @@ def _landing(result: Json) -> list[str]:
 
 
 def _render_style(result: Json) -> list[str]:
-    counts = ", ".join(f"{k} {v}" for k, v in result["census"].items() if v)
+    counts = ", ".join(f"{k} {v}" for k, v in sorted(Counter(f["rule"] for f in result["findings"]).items()))
     lines = [f"{result['files']} files, {result['parsed']} parsed: {counts or 'no findings'}"]
-    lines += [f"{r} rose from {a} to {b}" for r, (a, b) in sorted(result["rose"].items())]
     lines += [f"{f['rule']} {f['path']} {f['detail']}".rstrip() for f in result["findings"][:50]]
-    return [*lines, *(["baseline written"] * result["baseline"])]
+    return lines
 
 
 def _render_plan(result: Json) -> list[str]:
@@ -329,12 +329,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
-    one = verb("style", "style findings, or with --census the count per rule against the saved baseline")
+    one = verb("style", "style findings; exit 1 when one is an error")
     one.add_argument("paths", nargs="*", help="check only these paths")
-    one.add_argument(
-        "--census", action="store_true", help="count per rule; exit 1 when a count rose above the baseline"
-    )
-    one.add_argument("--baseline", action="store_true", help="write the counts as the new baseline")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
     one = verb("text", "retype integer arrays: text as char arrays, KUSEG code words as alias references")

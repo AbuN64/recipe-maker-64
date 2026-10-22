@@ -1,6 +1,5 @@
-"""recipe style: one fixture per rule (hit and clean), the census ratchet and the parse cache by work count."""
+"""recipe style: one fixture per rule (hit and clean) and the parse cache by work count."""
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -109,8 +108,8 @@ def inline_pool(monkeypatch):
     return jobs
 
 
-def run(config, *paths, census=False, baseline=False):
-    return style.run(config, {"paths": list(paths), "census": census, "baseline": baseline})
+def run(config, *paths):
+    return style.run(config, {"paths": list(paths)})
 
 
 def rules(result):
@@ -198,7 +197,7 @@ def test_a_version_word_must_be_a_configured_version(tmp_path):
 def test_m2c_locals_are_counted_as_a_warning_that_never_fails_a_form_check(tmp_path):
     files = {"src/game/main/actor/actor_spawn.c": "void Actor_Spawn(void) { int temp_v0 = sp20; }\n"}
     got = run(project(tmp_path, files))
-    assert got["census"]["m2c-local"] == 1 and got["ok"] is True and got["exit"] == 0
+    assert [f["rule"] for f in got["findings"]] == ["m2c-local"] and got["ok"] is True and got["exit"] == 0
 
 
 def test_paths_check_only_those_paths(tmp_path):
@@ -206,20 +205,6 @@ def test_paths_check_only_those_paths(tmp_path):
     assert run(config, "src/game/main/actor/actor_spawn.c")["findings"] == []
     got = run(config, "src/game/main/actor/actor_bad.c")
     assert got["ok"] is False and got["exit"] == 1 and got["files"] == 1
-
-
-def test_census_ratchet_equal_passes_and_one_more_fails(tmp_path):
-    config = project(tmp_path, {"src/game/main/actor/actor_bad.c": BAD_SOURCE})
-    base = run(config, census=True, baseline=True)
-    assert base["baseline"] is True and base["findings"] == []
-    saved = json.loads((tmp_path / ".unbake/recipe/style-baseline.json").read_text())
-    assert saved["function-name"] == 1
-    assert run(config, census=True)["exit"] == 0  # equal passes
-    (tmp_path / "src/game/main/actor/actor_bad.c").write_text(BAD_SOURCE + "void more_bad(void) {}\n")
-    got = run(config, census=True)
-    assert got["exit"] == 1 and got["rose"] == {"function-name": [1, 2]}
-    (tmp_path / "src/game/main/actor/actor_bad.c").write_text("int g_a;\n")
-    assert run(config, census=True)["exit"] == 0  # fewer passes
 
 
 def test_the_parse_cache_parses_a_file_content_once(tmp_path, inline_pool):

@@ -344,27 +344,14 @@ def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str,
 
 
 def run(config: Config, params: Json) -> Json:
-    """`recipe style`: findings for the paths, or with --census the count per rule against the saved baseline."""
+    """`recipe style`: the findings for the paths; exit 1 when one is an error."""
     found, files, parsed = findings(config, params["paths"])
-    census = {rule: sum(1 for f in found if f[0] == rule) for rule in RULES}
-    base = config.project.root / ".unbake/recipe/style-baseline.json"
-    saved: Json = json.loads(base.read_text(encoding="utf-8")) if base.is_file() else {}
-    rose = {r: [saved.get(r, 0), n] for r, n in census.items() if r in saved and n > saved[r]}
-    wrote = bool(params["baseline"])
-    if wrote:
-        host.write(base, json.dumps(census, sort_keys=True).encode())
-    mode = "census" if params["census"] or wrote else "findings"
-    errors = [f for f in found if SEVERITY.get(f[0], "error") == "error"]
-    bad = bool(rose) if mode == "census" else bool(errors)
+    bad = any(SEVERITY.get(f[0], "error") == "error" for f in found)
     return {
         "ok": not bad,
         "exit": int(bad),
-        "mode": mode,
         "files": files,
         "parsed": parsed,
-        "census": census,
-        "rose": rose,
-        "baseline": wrote,
-        "findings": [] if mode == "census" else [{"rule": r, "path": p, "detail": d} for r, p, d in found],
-        "next": "recipe style --baseline" if mode == "census" and not saved else "recipe status",
+        "findings": [{"rule": r, "path": p, "detail": d} for r, p, d in found],
+        "next": "recipe status",
     }
