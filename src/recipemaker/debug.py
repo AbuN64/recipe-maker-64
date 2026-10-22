@@ -426,11 +426,14 @@ class Plan:
     proposals: tuple[Json, ...]
 
 
-def plan(layouts: Sequence[cparse.Layout], catalog: Catalog, identifiers: Iterable[str], read: Any) -> Plan:
+def plan(
+    layouts: Sequence[cparse.Layout], catalog: Catalog, identifiers: Iterable[str], read: Any, scope: Any = None
+) -> Plan:
     """Type moves for the invented project records that strongly match exactly one original record no other project
     record matches: the record takes the original typedef name, and its tag the original tag. `identifiers` are the
     words the project already spells (an original name one of them holds is refused); `read(path)` gives a header's
-    text, for the tag a typedef names."""
+    text, for the tag a typedef names. A `scope` (a set of words) keeps only the records it spells by name or tag;
+    every record still counts toward the matches and member spellings."""
     found = matches(layouts, catalog)
     by_name = {layout.name: layout for layout in layouts}
     taken = set(identifiers)
@@ -451,6 +454,8 @@ def plan(layouts: Sequence[cparse.Layout], catalog: Catalog, identifiers: Iterab
         layout, record = by_name[name], one.record
         current = spelled_name(name)
         tag = tag_in(read(layout.path) or "", current) if not name.startswith(("struct ", "union ")) else current
+        if scope is not None and not {current, tag} & scope:
+            continue
         row: dict[str, Any] = {
             "record": name,
             "header": layout.path,

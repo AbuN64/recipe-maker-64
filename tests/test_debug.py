@@ -363,3 +363,27 @@ def test_the_field_move_does_nothing_when_another_record_body_spells_the_member(
     (tmp_path / "include/a.h").write_text("struct A {\n    s32 level;\n};\nstruct B {\n    s32 level;\n};\n")
     move = {"op": "field", "subject": "level", "target": "m_nLevel", "path": "include/a.h", "tag": "A", "alias": ""}
     assert structure.build(tmp_path, [move], lambda name: None, {})["moves"] == 0
+
+
+def test_step_t_for_one_target_keeps_only_what_its_candidate_spells_and_ships_the_patch(named, monkeypatch):
+    from recipemaker import cparse
+
+    monkeypatch.setattr(naming.api, "snapshot", lambda config: None)
+    monkeypatch.setattr(cparse, "load", lambda snapshot: [WHOLE])
+    monkeypatch.setattr(naming, "_patch", lambda cfg, d, moves: named.ops.extend(moves) or {
+        "patch": "x", "files": [], "moves": len(moves), "path": ".unbake/recipe/patches/patch-1.diff"})  # fmt: skip
+    root = named.project.root
+    (root / "include").mkdir()
+    (root / "include/a.h").write_text("typedef struct Rec14 Rec14;\n")
+    work = root / ".unbake/recipe/work"
+    work.mkdir(parents=True)
+    (work / "func_80001000.c").write_text("void func_80001000(Rec14 *r) {\n}\n")
+    params = {"host": None, "action": "next", "step": "T", "count": 40, "file": None, "target": "func_80001000"}
+    got = naming.run(named, params)
+    assert [m["op"] for m in named.ops] == ["type", "type", "field", "field", "field", "field", "symbol"]
+    assert named.ops[-1] == {"op": "symbol", "subject": "func_80001000", "target": "Warp_Init"}
+    assert got["next"] == "decomp ship --patch LANE=.unbake/recipe/patches/patch-1.diff:MESSAGE"
+    named.ops.clear()
+    (work / "func_80001000.c").write_text("void func_80001000(void) {\n}\n")
+    naming.run(named, params)
+    assert named.ops == [{"op": "symbol", "subject": "func_80001000", "target": "Warp_Init"}]

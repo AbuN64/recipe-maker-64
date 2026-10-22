@@ -16,11 +16,6 @@ from recipemaker import cparse, host, table
 
 FACTS = 3  # the version of what _facts reads: bump it and every file is read again
 SEVERITY = {"m2c-local": "warning"}
-RULES = (
-    *("function-name", "global-name", "static-name", "type-name", "macro-name", "banned-word", "file-name"),
-    *("dir-name", "collision-suffix", "files-per-dir", "tool-named-path", "header-order", "guard-tool"),
-    *("include-order", "banner-name", "banner-address", "version-word", "m2c-local"),
-)
 _KINDS = {"function": "function-name", "global": "global-name", "static": "static-name", "type": "type-name"}
 _MARKUP = re.compile(r"/\*.*?\*/|//[^\n]*|^[ \t]*#(?:\\\n|[^\n])*", re.S | re.M)
 _PIECE = re.compile(r"[{};]")

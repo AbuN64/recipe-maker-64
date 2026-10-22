@@ -372,10 +372,6 @@ def _brief(snapshot: Snapshot, row: Json, where: Path, made: Plan | None = None,
 # ---------------------------------------------------------------- handing out
 
 
-def _hidden(config: Config, now: float) -> frozenset[str]:
-    return state.skipped(config, now) | {lease.item for lease in state.leases(config, now)}
-
-
 def _report(made: Plan) -> Json:
     return {
         "name": made.name,
@@ -396,7 +392,7 @@ def _report(made: Plan) -> Json:
 def next_item(config: Config, snapshot: Snapshot, now: float, count: int = 0, dry: bool = False) -> Json:
     """Lease the best batch of independent declaration items (the first group of the `count` best-ranked names; with
     `dry`, lease nothing and return every group)."""
-    hidden = _hidden(config, now)
+    hidden = state.skipped(config, now) | {lease.item for lease in state.leases(config, now)}
     rows = [r for r in ranked(config, snapshot) if r["name"] not in hidden]
     if not rows:
         return {"item": "", "why": "no declaration conflict is open", "next": "recipe status"}

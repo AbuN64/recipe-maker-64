@@ -14,10 +14,6 @@ from recipemaker import host
 TAIL = 6  # lines of make's output a failure keeps
 
 
-def _builder() -> list[str]:
-    return [str(Path(sys.executable).parent / "unbake-run"), "--", "make", "-j{j}", "check"]
-
-
 def _restore(old: Mapping[str, bytes | None], root: Path) -> None:
     for path, data in old.items():
         if data is not None:
@@ -36,7 +32,7 @@ def land(config: Config, old: Mapping[str, bytes | None], edits: Mapping[str, by
             return {"problem": f"the tree moved under the set: {', '.join(moved or dirty.split())[:200]}"}
         for path in paths:
             host.write(root / path, edits[path])
-        done = host.run(_builder(), root, config)
+        done = host.run([str(Path(sys.executable).parent / "unbake-run"), "--", "make", "-j{j}", "check"], root, config)
         if done.exit != 0:
             said = (done.stdout + done.stderr).decode("utf-8", errors="replace").splitlines()
             lines = [t.strip() for t in said if t.strip()]

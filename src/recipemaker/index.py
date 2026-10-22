@@ -109,10 +109,6 @@ def persisted[T](
     return cast("T", pickle.loads(blob))
 
 
-def _join_key(shapes: list[set[tuple[int, int, str]]]) -> str:
-    return digest(shapes)
-
-
 Scan = tuple[str, str, tuple[str, ...], tuple[tuple[str, str, int], ...]]  # name, shape, calls, accesses
 
 
@@ -162,7 +158,7 @@ def _evidence(snapshot: Snapshot, names: set[str]) -> list[tuple[str, str]]:
 def _identities(snapshot: Snapshot) -> tuple[ledger.Identity, ...]:
     config = snapshot.config
     views = tuple(cparse.load(snapshot))
-    pairs = api.pool_map(config, "recipe.joins", ledger.shared_pairs, [ledger.view_shapes(views)], _join_key)[0]
+    pairs = api.pool_map(config, "recipe.joins", ledger.shared_pairs, [ledger.view_shapes(views)], digest)[0]
     return tuple(ledger.identities(views, _evidence(snapshot, {v.name for v in views}), pairs))
 
 

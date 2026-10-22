@@ -24,27 +24,21 @@ class Verdict:
     findings: tuple[Finding, ...] = ()  # why it was not measured (a compile error), empty when it was
 
 
-def _argv(config: Config, command: str, *args: str) -> list[str]:
-    return [sys.executable, "-m", "unbake", command, *args, "--project", str(config.project.root)]
-
-
 def call(config: Config, command: str, *args: str, timeout: float | None = None) -> Json:
     """The result of one unbake command (host config from UNBAKE_HOST, which `recipe --host` sets); its findings
     refuse when it did not succeed."""
-    done = host.run(_argv(config, command, *args), config.project.root, config, timeout=timeout)
+    argv = [sys.executable, "-m", "unbake", command, *args, "--project", str(config.project.root)]
+    done = host.run(argv, config.project.root, config, timeout=timeout)
     lines = [ln for ln in done.stdout.decode("utf-8", errors="replace").splitlines() if ln.startswith("{")]
     if not lines:
         tail = done.stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:] or ["no output"]
         raise Refusal(Finding("native.exit", reason=f"unbake {command} printed no result: {tail[0]}"))
     document = json.loads(lines[-1])
+    found = [_finding(f) for f in document.get("findings") or ()]
     if not document.get("ok"):
-        raise Refusal(*([_finding(f) for f in document.get("findings") or ()] or _no_cause(command)))
+        raise Refusal(*(found or [Finding("native.exit", f"unbake {command} failed without a finding")]))
     result: Json = document.get("result") or {}
     return result
-
-
-def _no_cause(command: str) -> tuple[Finding]:
-    return (Finding("native.exit", reason=f"unbake {command} failed without a finding"),)
 
 
 def _finding(row: Mapping[str, Any]) -> Finding:

@@ -1,5 +1,5 @@
 """`recipe name`: evidence packs for an outside naming pass, then rows validated against the style and the evidence,
-turned into one file patch (symbol, module, source and header renames) that `recipe apply` applies. Tag-named
+turned into one file patch (symbol, module, source and header renames) that `decomp ship --patch` lands. Tag-named
 subsystems (N2) need no model. No name is accepted without evidence a reader can check.
 
 The evidence is the structure document (`structure.evidence`: modules, segments, members, placements, units) plus the
@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import cparse, debug, state, structure, style, table, tree
+from recipemaker import cparse, debug, ladder, state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 # style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
@@ -25,6 +25,7 @@ _EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) (\S+)(?:\s+\([^()]*\))
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
 _CARD_LIMIT = 12
+_SHIP = "decomp ship --patch LANE={}:MESSAGE"  # a naming patch lands as any change to the shared tree does
 Graph = dict[str, tuple[list[str], list[str]]]
 
 
@@ -513,9 +514,20 @@ def _identifiers(root: Path) -> set[str]:
     return {w for p in files.everything() for w in re.findall(r"[A-Za-z_]\w*", files.get(p) or "")}
 
 
-def _types(config: Config, doc: Json) -> Json:
+def _scope(config: Config, doc: Json, target: str) -> set[str]:
+    """The words one function spells: its candidate file when it has one, else its unit source."""
+    ctx = Map(config, doc, {})
+    name = _chosen(ctx, "T", target)[1]  # an unknown name is refused
+    path = ladder.candidate_path(config, name)
+    if not path.is_file():
+        path = config.project.root / ctx.modules.get(ctx.members.get(name, {}).get("module"), {}).get("source", "-")
+    return {name, *re.findall(r"[A-Za-z_]\w*", path.read_text(encoding="utf-8") if path.is_file() else "")}
+
+
+def _types(config: Config, doc: Json, target: str | None) -> Json:
     """`recipe name next --step T`: the project records the debug catalog proves invented-but-original take their
-    original type and member names as one patch; every unique match, moved or not, is written to types-K.json."""
+    original type and member names as one patch; every unique match, moved or not, is written to types-K.json.
+    `--target F` keeps the records and names F's own text spells, so the patch is F's alone."""
     catalog = debug.load(config)
     if catalog is None:
         raise state.stop(
@@ -523,9 +535,11 @@ def _types(config: Config, doc: Json) -> Json:
         )
     root = config.project.root
     layouts = cparse.load(api.snapshot(config))
-    found = debug.plan(layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p))
+    scope = _scope(config, doc, target) if target else None
+    found = debug.plan(layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p), scope)
     ctx, names, refused = Map(config, doc, {}), list[Json](), list[Json]()
-    for row in sorted(debug.rows(catalog, doc["members"]), key=lambda r: _ORDER.get(str(r["kind"]), 9)):
+    rows = [r for r in debug.rows(catalog, doc["members"]) if scope is None or r["target"] in scope]
+    for row in sorted(rows, key=lambda r: _ORDER.get(str(r["kind"]), 9)):
         rule, reason = judge(ctx, row)
         if rule:
             refused.append({"row": row, "rule": rule, "reason": reason})
@@ -547,7 +561,7 @@ def _types(config: Config, doc: Json) -> Json:
         "names": len(names),
         **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
         "stream": structure.stream(built) if built["moves"] else "",
-        "next": "recipe apply" if built["moves"] else "recipe status",
+        "next": _SHIP.format(built["path"]) if built["moves"] else "recipe status",
         "after": "",
     }
 
@@ -574,7 +588,7 @@ def next_(config: Config, params: Json) -> Json:
     renames invented records to the debug catalog's original types."""
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
     if step == "T":
-        return _types(config, doc)
+        return _types(config, doc, params.get("target"))
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
     for row in _auto(ctx) if step == "N2" else []:
@@ -603,7 +617,11 @@ def next_(config: Config, params: Json) -> Json:
         "targets": len(pick),
         **{k: built[k] for k in ("patch", "files", "moves", "path")},
         "stream": structure.stream(built) if built["moves"] else "",
-        "next": "recipe apply" if built["moves"] else f"recipe name submit {answer}" if pick else "recipe status",
+        "next": _SHIP.format(built["path"])
+        if built["moves"]
+        else f"recipe name submit {answer}"
+        if pick
+        else "recipe status",
         "after": f"recipe name submit {answer}" if pick else "",
     }
 
@@ -649,7 +667,7 @@ def submit(config: Config, params: Json) -> Json:
         **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
         "stream": structure.stream(built) if built["moves"] else "",
         "banners": f".unbake/recipe/name/banners-{k}.json",
-        "next": "recipe apply" if built["moves"] else "recipe name next",
+        "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
     }
 
 
