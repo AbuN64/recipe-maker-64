@@ -77,10 +77,6 @@ def _is_open(snapshot: Snapshot, item: str) -> bool:
     return item in {r["member"] for r in items(snapshot.config)}
 
 
-def _proofs(rows: list[Json]) -> list[Proof]:
-    return [Proof(**{**row, "missing": tuple(row["missing"])}) for row in rows]
-
-
 def _alike(snapshot: Snapshot, item: str, landed: str) -> list[str]:
     """The open functions of the same shape, named only after a landing."""
     return twin.alike(snapshot, item)[:_ALIKE] if landed else []
@@ -337,7 +333,7 @@ def _summary(
 ) -> Json:
     item, rules = lease.item, state.settings()
     snapshot = world.capture(config)
-    follow = f"read the brief, edit the file, then run: recipe try {item}"
+    follow = f"read the brief, edit the file toward a byte-exact match, then run: recipe try {item}"
     drain = outcome.drain or {}
     refused = [f for body in drain.get("refused", []) if body["member"] == item for f in body["findings"]]
     reason = f"{refused[0]['reason']} ({refused[0]['path']})" if refused else ""
@@ -364,6 +360,8 @@ def _summary(
     after = (
         "recipe next"
         if finished
+        else f"match budget spent: {_fallback(config, item)}"
+        if lease.tries >= rules.stall_tries
         else f"the exact form needs refused text: recipe skip {item} --reason other --note refused-form"
         if form
         else f"recipe try {item}"
@@ -410,6 +408,14 @@ def _summary(
         },
         "next": after,
     }
+
+
+def _fallback(config: Config, item: str) -> str:
+    path = ladder.candidate_path(config, item)
+    return (
+        f"write the best body that behaves the same in {path} inside `#ifdef NON_MATCHING` ... `#else` INCLUDE_ASM "
+        f"`#endif`, prove it: behave --function {item} --candidate {path}; it then owes a match (recipe work {item})"
+    )
 
 
 def _refuse(item: str, key: str, reason: str, action: str, why: str) -> Refusal:
@@ -497,7 +503,7 @@ def try_(config: Config, params: Json) -> Json:
         best = _best(config, item)
         state.skip(config, item, "budget", "budget spent", best, now)
         spent = f"budget spent ({lease.tries} tries without progress), skipped as budget"
-        reason = f"{spent}. Best kept: {state.percent(best)}."
+        reason = f"{spent}. Best kept: {state.percent(best)}. Fallback: {_fallback(config, item)}"
         raise Refusal(Finding("recipe.budget", reason, unit=item, action="recipe next"))
     baseline = _tracked(config)
     if declare.is_item(config, item):
@@ -551,7 +557,7 @@ def _report(
     restored: bool,
 ) -> dict[str, Any]:
     rules = state.settings()
-    proofs = _proofs(result["proofs"])
+    proofs = [Proof(**{**row, "missing": tuple(row["missing"])}) for row in result["proofs"]]
     snapshot = world.capture(config)
     crack.feedback(snapshot, item, "creative", proofs, "", path.read_text(encoding="utf-8"))
     drain = result.get("drain") or {}
@@ -638,6 +644,8 @@ def _report(
         )
     elif not (translated and translated.line) and not exact and (start := brief.first_open(areas)):
         out["next"] = f"{start}; edit the file, then run: recipe try {item}"
+    if not done and lease.tries >= rules.stall_tries:
+        out["next"] = f"match budget spent: {_fallback(config, item)}"
     return out
 
 

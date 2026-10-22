@@ -148,7 +148,7 @@ def test_work_returns_rungs_candidate_brief_and_a_try_command(fakes):
     lease(fakes)
     got = work.work(fakes.config, {"item": "func_a"})
     assert [r["name"] for r in got["rungs"]] == ["clone", "draft"]
-    assert got["result"] == "fuzzy" and got["next"] == "read the brief, edit the file, then run: recipe try func_a"
+    assert got["result"] == "fuzzy" and got["next"].endswith("toward a byte-exact match, then run: recipe try func_a")
     assert got["candidate"].endswith("func_a.c")
     text = (fakes.root / ".unbake/recipe/work/func_a/brief.md").read_text()
     assert "# func_a" in text and text.rstrip().endswith("next: recipe try func_a")
@@ -207,6 +207,20 @@ def test_try_refuses_when_the_budget_is_spent_skips_with_reason_budget_and_costs
         and "4 tries without progress" in caught.value.findings[0].reason
     )
     assert fakes.calls["judge.compare"] == 0 and state.status(fakes.config, NOW)["skip_reasons"] == {"budget": 1}
+
+
+def test_a_spent_budget_names_the_fenced_fallback_and_the_behave_proof(fakes):
+    lease(fakes)
+    candidate(fakes)
+    fakes.run_result = failing_result("bytes")
+    for _ in range(5):  # the first raises the score, the next four do not
+        last = work.try_(fakes.config, {"item": "func_a"})
+    with pytest.raises(Refusal) as caught:
+        work.try_(fakes.config, {"item": "func_a"})
+    for text in (last["next"], caught.value.findings[0].reason):
+        assert "#ifdef NON_MATCHING" in text and "INCLUDE_ASM" in text and "owes a match" in text
+        assert f"behave --function func_a --candidate {last['file']}" in text
+    assert last["next"].startswith("match budget spent")
 
 
 def test_try_renews_this_sessions_lease_after_idle_time_instead_of_spending_the_budget(fakes, monkeypatch):
@@ -900,7 +914,7 @@ def test_work_on_data_never_lands_and_ends_open_with_a_brief(fakes, monkeypatch)
     assert (got["result"], got["submitted"], got["landed"]) == ("open", None, "")
     assert (
         "symbol: data_d" in Path(got["brief"]).read_text()
-        and got["next"] == "read the brief, edit the file, then run: recipe try data_d"
+        and got["next"] == "read the brief, edit the file toward a byte-exact match, then run: recipe try data_d"
     )
 
 
