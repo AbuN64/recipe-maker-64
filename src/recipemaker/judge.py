@@ -79,8 +79,7 @@ def proof_failed(member: str, reason: str, key: str = "compile.error") -> Proof:
 
 def _failed(member: str, findings: tuple[Finding, ...]) -> Verdict:
     """A candidate that did not build: one failed proof carrying the compile error, so the ladder records why."""
-    missing = tuple(f"compile.error: {f.reason}" for f in findings) or ("compile.error: no instructions were built",)
-    failed = Proof("", member, "", "", "", "", "", "", False, missing, 0.0, {"compile_failed": True})
+    failed = proof_failed(member, "; ".join(f.reason for f in findings) or "no instructions were built")
     return Verdict((failed,), False, (), findings)
 
 
