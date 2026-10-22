@@ -689,16 +689,26 @@ def measured(path: Path) -> Path:
     return path
 
 
-def _checked(snapshot: Snapshot, member: str, drafts: list[Json]) -> list[Json]:
+def standing_version(snapshot: Snapshot, member: str) -> str:
+    """The version a draft of `member` is screened in when its reference version does not stand in for it: a function
+    asm in one version only (`#if VERSION_EU` stand-in, C elsewhere) is drafted where its stand-in is live. "" = the
+    reference version."""
+    entry = _member_of(snapshot, member)
+    reference = entry.reference(snapshot.config.project.names_from)
+    live = [v for v in entry.standing if v in entry.holders()]
+    return "" if not live or reference in live else live[0]
+
+
+def _checked(snapshot: Snapshot, member: str, drafts: list[Json], version: str = "") -> list[Json]:
     """Each draft with why it does not compile under the project's toolchain ("" when it does), all screened in one
-    unbake call."""
+    unbake call (in `version` when given)."""
     with host.work(snapshot.config) as work:
         rows = []
         for n, draft in enumerate(drafts):
             file = work / f"draft-{n}.c"
             host.write(file, with_macros(draft["text"]).encode())
             rows.append((file, member, draft.get("extras", {})))
-        verdicts = judge.score_many(snapshot.config, rows)
+        verdicts = judge.score_many(snapshot.config, rows, **({"version": version} if version else {}))
     return [
         {**d, "reason": next((m for p in v.proofs for m in p.missing if errors.unbuilt(m)), "")}
         for d, v in zip(drafts, verdicts, strict=True)
@@ -721,7 +731,8 @@ def drafted(snapshot: Snapshot, member: str, out: Path) -> tuple[str, dict[str, 
         config = snapshot.config
         entry = _member_of(snapshot, member)
         refuse_fragment(snapshot, member)
-        version = entry.reference(config.project.names_from)
+        pick = standing_version(snapshot, member)
+        version = pick or entry.reference(config.project.names_from)
         asm = index.asm(snapshot, member, version)
         callees = [n for n in dict.fromkeys(re.findall(r"\bjal\s+(\w+)", asm)) if n != member]
         context = signatures.context(snapshot, version)  # built once here, never inside each m2c job
@@ -732,9 +743,9 @@ def drafted(snapshot: Snapshot, member: str, out: Path) -> tuple[str, dict[str, 
         stages = list(
             {s["text"]: s for s in _stages(snapshot, member, version, known, callees, texts, helpers)}.values()
         )
-        results = _checked(snapshot, member, stages)
+        results = _checked(snapshot, member, stages, *([pick] if pick else []))
         result = next((r for r in results if not r["reason"]), None) or _dereferenced(
-            snapshot, member, version, results
+            snapshot, member, version, results, pick
         )
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(result["text"], encoding="utf-8")
@@ -745,7 +756,7 @@ def drafted(snapshot: Snapshot, member: str, out: Path) -> tuple[str, dict[str, 
 _ROUNDS = 4  # pointer levels a scalar may be given before the draft is left as it was
 
 
-def _dereferenced(snapshot: Snapshot, member: str, version: str, results: list[Json]) -> Json:
+def _dereferenced(snapshot: Snapshot, member: str, version: str, results: list[Json], pick: str = "") -> Json:
     """The richest draft when none builds, else the first whose dereferenced scalars got pointer types until it does."""
     for first in (r for r in results if repair.refused(r["reason"])):
         now = first
@@ -754,7 +765,7 @@ def _dereferenced(snapshot: Snapshot, member: str, version: str, results: list[J
             fixed = repair.deref(now["text"], now["reason"], skew)
             if fixed == now["text"]:
                 break
-            now = _checked(snapshot, member, [{**now, "text": fixed}])[0]
+            now = _checked(snapshot, member, [{**now, "text": fixed}], *([pick] if pick else []))[0]
             if not now["reason"]:
                 return now
     return results[0]

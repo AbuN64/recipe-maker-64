@@ -81,6 +81,17 @@ def test_amend_drops_the_clashing_header_and_declares_the_undeclared():
     assert fuzzy.amend(out, "some other error") == out
 
 
+def test_amend_drops_the_drafts_own_declaration_of_a_name_the_module_declares():
+    text = (
+        '#include "TYPES.H"\nextern s32 D_80103FCC;\nvoid func_8(void *);\ns32 func_9(s32);\n'
+        "s32 f(void) {\n    func_8(&D_80103FCC);\n    return func_9(1);\n}\n"
+    )
+    why = "0.c:3: conflicting types for `D_80103FCC'; src/a.CPP:10: previous declaration of `D_80103FCC'"
+    out = fuzzy.amend(text, why, "f")
+    assert "extern s32 D_80103FCC;" not in out and "func_8(&D_80103FCC);" in out and "void func_8(void *);" in out
+    assert "func_9(s32);" in fuzzy.amend(text, "x: conflicting types for `f'", "f")  # the member's own stays
+
+
 def test_land_renames_lands_only_when_renameproof_holds(tmp_path: Path, monkeypatch):
     from types import SimpleNamespace
 

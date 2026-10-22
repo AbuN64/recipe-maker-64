@@ -95,9 +95,12 @@ def score(
     return Verdict(proofs, bool(result["exact"]), tuple(result["diff"]))
 
 
-def score_many(config: Config, rows: Sequence[tuple[Path, str, Mapping[str, bytes]]]) -> list[Verdict]:
+def score_many(
+    config: Config, rows: Sequence[tuple[Path, str, Mapping[str, bytes]]], version: str = ""
+) -> list[Verdict]:
     """Screen many candidates in one unbake process on every core: each in the reference version only, so a screened
-    verdict holds that version's proof; the one that wins is scored again with `score` in every version."""
+    verdict holds that version's proof; the one that wins is scored again with `score` in every version. `version`
+    names the one to screen in when the reference version does not hold the stand-in (a version-only function)."""
     if not rows:
         return []
     with host.work(config) as work:
@@ -107,7 +110,8 @@ def score_many(config: Config, rows: Sequence[tuple[Path, str, Mapping[str, byte
             manifest.append({"file": str(file), "function": member, "overlays": overlays or None})
         listing = work / "variants.json"
         host.write(listing, json.dumps(manifest).encode())
-        result = call(config, "score", "--variants", str(listing), "--lines", "200")
+        pick = ["--version", version] if version else []
+        result = call(config, "score", "--variants", str(listing), "--lines", "200", *pick)
     out = []
     for (_, member, _), row in zip(rows, result["variants"], strict=True):
         if not row["ok"]:

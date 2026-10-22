@@ -88,15 +88,29 @@ def copies(snapshot: Snapshot, body: str) -> str:
 
 # ------------------------------------------------------------------------------------------------ drafting
 _CONFLICT = re.compile(r"(include/[\w/.+-]+\.H):\d+: conflicting types for")
+_CLASH = re.compile(r"conflicting types for `(\w+)'")
 _UNDECLARED = re.compile(r"`(\w+)' undeclared \(first use")
 _ROUNDS = 4
 
 
-def amend(text: str, why: str) -> str:
+def undeclare(text: str, name: str) -> str:
+    """`text` without its own top-level declaration lines of `name` (prototype, extern or tentative global): the
+    module and its headers already declare it, and their type is the real one."""
+    gap = r"[\w \t\*?]*?[\s\*]"
+    shape = rf"^(?:extern[ \t]+)?{gap}{re.escape(name)}[ \t]*(?:\[[^\]\n]*\])?[ \t]*(?:\([^;{{}}\n]*\))?[ \t]*;[ \t]*\n"
+    return re.sub(shape, "", text, flags=re.M)
+
+
+def amend(text: str, why: str, member: str = "") -> str:
     """The draft with what its compile error blames removed or declared: a header whose declarations clash with the
     module's own is dropped from the draft (the module keeps its declarations), a global m2c read without any
     declaration gets `extern s32 NAME;`. The same text back when nothing in the error is fixable this way."""
     out = text
+    for name in dict.fromkeys(_CLASH.findall(why)):  # a clash with a declaration the module has: its type wins
+        if name != member:
+            out = undeclare(out, name)
+    if out != text:
+        return out
     for header in dict.fromkeys(_CONFLICT.findall(why)):
         out = re.sub(rf'^[ \t]*#include "{re.escape(header.removeprefix("include/"))}"[ \t]*\n', "", out, flags=re.M)
     wanted = [
@@ -114,11 +128,15 @@ def _repaired(snapshot: Snapshot, member: str, out: Path, why: str) -> str:
     """Re-screen the draft after `amend` until it compiles or the error stops changing; "" when it compiles."""
     for _ in range(_ROUNDS):
         text = out.read_text(encoding="utf-8")
-        fixed = amend(text, why)
+        fixed = amend(text, why, member)
         if fixed == text:
             return why
         host.write(out, fixed.encode())
-        why = str(draft._checked(snapshot, member, [{"text": fixed}])[0]["reason"])
+        why = str(
+            draft._checked(
+                snapshot, member, [{"text": fixed}], *([p] if (p := draft.standing_version(snapshot, member)) else [])
+            )[0]["reason"]
+        )
         if not why:
             return ""
     return why
@@ -349,7 +367,7 @@ def _chunk(
         else:
             by_module.setdefault(layout.members[member].group, []).append(member)
     base = {p: (root / p).read_text(encoding="utf-8") for p in by_module}
-    held = {m: layout.members[m].holders() for ms in by_module.values() for m in ms}
+    held = {m: layout.members[m].standing or layout.members[m].holders() for ms in by_module.values() for m in ms}
     text = dict(base)
     live = {p: sorted(ms, key=lambda m, p=p: _at(base[p], m)) for p, ms in by_module.items()}
     scores: dict[str, float] = {}
@@ -423,9 +441,7 @@ def run(config: Config, params: Json) -> Json:
         scores.update(sc)
         landed += ld
         bodies.update(bd)
-        sys.stderr.write(
-            f"fuzzy: {min(at + size, len(names))}/{len(names)} drafted, {len(landed)} files\n"
-        )
+        sys.stderr.write(f"fuzzy: {min(at + size, len(names))}/{len(names)} drafted, {len(landed)} files\n")
     refused: Counter[str] = Counter(
         r["why"] for r in landed if r.get("why") and not r.get("landed") and r["why"] != "dry"
     )
