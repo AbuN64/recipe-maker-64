@@ -370,8 +370,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb in ("structure", "apply", "name"):  # these verbs call unbake
                 given["host"] = host
-            # each unbake command a verb runs takes the shared tree lock itself; a try holds none across its compiles of a
-            # private candidate, which read nothing a ship rewrites. Only `apply` writes the tree.
+            # each unbake command a verb runs takes the shared tree lock itself; a try holds none across its compiles
+            # of a private candidate, which read nothing a ship rewrites. Only `apply` writes the tree.
             with (
                 api.tree_lock(loaded, exclusive=True, who="apply", say=_say) if args.verb == "apply" else nullcontext()
             ):
