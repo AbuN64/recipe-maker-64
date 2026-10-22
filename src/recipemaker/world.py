@@ -5,6 +5,7 @@ import dataclasses
 import mmap
 import posixpath
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -245,3 +246,25 @@ def asm_path(config: Config, version: str, name: str) -> Path:
         return config.project.root / api.asm_path(config, version, name)
     folder = "nonmatchings" if row[3] == "func" else "data"
     return config.project.root / f"asm/{version}/{folder}/{held[-1]}/{name}.s"
+
+
+ASM_WAIT = 45.0  # seconds a missing assembly file is waited for: a concurrent extraction swaps asm/<v>/ in minutes
+
+
+def read_asm(path: Path) -> str:
+    """The text of an extracted assembly file. Another process's extraction replaces the whole asm/<v>/ directory
+    (old one moved aside, fresh one written), so a file that is missing is polled for before it is called absent."""
+    deadline = time.monotonic() + ASM_WAIT
+    while True:
+        try:
+            return path.read_text(errors="replace")
+        except FileNotFoundError as gone:
+            if time.monotonic() >= deadline:
+                raise AsmMissing(
+                    f"{path} is missing: an extraction replacing asm/ was still running, or the file is truly absent"
+                ) from gone
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+class AsmMissing(FileNotFoundError):
+    """An assembly file stayed missing past ASM_WAIT."""

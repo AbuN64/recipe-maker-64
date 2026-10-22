@@ -94,7 +94,7 @@ def _retarget(wanted: list[str], text: str) -> list[str]:
 
 def _jumps(snapshot: Snapshot, member: str, version: str, asm: Path) -> list[str]:
     """The files m2c reads for `member`: its assembly and the jump tables it reads, with each table target labelled."""
-    root, text = snapshot.config.project.root, asm.read_text(errors="replace")
+    root, text = snapshot.config.project.root, world.read_asm(asm)
     tables = api.memo(("draft.jtbl", snapshot.digest, version), lambda: _tables(snapshot, version))
     names = list(dict.fromkeys(re.findall(r"%lo\((jtbl_\w+)\)", text)))
     wanted = [tables[n] if n in tables else _inside(snapshot, version, n) for n in names]
@@ -124,7 +124,7 @@ def _m2c_call(item: tuple[Snapshot, str, str, bool, Path]) -> tuple[list[str], s
     argv = [str(state.tool("m2c")), "-t", target, "--valid-syntax", *["--stack-structs"] * stack_structs]
     asm = world.asm_path(config, version, member)
     files = _jumps(snapshot, member, version, asm)
-    argv += ["--context", str(context), "--function", _label(asm.read_text(errors="replace"), member), *files]
+    argv += ["--context", str(context), "--function", _label(world.read_asm(asm), member), *files]
     return argv, digest((argv, [Path(p).read_bytes() for p in files], os.stat(argv[0]).st_mtime_ns))
 
 

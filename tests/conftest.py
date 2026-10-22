@@ -101,3 +101,11 @@ def _layout_on_test_snapshots(monkeypatch):
 
     real = world.of
     monkeypatch.setattr(world, "of", lambda snapshot: getattr(snapshot, "layout", None) or real(snapshot))
+
+
+@pytest.fixture(autouse=True)
+def _no_assembly_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing assembly file is waited for in production (an extraction may be swapping asm/); never in a test."""
+    from recipemaker import world
+
+    monkeypatch.setattr(world, "ASM_WAIT", 0.0)

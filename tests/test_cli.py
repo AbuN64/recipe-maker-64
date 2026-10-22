@@ -8,7 +8,7 @@ from r1_fake_api import fake_api  # noqa: F401
 from unbake import api
 from unbake.contracts import Finding, Refusal
 
-from recipemaker import cli, work
+from recipemaker import cli, work, world
 
 RESULTS = {
     "structure": {
@@ -221,10 +221,12 @@ def test_an_unexpected_error_exits_three_and_still_ends_in_a_next_line(wired, mo
     assert capsys.readouterr().out.splitlines()[-1] == "next: recipe next"
 
 
-def test_no_host_config_is_a_refusal_naming_the_fix(monkeypatch, capsys):
+def test_no_host_config_is_a_refusal_naming_the_fix(monkeypatch, capsys, tmp_path):
     monkeypatch.delenv("UNBAKE_HOST", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main(["status"]) == 1
-    assert "no host config" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no host config" in out and "~/.config/unbake/unbake.toml" in out
 
 
 def test_skip_accepts_only_the_listed_reasons(capsys):
@@ -271,10 +273,40 @@ def test_a_failure_after_a_landing_still_says_landed_first_and_ends_in_a_concret
     assert lines[0] == "landed (abc1234)" and "KeyError" in "\n".join(lines) and lines[-1] == "next: recipe next"
 
 
-def test_an_internal_error_before_any_landing_ends_in_a_skip_command_for_the_item(wired, monkeypatch, capsys):
+def test_an_internal_error_before_any_landing_ends_in_a_retry_never_a_skip(wired, monkeypatch, capsys):
     monkeypatch.setitem(cli._VERBS, "work", lambda config, params: 1 / 0)
     assert cli.main(["--host", "/work/host.toml", "work", "func_a"]) == 3
-    assert capsys.readouterr().out.splitlines()[-1] == 'next: recipe skip func_a --reason other --note "internal error"'
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert last == "next: recipe status" and "skip" not in last  # a refusal is never sent back to itself
+
+
+def test_a_missing_assembly_file_names_the_race_and_says_retry(wired, monkeypatch, capsys):
+    def gone(config, params):
+        raise world.AsmMissing("asm/us/x.s is missing: an extraction replacing asm/ was still running")
+
+    monkeypatch.setitem(cli._VERBS, "work", gone)
+    assert cli.main(["--host", "/work/host.toml", "work", "func_a"]) == 3
+    out = capsys.readouterr().out
+    assert "retry the same command" in out and out.splitlines()[-1] == "next: recipe work func_a"
+
+
+def test_read_asm_waits_for_a_file_an_extraction_is_putting_back(tmp_path, monkeypatch):
+    path = tmp_path / "x.s"
+    naps = []
+
+    def nap(seconds):
+        naps.append(seconds)
+        path.write_text("nop\n")  # the fresh asm/ appears while the reader waits
+
+    monkeypatch.setattr(world, "ASM_WAIT", 5.0)
+    monkeypatch.setattr(world.time, "sleep", nap)
+    assert world.read_asm(path) == "nop\n" and len(naps) == 1
+
+
+def test_read_asm_gives_up_with_the_race_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(world, "ASM_WAIT", 0.0)
+    with pytest.raises(world.AsmMissing, match="extraction"):
+        world.read_asm(tmp_path / "absent.s")
 
 
 def test_status_names_the_top_declaration_conflicts():

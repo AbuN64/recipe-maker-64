@@ -14,7 +14,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, errors, lifecycle, naming, retext, state, structure, style, work
+from recipemaker import advice, brief, errors, lifecycle, naming, retext, state, structure, style, work, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
@@ -335,10 +335,23 @@ def _where(exc: BaseException) -> str:
     return f"{exc!r} at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else repr(exc)
 
 
+_NO_HOST = (
+    "no host config: pass --host, set UNBAKE_HOST, or create ~/.config/unbake/unbake.toml "
+    "(a seat's `decomp --profile P recipe ...` passes the profile's tools.host itself)"
+)
+
+
+def _default_host() -> Path | None:
+    """The host config a call names nowhere: the user's ~/.config/unbake/unbake.toml when it exists."""
+    path = Path("~/.config/unbake/unbake.toml").expanduser()
+    return path if path.is_file() else None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(list(sys.argv[1:] if argv is None else argv))
     began = time.monotonic()
     host = args.host or (Path(os.environ["UNBAKE_HOST"]) if os.environ.get("UNBAKE_HOST") else None)
+    host = host or _default_host()
     item = getattr(args, "item", None)
     result: dict[str, Any] | None = None
     code, findings, landed = 0, [], None
@@ -346,7 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         with lifecycle.bound():
             if host is None:
-                raise Refusal(Finding("config.missing", "no host config: pass --host or set UNBAKE_HOST"))
+                raise Refusal(Finding("config.missing", _NO_HOST))
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
             loaded = api.load(args.project or Path.cwd(), host)
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
@@ -358,9 +371,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         code, findings = 1, list(refusal.findings)
     except work.AfterLanding as late:
         code, findings, landed = 3, [Finding("internal.error", _where(late.cause), action="recipe next")], late
-    except Exception as exc:
-        again = f'recipe skip {item} --reason other --note "internal error"' if item else "recipe next"
-        code, findings = 3, [Finding("internal.error", _where(exc), action=again)]
+    except world.AsmMissing as gone:
+        retry = f"recipe {args.verb} {item}" if item else f"recipe {args.verb}"
+        code, findings = 3, [Finding("internal.race", f"{gone}: retry the same command", action=retry)]
+    except Exception as exc:  # an internal error is never a reason to skip an item: the item was not judged
+        again = f"recipe {args.verb} {item}" if item else "recipe next"
+        code, findings = (
+            3,
+            [
+                Finding(
+                    "internal.error",
+                    f"{_where(exc)}: not a judgement of the item, retry the same command once",
+                    action=again,
+                )
+            ],
+        )
     if result is not None:
         result["wall_s"] = round(time.monotonic() - began)
         stream = result.pop("stream", "")
@@ -376,7 +401,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             first += [f"saved as nonmatching ({landed.saved})"] if landed.saved else []
         lines = [*first, *[line for f in findings for line in _finding(f, item)]]
         refused = " ".join(["recipe", args.verb, item or ""]).strip()
-        if lines[-1].startswith(f"next: {refused}"):  # a refusal never sends the agent back to the command it refused
+        if lines[-1].startswith(f"next: {refused}") and findings[-1].key != "internal.race":
+            # a refusal never sends the agent back to its command, a race with an extraction does
             lines[-1] = "next: recipe status"
         document = {
             "ok": False,

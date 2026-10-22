@@ -265,7 +265,7 @@ def reference(snapshot: Snapshot, member: str) -> str:
 def asm(snapshot: Snapshot, member: str, version: str = "") -> str:
     """The assembly of `member` in `version`, else in its reference version."""
     version = version or world.of(snapshot).members[member].reference(snapshot.config.project.names_from)
-    return world.asm_path(snapshot.config, version, member).read_text(errors="replace")
+    return world.read_asm(world.asm_path(snapshot.config, version, member))
 
 
 def source(snapshot: Snapshot, path: str) -> str:
