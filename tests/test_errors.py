@@ -251,3 +251,11 @@ def test_a_proof_message_about_a_compile_or_preprocess_failure_is_unbuilt(messag
 def test_comments_and_strings_are_no_code_for_the_unused_local_and_cast_rules():
     text = 'void f(void) {\n    /* the counter\n       stays 0 after; (Foo *) x */\n    g("(Foo *) p");\n}\n'
     assert errors.banned(text, {}) == []
+
+
+def test_a_local_inside_a_static_inline_helper_is_kept_and_the_same_local_in_a_plain_function_is_banned():
+    body = "    s32 pad;\n    f32 m[4];\n    *a = 1;\n}\n"
+    helper = f"static inline void h(s32 *a) {{\n{body}void f(s32 *a) {{\n    h(a);\n}}\n"
+    assert [k for k, *_ in errors.banned(helper, {}) if k == "recipe.unused"] == []
+    plain = f"void f(s32 *a) {{\n{body}"
+    assert sorted(n for k, _, _, n, _ in errors.banned(plain, {}) if k == "recipe.unused") == [2, 3]

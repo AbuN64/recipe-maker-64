@@ -100,12 +100,31 @@ _LOCAL = re.compile(
 )
 
 
+_INLINE = re.compile(r"\bstatic\s+(?:__inline__|__inline|inline)\b[^;{}]*\{")
+
+
+def _inlined(text: str) -> list[range]:
+    """Character spans of the bodies of the static inline helpers in `text` (their locals make the caller's frame)."""
+    spans = []
+    for head in _INLINE.finditer(text):
+        depth = 1
+        end = head.end()
+        while end < len(text) and depth:
+            depth += {"{": 1, "}": -1}.get(text[end], 0)
+            end += 1
+        spans.append(range(head.end(), end))
+    return spans
+
+
 def _unused(text: str) -> dict[int, str]:
-    """Line number -> a local whose name is only ever assigned after its declaration."""
+    """Line number -> a local whose name is only ever assigned after its declaration, outside static inline helpers."""
     plain = re.sub(r"\b(?:struct|union|enum)\b[^;{}]*\{[^{}]*\}", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
     found = {}
+    helpers = _inlined(plain)
     for local in _LOCAL.finditer(plain):
         name = local[1]
+        if any(local.start() in span for span in helpers):
+            continue  # a static inline helper's locals are frame the original's inlined helper left behind
         rest = [m for m in re.finditer(rf"\b{name}\b", plain) if m.start() != local.start(1)]
         write = r"\s*(?:=(?!=)|[-+*/|&^]=|<<=|>>=|\+\+|--)"
         if all(re.match(write, plain[m.end() :]) and not re.search(r"[*&.>]\s*$", plain[: m.start()]) for m in rest):
