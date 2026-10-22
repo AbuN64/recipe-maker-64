@@ -127,3 +127,29 @@ def test_m2c_argument_notes_become_the_call_the_project_prototype_takes(line, wa
     text = f"void h(void) {{\n    {line}\n}}\n"
     assert repair.arguments(text) == f"void h(void) {{\n    {want}\n}}\n"
     assert "/* extra? */" not in repair.repair(text)  # every draft gets the rewrite
+
+
+_VEC = {"CVector3": "    f32 x;\n    f32 y;\n    f32 z;\n"}
+_PROTO = "extern void f(void *, s32, CVector3, CVector3, f32);"
+_FLAT = (
+    "extern void f(void *arg0, s32 arg1, f32 arg2, f32 arg3, f32 arg4, s32 arg5, s32 arg6, s32 arg7, f32 arg8) {\n"
+    "    x = arg2 + arg4 * arg1;\n    y = arg5;\n    M2C_FIELD(arg0, s32 *, 4) = arg8;\n}\n"
+)
+
+
+def test_a_flattened_struct_parameter_takes_the_declared_type_and_its_fields():
+    out = repair.by_value(_FLAT, "f", _PROTO, lambda: _VEC)
+    assert "f(void *arg0, s32 arg1, CVector3 arg2, CVector3 arg5, f32 arg8) {" in out
+    assert "x = arg2.x + arg2.z * arg1;" in out and "y = arg5.x;" in out and "M2C_FIELD(arg0, s32 *, 4) = arg8;" in out
+
+
+def test_a_prototype_whose_word_count_disagrees_is_left_alone():
+    assert repair.by_value(_FLAT, "f", "extern void f(void *, s32, CVector3, f32);", lambda: _VEC) == _FLAT
+
+
+def test_scalar_prototypes_and_unknown_structs_are_left_alone_and_the_struct_table_is_not_read():
+    def never():
+        raise AssertionError("structs read for a scalar prototype")
+
+    assert repair.by_value(_FLAT, "f", "extern void f(void *, s32, f32, f32, f32, s32, s32, s32, f32);", never) == _FLAT
+    assert repair.by_value(_FLAT, "f", _PROTO, lambda: {}) == _FLAT

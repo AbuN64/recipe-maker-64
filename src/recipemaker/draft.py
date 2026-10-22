@@ -587,6 +587,7 @@ def _stages(
             )
         raw = repair.repair(raw)
         raw, extras = _folded(snapshot, raw)
+        raw = repair.by_value(raw, member, known.get(member, ""), lambda extras=extras: _structs(snapshot, extras))
         raw = repair.members(raw, _structs(snapshot, extras)) if "M2C_BITWISE(" in raw else raw
         used = [n for n in callees if n not in helpers or n in raw]
         head = "".join(f"{known[n]}\n" for n in used if n in known and n not in declared)

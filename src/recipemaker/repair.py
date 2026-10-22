@@ -4,7 +4,7 @@ used as field offsets, and scalars that are dereferenced. Each is a text rewrite
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from recipemaker import records
 
@@ -210,3 +210,78 @@ def unfake(text: str, member: str) -> str:
 
 def refused(reason: str) -> bool:
     return bool(_DEREF.search(reason))
+
+
+_WORD = {"s8", "u8", "s16", "u16", "s32", "u32", "f32", "int", "float", "char", "short", "long"}
+_PAIR = re.compile(r"^\s*(?:const\s+)?(?:unsigned\s+)?(\w+)\s+(\w+)\s*;\s*$")
+
+
+def _split(text: str) -> list[str]:
+    parts, depth, start = [], 0, 0
+    for at, char in enumerate(text):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == "," and not depth:
+            parts.append(text[start:at].strip())
+            start = at + 1
+    return [*parts, text[start:].strip()] if text.strip() else []
+
+
+def _fields(body: str) -> list[str] | None:
+    """The member names of a struct whose members are all one-word scalars, else None."""
+    names = []
+    for line in body.strip().splitlines():
+        if not line.strip():
+            continue
+        pair = _PAIR.match(line)
+        if pair is None or pair[1] not in _WORD:
+            return None
+        names.append(pair[2])
+    return names or None
+
+
+def by_value(text: str, member: str, declaration: str, structs: Callable[[], Mapping[str, str]]) -> str:
+    """m2c flattens a by-value struct parameter into one scalar per word (`CVector3` -> arg5, arg6, arg7), so the
+    draft's signature conflicts with the declared prototype. When the prototype's word count agrees with m2c's, the
+    draft takes the declared parameter types and each flattened word becomes its struct field (`arg5.x`)."""
+    mark = re.search(rf"^([^\n(=;]*\b{re.escape(member)}\()(.*)\) \{{$", text, re.M)
+    start = declaration.find(f"{member}(")
+    if mark is None or start < 0 or not declaration.rstrip().endswith(");"):
+        return text
+    declared = _split(declaration.rstrip()[start + len(member) + 1 : -2])
+    flat = _split(mark[2])
+    if not declared or declared == ["void"] or any("(" in d or "..." in d for d in declared):
+        return text
+    kinds = [re.sub(r"\s+", " ", d).replace("struct ", "").strip() for d in declared]
+    plain = lambda k: k.endswith("*") or k.split()[-1] in _WORD or k.split()[-1] in ("void",)  # noqa: E731
+    if all(plain(k) for k in kinds):
+        return text
+    known = structs()
+    words: list[list[str] | None] = []
+    for kind in kinds:
+        if plain(kind):
+            words.append(None)
+            continue
+        names = _fields(known.get(kind.split()[-1], ""))
+        if names is None:
+            return text
+        words.append(names)
+    if sum(1 if w is None else len(w) for w in words) != len(flat):
+        return text
+    given = [re.findall(r"(\w+)\s*$", f)[0] if re.search(r"\w\s*$", f) else "" for f in flat]
+    if not all(given):
+        return text
+    params, rename, at = [], {}, 0
+    for declared_type, w in zip(declared, words, strict=True):
+        if w is None:
+            params.append(f"{declared_type}{'' if declared_type.endswith('*') else ' '}{given[at]}")
+            at += 1
+            continue
+        params.append(f"{declared_type}{'' if declared_type.endswith('*') else ' '}{given[at]}")
+        for offset, field in enumerate(w):
+            rename[given[at + offset]] = f"{given[at]}.{field}"
+        at += len(w)
+    head, body = text[: mark.start(2)], text[mark.end(2) :]
+    if rename:
+        pattern = re.compile(r"(?<![\w.])(" + "|".join(map(re.escape, rename)) + r")\b(?!\.)")
+        body = pattern.sub(lambda m: rename[m[1]], body)
+    return head + ", ".join(params) + body
