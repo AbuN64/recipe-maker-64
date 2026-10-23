@@ -166,7 +166,7 @@ def next_item(config: Config, params: Json) -> Json:
     if params.get("kind") == "type":
         return typeitem.next_item(config, snapshot, now)
     if params.get("kind") == "declaration":
-        return declare.next_item(config, snapshot, now, params.get("count") or 0, bool(params.get("dry")))
+        return declare.next_item(config, snapshot, now)
     wanted_kind, wanted_twin = params.get("kind"), params.get("twin")
     taken = {lease.item for lease in state.leases(config, now)}
     ready = twin.ready(snapshot)

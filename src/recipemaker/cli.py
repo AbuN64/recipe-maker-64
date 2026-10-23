@@ -16,12 +16,11 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import advice, brief, crack, errors, fuzzy, lifecycle, naming, state, structure, style, work, world
+from recipemaker import advice, brief, errors, lifecycle, naming, state, structure, style, work, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "next": work.next_item,
     "work": work.work,
-    "crack": crack.run,
     "try": work.try_,
     "skip": work.skip,
     "look": work.look_,
@@ -30,7 +29,6 @@ _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "apply": structure.apply,
     "name": naming.run,
     "style": style.run,
-    "fuzzy": fuzzy.run,
 }
 
 
@@ -57,34 +55,9 @@ def _render_style(result: Json) -> list[str]:
     return lines
 
 
-def _render_plan(result: Json) -> list[str]:
-    lines = [f"dry: {result['why']}"]
-    for number, names in enumerate(result["batches"], 1):
-        lines.append(f"batch {number}: {' '.join(names)}")
-    for one in result["plans"]:
-        if one["skip"]:
-            lines.append(f"- {one['name']}: not planned, {one['skip']}")
-            continue
-        extra = f", {one['casts']} casts" * bool(one["casts"]) + ", needs casts" * (
-            one["cast_needed"] and not one["casts"]
-        )
-        left = f"; left: {', '.join(one['left'])}" * bool(one["left"])
-        lines.append(
-            f"- {one['name']} (critical {one['critical']}) -> {one['header']}: {one['removed']} copies deleted,"
-            f" {one['includes']} includes added{extra}{left}; files: {', '.join(one['files'])}"
-        )
-    left = result["reported"]
-    lines.append(
-        f"reported, no landed definition (type unknown): {len(left)}; first: " + ", ".join(r["name"] for r in left[:12])
-    )
-    return lines
-
-
 def _render_next(result: Json) -> list[str]:
     if not result["item"]:
         return [f"none: {result['why']}"]
-    if result.get("dry"):
-        return _render_plan(result)
     shape = (
         ""
         if result["kind"] in ("declaration", "type")
@@ -96,7 +69,6 @@ def _render_next(result: Json) -> list[str]:
         f"kind: {result['kind']}{shape}",
         *brief_line,
         f"why: {result['why']}",
-        *([f"batch: {' '.join(result['batch'])}"] if len(result.get("batch", ())) > 1 else []),
         *([f"twin: {result['twin']}"] if "twin" in result else []),
         f"lease: ends after {result['stall_tries']} tries without progress or {result['idle_minutes']:g} idle minutes",
     ]
@@ -165,13 +137,6 @@ def _render_try(result: Json) -> list[str]:
         lines.append("auto-fixes: " + "; ".join(result["auto_fixes"]))
     if "restored" in result:
         lines.append("REGRESSED: " + result["restored"])
-    if len(result.get("batch", ())) > 1:
-        lines += [
-            f"- {b['item']}: {b['result']}"
-            + (f" ({b['landed']})" if b["landed"] else "")
-            + (f", {b['why'][0]}" if b["why"] else "")
-            for b in result["batch"]
-        ]
     if result["result"] not in ("exact", "would-land"):
         lines += [*(f"why: {w}" for w in result["why"]), f"file: {result['file']}", f"brief: {result['brief']}"]
     return lines
@@ -232,15 +197,9 @@ _RENDER: dict[str, Callable[[Json], list[str]]] = {
     "next": _render_next,
     "work": _render_work,
     "try": _render_try,
-    "crack": lambda r: [
-        f"permuter {r['permuter'][0]} -> {r['permuter'][1]} score {r['score'][0]:.1%} -> {r['score'][1]:.1%}",
-        *([f"budget: {r['budget']}"] if r.get("budget") else []),
-        *r["diff"].splitlines(),
-    ],
     "skip": lambda result: [f"skipped {result['item']} as {result['reason']}"],
     "look": _render_look,
     "status": _render_status,
-    "fuzzy": fuzzy.render,
     "structure": _render_structure,
     "apply": lambda r: [f"applied {r['patch']}, {r['left']} patches left, unbake sync done"],
     "name": _render_name,
@@ -287,19 +246,14 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--twin", choices=("yes", "no"), help="only items with (yes) or without (no) a landed twin")
     one.add_argument("--max-size", type=int, help="largest item in bytes")
     one.add_argument("--order", choices=("small", "large"), help="smallest or largest first (default: largest)")
-    one.add_argument("--count", type=int, default=0, help="declarations: plan this many of the best-ranked names")
-    one.add_argument("--dry", action="store_true", help="declarations: show the batches and change sets, lease nothing")
     one = verb("work", "run the tool rungs on an item; prints once at exit, and a large item can take minutes")
     one.add_argument("item")
     one.add_argument("--kind", choices=("declaration", "type"), help="work the declaration or type item of this name")
     one.add_argument("--arg", type=int, help="type items: the parameter (default: the first void * the code reaches)")
     one.add_argument("--no-submit", action="store_true")
-    one = verb("crack", "permuter search of the candidate's shape; writes a better candidate file if it finds one")
-    one.add_argument("item")
-    one.add_argument("--seconds", type=int, help="permuter run (default the recipe.toml budget.permute_seconds)")
     one = verb("try", "prove the candidate file")
     one.add_argument("item")
-    one.add_argument("--dry", action="store_true", help="declarations: measure the batch, land nothing")
+    one.add_argument("--dry", action="store_true", help="declarations: measure the set, land nothing")
     one = verb("look", "show a prototype, type, field or global")
     one.add_argument("name")
     one = verb("skip", "release an item with a reason")
@@ -327,17 +281,6 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--full", action="store_true", help="every finding gates, whatever the base had")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
-    one = verb("fuzzy", "m2c drafts of every function with no C, landed as NON_MATCHING bodies (private worktree)")
-    one.add_argument("--version", action="append", help="only functions this version holds (repeatable)")
-    one.add_argument("--only", nargs="+", help="only these functions")
-    one.add_argument("--limit", type=int, help="the first N targets")
-    one.add_argument("--chunk", type=int, help="functions per draft-gate-land batch (default 16)")
-    one.add_argument("--failed", help="where the failed list goes (default .unbake/recipe/fuzzy-failed.json)")
-    one.add_argument("--remote", help="git remote to push (default github)")
-    one.add_argument("--branch", help="branch to push (default main)")
-    one.add_argument("--dry", action="store_true", help="draft and gate, land nothing")
-    one.add_argument("--rename-patch", help="land a rename-only patch (renameproof, no ROM build)")
-    one.add_argument("--subject", help="with --rename-patch: the one-line commit subject")
     verb("status", "sessions, leases and counts")
     return parser
 

@@ -304,6 +304,5 @@ class Fakes:
             "regions": self.regions,
             "why": [],
             "twin": None,
-            "permutable": False,
             "types": {"signature": "void f(void)", "declarations": []},
         }

@@ -535,7 +535,6 @@ def take(config: Config, snapshot: Snapshot, function: str, position: int, now: 
     brief += [f"  {x}" for x in made.conflicts or ["none"]] + ["", f"files: {', '.join(sorted(made.edits))}"]
     host.write(where / "brief.md", ("\n".join(brief) + f"\n\nprove it: recipe try {made.item} [--dry]\n").encode())
     side = {
-        "batch": [made.item],
         "risky": list(made.risky),
         "function": function,
         "record": made.name,

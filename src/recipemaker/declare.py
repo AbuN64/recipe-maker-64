@@ -1,26 +1,22 @@
 """Declaration items: a name declared more than one way. The fix is one change set (the prototype in the definition's
 family header, the other copies deleted, the includes and the casts the compiler demands) that unbake lands as one
-commit, every touched unit proved exact. `next` plans a batch of independent names, `try` proves it: the batch is
-measured in one process, every exact name lands as its own commit, a name that fails is retried alone."""
+commit, every touched unit proved exact. `next` plans the best-ranked name, `try` proves it and lands it as its own
+commit; a name that fails is retried alone with casts."""
 
 import difflib
 import json
 import posixpath
 import re
-import resource
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from unbake import api
-from unbake.contracts import Config, Json, Proof, Refusal, Snapshot
+from unbake.contracts import Config, Json, Proof, Snapshot
 
 from recipemaker import declplan, errors, headers, host, index, judge, ladder, settle, state, twin, world
 
 _BLOCKED = 10  # blocked items named in the brief
-BATCH = 8  # the most names one proof carries
-FILE_BUDGET = 60  # the most files one proof carries: a screen costs about two CPU s a file
-CPU_BUDGET = 100.0  # CPU seconds one `try` spends landing before it leaves the rest of the batch for the next one
 WINDOW = 40  # the best-ranked names `next` plans from
 _SPELLING = re.compile(r"^[^:]*: (\S+?):(\d+) (.*)$")
 _WIDTHS = {"char": 1, "u8": 1, "s8": 1, "short": 2, "u16": 2, "s16": 2, "int": 4, "u32": 4, "s32": 4, "f32": 4}
@@ -293,23 +289,6 @@ def plan(snapshot: Snapshot, row: Json, casts: bool = False) -> Plan:
     )  # fmt: skip
 
 
-def groups(plans: list[Plan], size: int = BATCH, budget: int = FILE_BUDGET) -> list[list[Plan]]:
-    """The plannable names in rank order as groups whose file sets are disjoint (they may land one after the other
-    from one plan), at most `size` long and `budget` files in all: a name joins the first group it fits."""
-    out: list[tuple[set[str], list[Plan]]] = []
-    for one in plans:
-        if one.skip or not one.edits:
-            continue
-        for files, members in out:
-            if len(members) < size and files.isdisjoint(one.files) and len(files) + len(one.files) <= budget:
-                files |= one.files
-                members.append(one)
-                break
-        else:
-            out.append((set(one.files), [one]))
-    return [members for _, members in out]
-
-
 def _headers(snapshot: Snapshot, row: Json) -> tuple[list[str], str]:
     """The headers the single declaration may go in, and the one that gets it: the definition's family header, else
     the header that declares the name today, else the first header the defining unit includes."""
@@ -326,7 +305,7 @@ def _headers(snapshot: Snapshot, row: Json) -> tuple[list[str], str]:
     )
 
 
-def _brief(snapshot: Snapshot, row: Json, where: Path, made: Plan | None = None, batch: list[str] | None = None) -> str:
+def _brief(snapshot: Snapshot, row: Json, where: Path, made: Plan | None = None) -> str:
     files = sorted({path for path, _, _ in row["spellings"]})
     lines = [f"# {row['name']} (declaration)", "", f"declared {len(row['spellings'])} ways in {len(files)} files", ""]
     if row.get("definition"):
@@ -359,7 +338,6 @@ def _brief(snapshot: Snapshot, row: Json, where: Path, made: Plan | None = None,
         "## Do",
         f"Edit the copies under {where} (same paths as the project). Declare the name once, with one",
         f"type, in a header. {target} Delete every other declaration; keep everything else as it is.",
-        *([f"With the batch: {', '.join(batch)}"] if batch and len(batch) > 1 else []),
         "",
     ]
     lines += [f"next: recipe try {row['name']}"]
@@ -369,58 +347,18 @@ def _brief(snapshot: Snapshot, row: Json, where: Path, made: Plan | None = None,
 # ---------------------------------------------------------------- handing out
 
 
-def _report(made: Plan) -> Json:
-    return {
-        "name": made.name,
-        "header": made.header,
-        "files": sorted(made.files),
-        "removed": made.removed,
-        "includes": made.includes,
-        "casts": made.casts,
-        "critical": made.critical,
-        "cast_needed": made.cast_needed,
-        "blocked": list(made.blocked),
-        "left": list(made.left),
-        "waits": list(made.waits),
-        "skip": made.skip,
-    }
-
-
-def next_item(config: Config, snapshot: Snapshot, now: float, count: int = 0, dry: bool = False) -> Json:
-    """Lease the best batch of independent declaration items (the first group of the `count` best-ranked names; with
-    `dry`, lease nothing and return every group)."""
+def next_item(config: Config, snapshot: Snapshot, now: float) -> Json:
+    """Lease the best-ranked declaration item that has a change set to plan (else the best one, copies only)."""
     hidden = state.skipped(config, now) | {lease.item for lease in state.leases(config, now)}
     rows = [r for r in ranked(config, snapshot) if r["name"] not in hidden]
     if not rows:
         return {"item": "", "why": "no declaration conflict is open", "next": "recipe status"}
-    fixable = [r for r in rows if r.get("definition")]
-    window = fixable[: count or WINDOW] or rows[:1]
-    plans = [plan(snapshot, r) for r in window]
-    sets = groups(plans)
-    if dry:
-        left = [r for r in rows if not r.get("definition")]
-        return {
-            "item": window[0]["name"],
-            "kind": "declaration",
-            "dry": True,
-            "why": f"{len(plans)} names planned in {len(sets)} groups; {len(left)} more have no landed definition",
-            "batches": [[p.name for p in one] for one in sets],
-            "plans": [_report(p) for p in plans],
-            "reported": [
-                {"name": r["name"], "critical": r["critical"], "spellings": len(r["spellings"])} for r in left
-            ],
-            "next": "recipe try NAME --dry   (prove one group without landing)",
-        }
-    if not sets:
-        return take(config, snapshot, window[0], now)
-    by_name = {r["name"]: r for r in window}
-    first = sets[0]
-    for made in first:
-        _write(config, snapshot, by_name[made.name], made, [p.name for p in first], now)
-    return _handed(config, snapshot, by_name[first[0].name], first[0], [p.name for p in first], now)
+    window = [r for r in rows if r.get("definition")][:WINDOW]
+    row = next((r for r in window if (p := plan(snapshot, r)).edits and not p.skip), (window or rows)[0])
+    return take(config, snapshot, row, now)
 
 
-def _write(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, batch: list[str], now: float) -> None:
+def _write(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, now: float) -> None:
     where = folder(config, row["name"])
     host.clear(where)
     if made and made.edits:
@@ -429,12 +367,12 @@ def _write(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, bat
     else:
         for path in sorted({p for p, _, _ in row["spellings"]} | set(_headers(snapshot, row)[0])):
             host.write(where / path, snapshot.peek(path) or b"")
-    host.write(where / "brief.md", _brief(snapshot, row, where, made, batch).encode())
-    host.write(where / "plan.json", json.dumps({"batch": batch, "risky": list(made.risky) if made else []}).encode())
+    host.write(where / "brief.md", _brief(snapshot, row, where, made).encode())
+    host.write(where / "plan.json", json.dumps({"risky": list(made.risky) if made else []}).encode())
     state.take(config, row["name"], now)
 
 
-def _handed(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, batch: list[str], now: float) -> Json:
+def _handed(config: Config, row: Json, made: Plan | None, now: float) -> Json:
     lease = state.lease(config, row["name"])
     where = folder(config, row["name"])
     files = len({p for p, _, _ in row["spellings"]})
@@ -448,7 +386,6 @@ def _handed(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, ba
         "aims": [],
         "evidence": "",
         "brief": str(where / "brief.md"),
-        "batch": batch,
         "planned": bool(made and made.edits),
         "lease_until": state.stamp(expires),
         "idle_minutes": state.settings().idle_minutes,
@@ -460,23 +397,17 @@ def _handed(config: Config, snapshot: Snapshot, row: Json, made: Plan | None, ba
 def take(config: Config, snapshot: Snapshot, row: Json, now: float) -> Json:
     """Lease the declaration item `row` names and write its work folder: the planned change set, else copies."""
     made = plan(snapshot, row)
-    _write(config, snapshot, row, made, [row["name"]], now)
-    return _handed(config, snapshot, row, made, [row["name"]], now)
+    _write(config, snapshot, row, made, now)
+    return _handed(config, row, made, now)
 
 
 # ---------------------------------------------------------------- proving
 
 
 def _sidecar(config: Config, name: str) -> Json:
-    """What `next` left beside the copies: the batch the name was leased with and the units to screen first."""
+    """What `next` left beside the copies: the units to screen first."""
     listing = folder(config, name) / "plan.json"
     return json.loads(listing.read_text()) if listing.is_file() else {}
-
-
-def _batch(config: Config, name: str) -> list[str]:
-    """The names leased together with `name` that are still items of this session."""
-    names = _sidecar(config, name).get("batch", [name])
-    return [n for n in dict.fromkeys([name, *names]) if is_item(config, n)]
 
 
 def _edits(config: Config, snapshot: Snapshot, name: str) -> dict[str, bytes]:
@@ -566,7 +497,6 @@ class _Try:
     landed: str = ""
     refused: list[Json] = field(default_factory=list)
     exact: bool = False
-    waiting: bool = False  # exact in the screen, left for the next `try`: this one spent its CPU budget
     risky: tuple[str, ...] = ()
     message: str = ""  # a type item's commit message (planned with its change set)
     function: str = ""  # a type item: the function that waits for the type
@@ -602,12 +532,6 @@ def _screen(config: Config, snapshot: Snapshot, tries: list[_Try]) -> None:
     sets = [(unit, t.edits, t.risky) for unit, t in zip(units, tries, strict=True)]
     for t, verdict in zip(tries, ladder.screen(config, snapshot, sets), strict=True):
         t.proofs, t.exact = verdict.proofs, verdict.exact
-
-
-def _cpu() -> float:
-    """CPU seconds this process and its finished children have used."""
-    me, kids = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
-    return me.ru_utime + me.ru_stime + kids.ru_utime + kids.ru_stime
 
 
 def _message(one: _Try) -> str:
@@ -651,11 +575,8 @@ def _result(one: _Try, dry: bool) -> Json:
         v: round(min(p.score for p in proofs if p.version == v), 4) for v in sorted({p.version for p in proofs} - {""})
     }
     word = "exact" if one.landed else "refused" if one.refused else "fuzzy" if any(score.values()) else "failed"
-    word = "would-land" if dry and one.exact else "waiting" if one.waiting else word
+    word = "would-land" if dry and one.exact else word
     why = [x for f in one.refused for x in (f["reason"], *f["missing"])] or [m for p in proofs for m in p.missing][:3]
-    why = (
-        ["exact in the screen; this try spent its CPU budget, run recipe try again to land it"] if one.waiting else why
-    )
     return {
         "item": one.name,
         "result": word,
@@ -668,75 +589,38 @@ def _result(one: _Try, dry: bool) -> Json:
     }
 
 
-def _failed(name: str, reason: str) -> Json:
-    return {
-        "item": name,
-        "result": "refused",
-        "compiled": True,
-        "score": {},
-        "landed": "",
-        "auto_fixes": [],
-        "why": [reason],
-        "compiler": [],
-    }
-
-
 def run(config: Config, name: str, now: float, dry: bool = False) -> Json:
-    """Prove the leased batch `name` belongs to and land every exact name as its own commit; a name that is not exact
-    is retried alone with casts. With `dry` nothing lands: the batch is measured in the reference version only.
-    Returns `name`'s result with the batch's under `batch`."""
+    """Prove the leased change set of `name` and land it as its own commit when exact; one that is not exact is retried
+    with casts. With `dry` nothing lands: the set is measured in the reference version only."""
     snapshot = world.capture(config)
-    tries: list[_Try] = []
-    results: dict[str, Json] = {}
-    for member in _batch(config, name):
-        try:
-            tries.append(_prepare(config, snapshot, member))
-        except Refusal as refusal:
-            if member == name:
-                raise
-            results[member] = _failed(member, refusal.findings[0].reason)
-    _screen(config, snapshot, tries)
-    for one in tries:
-        if one.function and one.exact:  # the bodies a type item's call sites changed carry their provenance
-            for path, data in sorted(one.edits.items()):
-                if headers.is_source(path):
-                    state.record(
-                        config, one.name, now, "exact", {"us": 1.0}, text=data.decode(errors="replace"), path=path
-                    )
+    one = _prepare(config, snapshot, name)
+    _screen(config, snapshot, [one])
+    if one.function and one.exact:  # the bodies a type item's call sites changed carry their provenance
+        for path, data in sorted(one.edits.items()):
+            if headers.is_source(path):
+                state.record(config, name, now, "exact", {"us": 1.0}, text=data.decode(errors="replace"), path=path)
     if not dry:
-        began = _cpu()
-        for one in [t for t in tries if t.exact]:
-            if _cpu() - began > CPU_BUDGET:
-                one.waiting = True
-                continue
+        if one.exact:
             _land(config, snapshot, one)
-        for index_, one in enumerate(tries):  # alone, with the casts the old declarations need
-            if (
-                not one.landed
-                and not one.waiting
-                and _cpu() - began < CPU_BUDGET
-                and (variant := _retry(config, snapshot, one))
-            ):
-                _land(config, snapshot, variant)
-                tries[index_] = variant if (variant.landed or variant.exact) else one
-    for one in tries:
-        lease = state.lease(config, one.name)
+        elif variant := _retry(config, snapshot, one):  # alone, with the casts the old declarations need
+            _land(config, snapshot, variant)
+            one = variant if (variant.landed or variant.exact) else one
+        lease = state.lease(config, name)
         score = max((p.score for p in one.proofs), default=0.0)
-        if lease is not None and not dry and not one.waiting:
+        if lease is not None:
             if one.refused:
-                state.renew(config, one.name, now)
+                state.renew(config, name, now)
             else:
-                state.count_try(config, one.name, now, score > _score(config, one.name))
-        results[one.name] = _result(one, dry)
-        if not dry and not one.waiting:
-            state.record(config, one.name, now, results[one.name]["result"], results[one.name]["score"])
-            if one.landed:
-                state.release(config, one.name)
-                if one.function:
-                    from recipemaker import typeitem
+                state.count_try(config, name, now, score > _score(config, name))
+    mine = _result(one, dry)
+    if not dry:
+        state.record(config, name, now, mine["result"], mine["score"])
+        if one.landed:
+            state.release(config, name)
+            if one.function:
+                from recipemaker import typeitem
 
-                    typeitem.done(config, one.function)
-    mine = results[name]
+                typeitem.done(config, one.function)
     lease = state.lease(config, name)
     rules = state.settings()
     return {
@@ -750,6 +634,5 @@ def run(config: Config, name: str, now: float, dry: bool = False) -> Json:
         "file": str(folder(config, name)),
         "brief": str(folder(config, name) / "brief.md"),
         "dry": dry,
-        "batch": [{k: v[k] for k in ("item", "result", "landed", "why")} for v in results.values()],
         "next": "recipe next" if mine["landed"] else f"edit the copies, then run: recipe try {name}",
     }

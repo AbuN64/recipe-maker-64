@@ -16,17 +16,14 @@ into the module that owns the name in place of its `INCLUDE_ASM` line. Header ed
 files. Structure proposals are unified diffs: `recipe structure` writes them, `recipe apply` runs `git apply`, then
 `unbake sync`.
 
-Declaration items (a name declared more than one way) are planned, not written by hand. `recipe next --kind declaration
-[--count N] [--dry]` ranks the conflicts (names the open functions need first, a record width mismatch counts as
-critical), plans for each one change set (the prototype once in the definition's family header, the other copies
-deleted, an include where a unit loses sight of the name, scalar casts only where a call site's old declaration took
-other types), and leases the first group of names whose files do not overlap; `--dry` leases nothing and prints every
-group. `recipe try NAME [--dry]` measures the whole group in one unbake process (the sources each set edits, compiled
-with the set laid over the tree) and lands every exact name as its own commit: unbake lands only candidates that replace
-a stand-in, so `settle` writes the set, runs `make check` through `unbake-run`, and commits when every ROM still equals
-its base (else the old bytes go back). A try spends at most about 100 CPU s landing; names it did not reach stay leased.
-A name with no landed definition, or whose header would break a unit that includes it, is reported with the names it
-waits for.
+Declaration items (a name declared more than one way) are planned, not written by hand. `recipe next --kind declaration`
+ranks the conflicts (names the open functions need first, a record width mismatch counts as critical), plans for the
+best one change set (the prototype once in the definition's family header, the other copies deleted, an include where a
+unit loses sight of the name, scalar casts only where a call site's old declaration took other types) and leases it.
+`recipe try NAME [--dry]` measures the set (the sources it edits, compiled with the set laid over the tree) and lands it
+as its own commit: unbake lands only candidates that replace a stand-in, so `settle` writes the set, runs `make check`
+through `unbake-run`, and commits when every ROM still equals its base (else the old bytes go back). A name with no
+landed definition, or whose header would break a unit that includes it, is reported with the names it waits for.
 
 Type items (a `void *` parameter the code reaches by offsets) are planned the same way: `recipe work F --kind type [--arg N]`
 builds one record from every access (the function, the callees it passes the object to, the functions handed the same
