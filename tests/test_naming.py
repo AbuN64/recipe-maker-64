@@ -743,3 +743,57 @@ def test_the_functions_the_libultra_table_names_are_named_without_a_pack_row(pro
     assert naming._sdk(ctx) == [
         {"target": "func_80700000", "kind": "function", "name": "osYield", "doc": "The SDK's osYield.", "evidence": []}
     ]
+
+
+@pytest.mark.parametrize("step", ["N1", "N2", "N3", "N4"])
+def test_unowned_function_card_uses_real_callers_without_inventing_a_body(project, monkeypatch, step):
+    target = "func_90000010"
+    monkeypatch.setitem(TABLES["us"], target, (0x90000010, None, None, "func"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", ([target], []))
+    got = run(project, "next", step=step, target=target)
+    card = json.loads((project.project.root / got["pack"]).read_text())["targets"][0]
+    assert card["target"] == target and card["kind"] == "function"
+    assert card["callers"] == ["Actor_Update"] and card["fan_in"] == 1
+    assert card["file"] == card["subsystem"] == "" and card["size"] == 0
+    ctx = naming.Map(project, document(), dict(GRAPH))
+    assert ("function", target) in naming._targets(ctx, "N3")
+    got = submit(project, [row(target, "NotifyActorChange", ["caller Actor_Update"])])
+    assert got["accepted"] == 1 and got["refused"] == 0
+    assert moves(project)[-1] == {"op": "symbol", "subject": target, "target": "NotifyActorChange"}
+
+
+def test_unowned_function_name_requires_typed_identity_and_verified_call(project, monkeypatch):
+    monkeypatch.setitem(TABLES["us"], "func_90000010", (0x90000010, None, None, "func"))
+    monkeypatch.setitem(TABLES["us"], "D_90000020", (0x90000020, None, None, "data"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", (["func_90000010", "func_90000030"], ["D_90000020"]))
+    got = submit(
+        project,
+        [
+            row("func_90000010", "NotifyActorChange", ["caller func_80004010"]),
+            row("func_90000030", "NotifyActorChange", ["caller Actor_Update"]),
+            row("D_90000020", "NotifyActorChange", ["caller Actor_Update"]),
+        ],
+    )
+    assert got["accepted"] == 0
+    assert got["by_rule"] == {"unverifiable": 1, "target": 2}
+
+
+def test_unowned_function_rename_updates_callers_and_all_symbol_tables(project, monkeypatch):
+    target = "func_90000010"
+    monkeypatch.setitem(TABLES["us"], target, (0x90000010, None, None, "func"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", ([target], []))
+    root = project.project.root
+    for version in ("us", "eu"):
+        folder = root / "versions" / version
+        folder.mkdir(parents=True)
+        (folder / "symbol_addrs.txt").write_text(f"{target} = 0x90000010; // type:func\n")
+    (root / "src").mkdir()
+    (root / "src/c.c").write_text(f"extern void {target}(void);\nvoid Actor_Update(void) {{ {target}(); }}\n")
+    monkeypatch.setattr(naming, "_patch", project.real)
+    got = submit(project, [row(target, "NotifyActorChange", ["caller Actor_Update"])])
+    assert got["accepted"] == 1 and got["moves"] == 1
+    assert set(got["files"]) == {"src/c.c", "versions/us/symbol_addrs.txt", "versions/eu/symbol_addrs.txt"}
+    subprocess.run(["git", "apply", str(root / got["path"])], cwd=root, check=True)
+    assert target not in (root / "src/c.c").read_text()
+    for version in ("us", "eu"):
+        assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("NotifyActorChange =")

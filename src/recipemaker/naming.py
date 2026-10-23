@@ -115,7 +115,11 @@ class Map:
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
         self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
         self.calls = {
-            n: list(dict.fromkeys(x for x in map(self.canon, c) if x in self.members and x != n))
+            n: list(
+                dict.fromkeys(
+                    x for x in map(self.canon, c) if (x in self.members or self.symbol_kind(x) == "function") and x != n
+                )
+            )
             for n, (c, _) in graph.items()
         }
         self.loads = {n: list(dict.fromkeys(map(self.canon, ld))) for n, (_, ld) in graph.items()}
@@ -284,7 +288,11 @@ class Map:
         """The members whose evidence speaks for a target: itself, or a folder's or module's members."""
         if kind in ("function", "global", "static"):
             name = self.canon(target)
-            return [name] if name in self.members or (kind == "global" and self.symbol_kind(name) == "global") else []
+            return (
+                [name]
+                if name in self.members or (kind in ("function", "global") and self.symbol_kind(name) == kind)
+                else []
+            )
         if kind == "subsystem":
             return [m for mod in self.modules if self.folder(mod) == target for m in self.modules[mod]["members"]]
         return list(self.modules.get(target, {}).get("members", ()))
@@ -315,7 +323,7 @@ def _exists(ctx: Map, row: Json) -> str:
         return "" if target in ctx.modules else "no module has this name"
     want = "function" if kind == "function" else "data"
     found = ctx.members.get(ctx.canon(target))
-    if not found and kind == "global" and ctx.symbol_kind(target) == "global":
+    if not found and kind in ("function", "global") and ctx.symbol_kind(target) == kind:
         return ""
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
 
@@ -329,7 +337,8 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     if kind in ("function", "module"):
         folder = ctx.folder_of(ctx.canon(target)) if kind == "function" else ctx.folder(target)
         word = ctx.word(folder)
-        if not word and not style.free_folder(folder):
+        external = kind == "function" and ctx.canon(target) not in ctx.members and ctx.symbol_kind(target) == kind
+        if not word and not style.free_folder(folder) and not external:
             return "prefix", (
                 f"the subsystem folder {folder} has no name yet: name it first, with a subsystem row for {folder} in "
                 f"this same file (subsystem rows are judged first) or from `recipe name next --step N2`, which offers "
@@ -514,11 +523,18 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         spread = {n: {ctx.folder_of(c) for c in ctx.callers.get(n, ())} for n in leaf}
         return [("function", n) for n in sorted(leaf) if len(spread[n]) >= 5]
     if step == "N3":  # public API: called from another subsystem, by fan-in
+        external = {
+            n
+            for t in ctx.tables.values()
+            for n in t
+            if style.neutral(n) and n not in ctx.members and ctx.canon(n) == n and ctx.symbol_kind(n) == "function"
+        }
         rows = [
             (len({c for c in ctx.callers.get(n, ()) if ctx.folder_of(c) != ctx.folder_of(n)}), n)
             for n, m in neutral.items()
             if m["kind"] == "function" and ctx.word(ctx.folder_of(n))
         ]
+        rows += [(len(ctx.callers.get(n, ())), n) for n in external]
         return [("function", n) for fan, n in sorted(rows, key=lambda r: (-r[0], r[1])) if fan]
     # N4: a datum is static when one file reads it (C's file scope: the data may sit in a data file of its own, the
     # code file it came from is the one that reads it), global when two files do; a folder is no scope of C
@@ -662,7 +678,7 @@ def next_(config: Config, params: Json) -> Json:
     wanted = params.get("target")
     if wanted:  # the one thing the caller already chose: its card alone, never the step's best other target
         pick = [_chosen(ctx, step, wanted)]
-        if pick[0][1] not in ctx.members and pick[0][0] != "global":
+        if pick[0][1] not in ctx.members and pick[0][0] not in ("function", "global"):
             raise state.stop(
                 "recipe.name",
                 f"{wanted} is a symbol no module owns; only step T takes it",
