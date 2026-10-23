@@ -109,6 +109,7 @@ class Map:
         self.members: dict[str, Json] = {m["name"]: m for m in doc["members"]}
         self.modules: dict[str, dict[str, Any]] = {m["name"]: dict(m) for m in doc["modules"]}
         self.config = config
+        self.tables = _tables(config, doc["versions"])
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
@@ -124,7 +125,7 @@ class Map:
                 self.callers.setdefault(target, []).append(name)
         self._gbi: dict[str, bool] = {}
         self.alias: dict[str, str] = {}  # a module renamed by an accepted row: old name to new name
-        self.taken: set[str] = {*self.members, *self.modules}
+        self.taken: set[str] = {*self.members, *self.modules, *(n for t in self.tables.values() for n in t)}
         self._naming: tree.Naming | None = None
         for module in self.modules.values():
             self.taken |= {PurePosixPath(module[k]).stem for k in ("source", "header")} | {self.folder(module["name"])}
@@ -178,7 +179,7 @@ class Map:
         ]
 
     def gbi(self, member: str) -> bool:
-        unit = self.members[member]["unit"]
+        unit = self.members.get(member, {}).get("unit")
         if unit and unit not in self._gbi:
             try:
                 text = (self.root / unit).read_text(encoding="utf-8", errors="replace")
@@ -203,10 +204,8 @@ class Map:
 
     def symbol_kind(self, name: str) -> str:
         """The kind of a name some version's symbol table holds ("function" or "global"), else "" for no such symbol."""
-        for symbols in _tables(self.config, self.doc["versions"]).values():
-            if name in symbols:
-                return "function" if symbols[name][3] == "func" else "global"
-        return ""
+        kinds = {"function" if t[name][3] == "func" else "global" for t in self.tables.values() if name in t}
+        return next(iter(kinds)) if len(kinds) == 1 else ""
 
     def canon(self, name: str) -> str:
         """The member a spelling names: itself, or the member that sits where a version's symbol table puts that
@@ -229,7 +228,7 @@ class Map:
             versions = sorted(self.doc["versions"], key=lambda v: v != self.doc["names_from"])
             found = {
                 spelling: member
-                for version, table in reversed(_tables(self.config, versions).items())
+                for version, table in reversed([(v, self.tables[v]) for v in versions])
                 for spelling, row in table.items()
                 if spelling not in self.members
                 and (member := at.get((version, row[1] or 0, row[0])) or _within(spans.get(version, ()), row[1]))
@@ -276,7 +275,8 @@ class Map:
     def users(self, target: str, kind: str) -> list[str]:
         """The members whose evidence speaks for a target: itself, or a folder's or module's members."""
         if kind in ("function", "global", "static"):
-            return [self.canon(target)] * (self.canon(target) in self.members)
+            name = self.canon(target)
+            return [name] if name in self.members or (kind == "global" and self.symbol_kind(name) == "global") else []
         if kind == "subsystem":
             return [m for mod in self.modules if self.folder(mod) == target for m in self.modules[mod]["members"]]
         return list(self.modules.get(target, {}).get("members", ()))
@@ -307,6 +307,8 @@ def _exists(ctx: Map, row: Json) -> str:
         return "" if target in ctx.modules else "no module has this name"
     want = "function" if kind == "function" else "data"
     found = ctx.members.get(ctx.canon(target))
+    if not found and kind == "global" and ctx.symbol_kind(target) == "global":
+        return ""
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
 
 
@@ -469,7 +471,7 @@ def _number(config: Config) -> int:
 
 def _card(ctx: Map, kind: str, target: str, version: str) -> Json:
     names = ctx.users(target, kind)
-    members = [ctx.members[n] for n in names]
+    members = [ctx.members[n] for n in names if n in ctx.members]
     calls = Counter(c for n in names for c in ctx.calls.get(n, ()) if c not in names)
     card: dict[str, Any] = {
         "target": target,
@@ -483,7 +485,7 @@ def _card(ctx: Map, kind: str, target: str, version: str) -> Json:
     card["callers"] = [c for c, _ in outside.most_common(_CARD_LIMIT)]
     card["fan_in"] = sum(outside.values())
     if kind in ("function", "global", "static"):
-        card["file"] = ctx.modules.get(ctx.members[target]["module"], {}).get("source", "")
+        card["file"] = ctx.modules.get(ctx.module_at(target), {}).get("source", "")
         card["subsystem"] = ctx.folder_of(target)
     else:
         card["human_names"] = [n for n in names if not style.neutral(n)][:_CARD_LIMIT]
@@ -512,7 +514,15 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
     # N4: a datum is static when one file reads it (C's file scope: the data may sit in a data file of its own, the
     # code file it came from is the one that reads it), global when two files do; a folder is no scope of C
     data = {n: ctx.callers.get(n, []) for n, m in neutral.items() if m["kind"] != "function"}
-    held = [(n, "global" if len({ctx.module_at(c) for c in by}) >= 2 else "static") for n, by in data.items() if by]
+    external = {
+        n for t in ctx.tables.values() for n in t if style.neutral(n) and ctx.canon(n) == n and n not in ctx.members
+    }
+    data.update({n: ctx.callers.get(n, []) for n in external if ctx.symbol_kind(n) == "global"})
+    held = [
+        (n, "global" if n not in ctx.members or len({ctx.module_at(c) for c in by}) >= 2 else "static")
+        for n, by in data.items()
+        if by
+    ]
     return [(k, n) for n, k in sorted(held, key=lambda r: (-len(data[r[0]]), r[0]))]
 
 
@@ -634,7 +644,7 @@ def next_(config: Config, params: Json) -> Json:
     wanted = params.get("target")
     if wanted:  # the one thing the caller already chose: its card alone, never the step's best other target
         pick = [_chosen(ctx, step, wanted)]
-        if pick[0][1] not in ctx.members:
+        if pick[0][1] not in ctx.members and pick[0][0] != "global":
             raise state.stop(
                 "recipe.name",
                 f"{wanted} is a symbol no module owns; only step T takes it",

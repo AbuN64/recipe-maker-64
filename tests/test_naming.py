@@ -664,10 +664,61 @@ def test_an_sdk_function_takes_its_catalog_name_with_no_evidence_when_nothing_ca
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
 
 
-def test_a_symbol_no_module_owns_is_known_to_step_t_only(project, monkeypatch):
+@pytest.mark.parametrize("address", [0x90000000, 0x00441000])
+def test_an_unowned_datum_uses_its_table_identity_and_assembly_reader(project, monkeypatch, address):
+    target = f"D_{address:08X}"
+    monkeypatch.setitem(TABLES["us"], target, (address, None, 4, "data"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", ([], [target]))
+    got = run(project, "next", step="N4", target=target)
+    card = json.loads((project.project.root / got["pack"]).read_text())["targets"][0]
+    assert card["target"] == target and card["kind"] == "global"
+    assert card["callers"] == ["Actor_Update"] and card["fan_in"] == 1
+    assert card["file"] == "" and card["size"] == 0
+    got = submit(project, [row(target, "g_actorLimit", ["caller Actor_Update"], kind="global")])
+    assert got["accepted"] == 1 and got["refused"] == 0
+    assert moves(project) == [{"op": "symbol", "subject": target, "target": "g_actorLimit"}]
+
+
+def test_external_names_still_require_a_table_identity_correct_kind_and_real_reader(project, monkeypatch):
     monkeypatch.setitem(TABLES["us"], "D_90000000", (0x90000000, None, 4, "data"))
-    with pytest.raises(Exception, match="D_90000000 is a symbol no module owns; only step T takes it"):
-        run(project, "next", step="N4", target="D_90000000")
+    monkeypatch.setitem(TABLES["us"], "func_90000010", (0x90000010, None, 4, "func"))
+    monkeypatch.setitem(TABLES["us"], "g_actorLimit", (0x90000020, None, 4, "data"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", ([], ["D_90000000", "D_90000030"]))
+    got = submit(
+        project,
+        [
+            row("D_90000000", "g_actorCount", ["caller func_80004010"], kind="global"),
+            row("D_90000030", "g_actorCount", ["caller Actor_Update"], kind="global"),
+            row("func_90000010", "g_actorCount", ["caller Actor_Update"], kind="global"),
+            row("D_90000000", "Actor_Count", ["caller Actor_Update"]),
+            row("D_90000000", "g_actorLimit", ["caller Actor_Update"], kind="global"),
+            row("D_90000000", "g_actorCount", ["tag audio"], kind="global"),
+        ],
+    )
+    assert got["accepted"] == 0
+    assert got["by_rule"] == {"unverifiable": 2, "target": 3, "duplicate": 1}
+
+
+def test_unowned_global_patch_updates_source_and_all_version_tables(project, monkeypatch):
+    target = "D_90000000"
+    monkeypatch.setitem(TABLES["us"], target, (0x90000000, None, 4, "data"))
+    monkeypatch.setitem(GRAPH, "Actor_Update", ([], [target]))
+    root = project.project.root
+    for version in ("us", "eu"):
+        folder = root / "versions" / version
+        folder.mkdir(parents=True)
+        (folder / "symbol_addrs.txt").write_text(f"{target} = 0x90000000; //\n")
+    (root / "src").mkdir()
+    (root / "src/c.c").write_text(f"extern int {target};\nint Actor_Update(void) {{ return {target}; }}\n")
+    monkeypatch.setattr(naming, "_patch", project.real)
+    got = submit(project, [row(target, "g_actorCount", ["caller Actor_Update"], kind="global")])
+    assert got["accepted"] == 1 and got["moves"] == 1
+    assert set(got["files"]) == {"src/c.c", "versions/us/symbol_addrs.txt", "versions/eu/symbol_addrs.txt"}
+    patch = root / got["path"]
+    subprocess.run(["git", "apply", str(patch)], cwd=root, check=True)
+    assert target not in (root / "src/c.c").read_text()
+    for version in ("us", "eu"):
+        assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("g_actorCount =")
 
 
 def test_a_symbol_inside_a_datums_rom_span_spells_that_datum():
