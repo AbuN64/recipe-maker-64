@@ -310,7 +310,12 @@ def gather(config: Config, files: Sequence[str]) -> tuple[dict[str, Json], int]:
     """Facts per C file through the digest cache; only the unseen contents go to the pool. Returns the facts and the
     number of files parsed."""
     root = config.project.root
-    texts = {f: (root / f).read_text(encoding="utf-8", errors="replace") for f in files if kind(f)}
+    return _read(config, {f: (root / f).read_text(encoding="utf-8", errors="replace") for f in files if kind(f)})
+
+
+def _read(config: Config, texts: dict[str, str]) -> tuple[dict[str, Json], int]:
+    """Facts per path from its text through the digest cache, and the number of files parsed afresh."""
+    root = config.project.root
     keys = {f: sha256(f"{FACTS}\n{t}".encode()) for f, t in texts.items()}
     path, cache = _cache(root)
     todo = sorted({keys[f]: texts[f] for f in texts if keys[f] not in cache}.items())
@@ -321,14 +326,12 @@ def gather(config: Config, files: Sequence[str]) -> tuple[dict[str, Json], int]:
     return {f: cache[k] for f, k in keys.items()}, len(todo)
 
 
-def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str, str, str]], int, int, int]:
-    """All findings over the repo or the given paths, the number of files read, the number parsed afresh and the
-    number audited (files with facts, cached or new)."""
-    rules, listing = _rules(), _listing(config, paths)
-    facts, parsed = gather(config, listing)
-    context, out = Context(config), []
-    for path, found in sorted(facts.items()):
-        out += check(path, found, context)
+Found = list[tuple[str, str, str]]
+
+
+def _across(listing: Sequence[str]) -> Found:
+    """The findings that hold of a set of paths as a whole: crowded folders, tool-named paths, repeated basenames."""
+    rules, out = _rules(), []
     folders: Counter[str] = Counter(str(PurePosixPath(f).parent) for f in listing)
     out += [("files-per-dir", d, str(n)) for d, n in sorted(folders.items()) if n > rules["dir_max"]]
     out += [
@@ -341,12 +344,50 @@ def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str,
         if kind(f) == "c" and not any(f.startswith(x) for x in rules["paths"]["exempt"]) and _words(f):
             stems[PurePosixPath(f).name].append(f)
     out += [("file-name", f, "basename is not unique") for same in stems.values() if len(same) > 1 for f in same]
-    return out, len(listing), parsed, len(facts)
+    return out
+
+
+def _listed(config: Config, *args: str) -> set[str]:
+    """The NUL-separated paths a git command prints."""
+    return set(host.git(config, *args).stdout.decode(errors="replace").split("\0"))
+
+
+def findings(config: Config, paths: Sequence[str] = (), base: str = "") -> tuple[Found, Found, int, int, int]:
+    """(new, debt, files read, files parsed afresh, files audited) over the repo or the given paths. Without a base
+    every finding is new. With one, the findings the base commit's files already had are debt and only what the change
+    introduces is new: an untouched file has the findings it had, a touched one is read at the base."""
+    listing = _listing(config, paths)
+    facts, parsed = gather(config, listing)
+    context = Context(config)
+    mine = {path: check(path, found, context) for path, found in sorted(facts.items())}
+    now = [f for found in mine.values() for f in found] + _across(listing)
+    if not base:
+        return now, [], len(listing), parsed, len(facts)
+    touched = _listed(config, "diff", "--name-only", "-z", base) | _listed(
+        config, "ls-files", "-z", "--others", "--exclude-standard"
+    )
+    old = _listed(config, "ls-tree", "-r", "--name-only", "-z", base)
+    texts = {}
+    for path in sorted(touched & facts.keys() & old):
+        shown = host.run(["git", "show", f"{base}:{path}"], config.project.root, config)
+        texts[path] = bytes(shown.stdout).decode(errors="replace") if shown.exit == 0 else ""
+    held, _ = _read(config, texts)
+    before = Counter(f for path, found in mine.items() if path not in touched for f in found)
+    before.update(f for path, found in held.items() for f in check(path, found, context))
+    before.update(_across([f for f in listing if f in old]))
+    new: Found = []
+    debt: Found = []
+    for f in now:
+        (debt if before[f] > 0 else new).append(f)
+        before[f] -= 1
+    return new, debt, len(listing), parsed, len(facts)
 
 
 def run(config: Config, params: Json) -> Json:
     """`recipe style`: the findings for the paths; exit 1 when one is an error."""
-    found, files, parsed, audited = findings(config, params["paths"])
+    found, debt, files, parsed, audited = findings(
+        config, params["paths"], "" if params.get("full") else params.get("base", "")
+    )
     if not audited:  # an audit that read no source proves nothing: it fails
         found.append(
             ("nothing-audited", ",".join(params["paths"]) or ".", f"{files} files listed, no C source or header")
@@ -359,5 +400,6 @@ def run(config: Config, params: Json) -> Json:
         "parsed": parsed,
         "audited": audited,
         "findings": [{"rule": r, "path": p, "detail": d} for r, p, d in found],
+        "debt": [{"rule": r, "path": p, "detail": d} for r, p, d in debt],
         "next": "recipe status",
     }

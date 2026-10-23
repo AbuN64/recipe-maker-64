@@ -50,6 +50,9 @@ def _landing(result: Json) -> list[str]:
 def _render_style(result: Json) -> list[str]:
     counts = ", ".join(f"{k} {v}" for k, v in sorted(Counter(f["rule"] for f in result["findings"]).items()))
     lines = [f"{result['files']} files, {result['parsed']} parsed: {counts or 'no findings'}"]
+    if result.get("debt"):
+        debt = Counter(f["rule"] for f in result["debt"])
+        lines.append("debt (info, the base had it): " + ", ".join(f"{k} {v}" for k, v in sorted(debt.items())))
     lines += [f"{f['rule']} {f['path']} {f['detail']}".rstrip() for f in result["findings"][:50]]
     return lines
 
@@ -318,6 +321,10 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
     one = verb("style", "style findings; exit 1 when one is an error")
     one.add_argument("paths", nargs="*", help="check only these paths")
+    one.add_argument(
+        "--base", default="HEAD", help="only findings the files did not have at this commit gate (default HEAD)"
+    )
+    one.add_argument("--full", action="store_true", help="every finding gates, whatever the base had")
     one = verb("apply", "git apply the oldest saved patch, then unbake sync")
     one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
     one = verb("fuzzy", "m2c drafts of every function with no C, landed as NON_MATCHING bodies (private worktree)")

@@ -110,8 +110,8 @@ def test_the_evidence_is_the_maps_modules_with_the_captured_sections_and_symbol_
     assert by["f"]["unit"] == "src/IO/80001000.CPP" and [p["version"] for p in by["f"]["placements"]] == ["eu", "us"]
     assert by["D"]["unit"] is None and by["D"]["kind"] == "data"  # behind a stand-in
     assert by["D"]["placements"] == [
-        {"version": "us", "section": ".rodata", "rom_start": 0x2000, "rom_end": 0x2010, "vram": 0x80002000}
-    ]  # no size: it extends to the next symbol
+        {"version": "us", "section": ".rodata", "rom_start": 0x2000, "rom_end": 0x3000, "vram": 0x80002000}
+    ]  # no size: it extends to the next owned symbol; `after`, owned by no module, is an alias inside it
     assert by["g"]["unit"] is None and by["g"]["fuzzy"] == "src/IO/80001000.CPP"
 
 
@@ -744,3 +744,11 @@ def test_sdk_names_read_every_versions_table(tmp_path):
     (tmp_path / "versions/us").mkdir(parents=True)
     (tmp_path / "versions/us/libultra_names.tsv").write_text("vram\tname\n0x80112480\t__osDisableInt\tEXACT\nbad\n")
     assert structure.sdk_names(tmp_path, ["us", "eu"]) == {("us", 0x80112480): "__osDisableInt"}
+
+
+def test_the_evidence_is_built_once_per_tree_state(tmp_path, monkeypatch):
+    built, state = [], ["a", "a", "b", ""]
+    monkeypatch.setattr(structure, "_state", lambda config: state.pop(0))
+    monkeypatch.setattr(structure, "_evidence", lambda config, host: built.append(1) or {"digest": len(built)})
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+    assert [structure.evidence(config)["digest"] for _ in range(4)] == [1, 1, 2, 3]  # a, a (held), b, "" (no state)

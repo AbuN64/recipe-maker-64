@@ -125,3 +125,13 @@ def test_asm_path_reads_the_fact_files_once_for_any_number_of_members_and_again_
     table.write_text("f = 0x80000400; // changed\n")
     world.asm_path(config, "a", "f")
     assert reads == ["a", "a"]
+
+
+def test_a_symbol_no_module_owns_is_no_extent_boundary():
+    table = {
+        "D": (0x2000, 0x2000, None, "data"),
+        "alias": (0x2002, 0x2002, None, "data"),
+        "E": (0x2010, 0x2010, 4, "data"),
+    }
+    assert world.extents(table) == {"D": 2, "alias": 14}
+    assert world.extents(table, {"D", "E"}) == {"D": 16}

@@ -22,7 +22,7 @@ static = '^s_[a-z][A-Za-z0-9]*$'
 type = '^[A-Z][A-Za-z0-9]*$'
 macro = '^[A-Z][A-Z0-9_]+$'
 # a name that is always legal, and a file or folder suffix that never is
-neutral = ['^func_[0-9A-F]{8}(_\w+)?$', '^D_[0-9A-F]{8}$', '^code_[0-9A-F]{8}(_\d+)?$', '^data_[0-9A-F]{8}(_\d+)?$', '^sys_[0-9A-F]{8}$', '^lib_[0-9A-F]{8}$', '^jtbl_\w+$']
+neutral = ['^func_[0-9A-F]{8}(_\w+)?$', '^D_(?:auto_|blob_)?(?:\w+_)?[0-9A-F]{8}(_\w+)?$', '^D_(?:auto|blob)_\w+$', '^unresolved_\w+$', '^code_[0-9A-F]{8}(_\d+)?$', '^data_[0-9A-F]{8}(_\d+)?$', '^sys_[0-9A-F]{8}$', '^lib_[0-9A-F]{8}$', '^jtbl_\w+$']
 forbidden_suffix = '_\d{3,}$'
 # a folder word plus a collision counter (FX_2), or a library part address (part_800C7F20, the vendor archive split
 # by address), is a placeholder: it has no name yet, like a neutral folder

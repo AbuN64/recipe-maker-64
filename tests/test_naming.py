@@ -668,3 +668,8 @@ def test_a_symbol_no_module_owns_is_known_to_step_t_only(project, monkeypatch):
     monkeypatch.setitem(TABLES["us"], "D_90000000", (0x90000000, None, 4, "data"))
     with pytest.raises(Exception, match="D_90000000 is a symbol no module owns; only step T takes it"):
         run(project, "next", step="N4", target="D_90000000")
+
+
+def test_a_symbol_inside_a_datums_rom_span_spells_that_datum():
+    spans = [(0x100, 0x110, "D"), (0x120, 0x124, "E")]
+    assert [naming._within(spans, r) for r in (0x102, 0x10F, 0x110, 0x120, None)] == ["D", "D", "", "E", ""]

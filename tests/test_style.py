@@ -245,3 +245,49 @@ def test_uppercase_cpp_and_h_are_audited_and_an_audit_of_nothing_fails(tmp_path)
     bare = run(project(tmp_path / "bare", {"README.md": "no source\n"}))
     assert bare["audited"] == 0 and bare["ok"] is False and bare["exit"] == 1
     assert [f["rule"] for f in bare["findings"]] == ["nothing-audited"]
+
+
+def _against_base(monkeypatch, root, touched, before):
+    """A project whose base commit held `before` (path -> text) and whose change touched `touched`."""
+    listing = tracked_listing = lambda config: [p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()]
+
+    def git(config, *args):
+        if args[0] == "ls-files" and "--others" not in args:
+            return SimpleNamespace(stdout="\n".join(tracked_listing(config)).encode())
+        out = {"diff": touched, "ls-files": [], "ls-tree": [*before]}
+        return SimpleNamespace(stdout="\0".join(out[args[0]]).encode())
+
+    def show(argv, cwd, config, **_):
+        path = argv[-1].split(":", 1)[1]
+        return SimpleNamespace(exit=0, stdout=before[path].encode())
+
+    monkeypatch.setattr(style.host, "git", git)
+    monkeypatch.setattr(style.host, "run", show)
+    return listing
+
+
+def test_only_the_findings_a_change_introduces_gate_and_the_base_debt_is_reported(tmp_path, monkeypatch):
+    old, mine = "src/game/main/actor/actor_old.c", "src/game/main/actor/actor_spawn.c"
+    debt = "int actorCount;\n"  # a bad global name the base already had
+    config = project(tmp_path, {old: debt, mine: CLEAN_SOURCE + debt})
+    _against_base(monkeypatch, tmp_path, [mine], {old: debt, mine: CLEAN_SOURCE + debt})
+    got = style.run(config, {"paths": [], "base": "HEAD"})
+    assert got["ok"] is True and got["findings"] == []
+    assert sorted(f["path"] for f in got["debt"]) == [old, mine]
+    (tmp_path / mine).write_text(CLEAN_SOURCE + debt + "int otherCount;\n")
+    got = style.run(config, {"paths": [], "base": "HEAD"})
+    assert [(f["rule"], f["detail"]) for f in got["findings"]] == [("global-name", "otherCount")]
+    assert got["ok"] is False and len(got["debt"]) == 2
+    assert style.run(config, {"paths": [], "base": "HEAD", "full": True})["debt"] == []
+
+
+def test_generated_placeholders_are_neutral_names_of_every_kind():
+    for name in (
+        "D_auto_data_unresolved_800E42D8",
+        "D_blob_e67cb8f9f48e076798ff",
+        "D_800E42D8",
+        "unresolved_x",
+        "func_800E42D8_us",
+    ):
+        assert style.neutral(name), name
+    assert not style.neutral("g_selectionLayoutTail") and not style.neutral("Menu_Draw")

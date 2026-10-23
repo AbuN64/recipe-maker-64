@@ -16,12 +16,13 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from importlib.util import find_spec
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from unbake import api
-from unbake.contracts import Config, Finding, Json, Refusal, file_facts
+from unbake.contracts import Config, Finding, Json, Refusal, digest, file_facts
 
 from recipemaker import clash, cparse, debug, state, tree, world
 from recipemaker import host as recipe_host
@@ -66,7 +67,44 @@ def _unbake(config: Config, host: Path | None, *args: str) -> tuple[Json, str]:
         raise Refusal(Finding("recipe.unbake", f"unbake {args[0]} printed no JSON")) from error
 
 
+def _state(config: Config) -> str:
+    """A cheap fingerprint of the tree state and of the code that reads it: HEAD, each changed or untracked file's
+    stat, the extracted assembly's marker files, and the stat of the Recipe and unbake sources."""
+    root = config.project.root
+    try:
+        head = recipe_host.git(config, "rev-parse", "HEAD").stdout
+        dirty = recipe_host.git(config, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
+    except Refusal:
+        return ""  # no git state to name: nothing is reused
+    paths = [root / p[3:].decode() for p in bytes(dirty).split(b"\0") if len(p) > 3]
+    paths += [m for m in (root / "asm").glob("*/.*") if m.is_file()]
+    unbake = find_spec("unbake")
+    code = [Path(__file__).parent, Path(unbake.origin).parent if unbake and unbake.origin else root]
+    paths += [*code[0].rglob("*.py"), *code[1].rglob("*.py")]
+    stats = [(str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths if p.is_file()]
+    return digest([bytes(head).decode(), sorted(stats)])
+
+
 def evidence(config: Config, host: Path | None = None) -> Json:
+    """The structure evidence of the tree as it is, built once per tree state: every naming step and submit reads the
+    document of the last call when HEAD, the changed files and the Recipe and unbake sources are the same."""
+    key, path = _state(config), config.project.root / ".unbake" / "recipe" / "evidence.json"
+    try:
+        if not key:
+            raise KeyError(key)
+        held = json.loads(path.read_text(encoding="utf-8"))
+        if held["key"] == key:
+            say("structure > evidence cached")
+            return held["document"]  # type: ignore[no-any-return]
+    except (OSError, ValueError, KeyError):
+        pass
+    document = _evidence(config, host)
+    if key:
+        recipe_host.write(path, json.dumps({"key": key, "document": document}, separators=(",", ":")).encode())
+    return document
+
+
+def _evidence(config: Config, host: Path | None) -> Json:
     """The structure evidence: `unbake map` for the modules and their segments, the captured tree of the same digest
     for sections and `api.symbols` for placements."""
     with narrated("map"):
@@ -89,7 +127,8 @@ def document_of(config: Config, slim: Json, captured: api.Tree, tables: Mapping[
     unit (the module when it is C, None behind a stand-in or NON_MATCHING) and placements per version."""
     project, first = config.project, slim["names_from"]
     sections = {m.path: m.sections for m in captured.modules}
-    ends = {v: world.extents(t) for v, t in tables.items()}
+    owned = {n for row in slim["modules"] for names in row["owns"].values() for n in names}
+    ends = {v: world.extents(t, owned) for v, t in tables.items()}
     modules: list[Json] = []
     units: list[Json] = []
     members: list[Json] = []

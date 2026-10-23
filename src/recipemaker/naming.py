@@ -8,6 +8,8 @@ catalog-name or header-graph facts, so there is no catalog step (N0), no string 
 
 import json
 import re
+import sys
+from bisect import bisect_right
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath
@@ -50,6 +52,14 @@ def _directory(config: Config, version: str, names: Iterable[str]) -> str:
 def _tables(config: Config, versions: Sequence[str]) -> dict[str, Any]:
     """Per version the symbol table (name -> (vram, rom, size, kind)) a spelling is resolved through."""
     return {v: api.symbols(config, v) for v in versions}
+
+
+def _within(spans: Sequence[tuple[int, int, str]], rom: int | None) -> str:
+    """The data member whose ROM span holds `rom`: a symbol inside a datum (a halfword of a table) spells that datum."""
+    if not rom:
+        return ""
+    i = bisect_right(spans, (rom, sys.maxsize, "")) - 1
+    return spans[i][2] if i >= 0 and rom < spans[i][1] else ""
 
 
 def _stems(member: Json, version: str) -> list[str]:
@@ -207,17 +217,22 @@ class Map:
         if self._spelled is None:
             at: dict[tuple[str, int, int], str] = {}
             vram: dict[tuple[str, int], set[str]] = {}
+            inside: dict[str, list[tuple[int, int, str]]] = {}  # per version a data member's ROM span, by start
             for m in self.members.values():
                 for p in m["placements"]:
                     at[(p["version"], p["rom_start"], p["vram"])] = m["name"]
                     vram.setdefault((p["version"], p["vram"]), set()).add(m["name"])
+                    if m["kind"] == "data" and p["rom_end"] > p["rom_start"]:
+                        inside.setdefault(p["version"], []).append((p["rom_start"], p["rom_end"], m["name"]))
+            spans = {v: sorted(s) for v, s in inside.items()}
             # names_from first: a datum split into one member per version group resolves as names_from places it
             versions = sorted(self.doc["versions"], key=lambda v: v != self.doc["names_from"])
             found = {
                 spelling: member
                 for version, table in reversed(_tables(self.config, versions).items())
                 for spelling, row in table.items()
-                if spelling not in self.members and (member := at.get((version, row[1] or 0, row[0])))
+                if spelling not in self.members
+                and (member := at.get((version, row[1] or 0, row[0])) or _within(spans.get(version, ()), row[1]))
             }
             self._vram, self._spelled = vram, found
         if name in self._spelled:

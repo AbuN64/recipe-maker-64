@@ -6,7 +6,7 @@ import mmap
 import posixpath
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
@@ -170,9 +170,12 @@ def _build(snapshot: Snapshot) -> Layout:
     return Layout(groups, members, units, fuzzy)
 
 
-def extents(table: Mapping[str, tuple[int, int | None, int | None, str]]) -> dict[str, int]:
-    """Per symbol with no size its extent up to the next symbol's ROM offset (the last one has none)."""
-    starts = sorted({rom for _, rom, _, _ in table.values() if rom is not None})
+def extents(
+    table: Mapping[str, tuple[int, int | None, int | None, str]], owned: Collection[str] | None = None
+) -> dict[str, int]:
+    """Per symbol with no size its extent up to the next symbol's ROM offset (the last one has none). With `owned`
+    only a symbol some module owns ends an extent: the aliases inside a datum (a table's halfword) are no boundary."""
+    starts = sorted({rom for n, (_, rom, _, _) in table.items() if rom is not None and (owned is None or n in owned)})
     after = dict(pairwise(starts))
     return {n: after[rom] - rom for n, (_, rom, size, _) in table.items() if rom is not None and rom in after}
 
