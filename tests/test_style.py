@@ -133,6 +133,18 @@ def test_name_rules_hit_each_kind_and_pass_neutral_names(tmp_path):
     assert got
 
 
+def test_a_name_the_debug_catalog_spells_so_is_the_original_and_no_finding(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    original = SimpleNamespace(name="actor_rec", tag="")
+    catalog = SimpleNamespace(records=[original], functions=[SimpleNamespace(name="spawn_actor")], globals=[])
+    monkeypatch.setattr(style.debug, "load", lambda config, source=None: catalog)
+    files = {"src/game/main/actor/actor_spawn.c": BAD_SOURCE}
+    seen = rules(run(project(tmp_path, files)))
+    assert ("type-name", "actor_rec") not in seen and ("function-name", "spawn_actor") not in seen
+    assert ("macro-name", "bad_macro") in seen and ("global-name", "actorCount") in seen
+
+
 def test_file_dir_and_path_rules(tmp_path):
     files = {
         "src/game/main/actor/menu_draw.c": "int g_a;\n",  # the stem does not start with the folder

@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import pickle
 import threading
-import time
 from collections import Counter, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -18,7 +17,7 @@ import pytest
 from unbake import api
 from unbake.contracts import Config, Host, Json, Project, Proof, Snapshot, Version
 
-from recipemaker import crack, draft, headers, host, index, judge, signatures, state, world
+from recipemaker import headers, host, index, world
 from recipemaker.world import Group, Layout, Member, Placement, Unit
 
 # (module, function, method) seams this suite replaces
@@ -26,13 +25,6 @@ SEAMS = (
     (world, "capture", "capture"),
     (world, "of", "of"),
     (world, "unit_of", "unit_of"),
-    (world, "overlay", "overlay"),
-    (world, "scores", "fuzzy_scores"),
-    (judge, "score", "score"),
-    (judge, "score_many", "score_many"),
-    (judge, "submit", "submit"),
-    (judge, "compare", "compare_run"),
-    (world, "open_items", "report_items"),
     (host, "run", "process_run"),
     (host, "git", "git"),
     (headers, "catalog", "catalog"),
@@ -156,14 +148,11 @@ class Fakes:
 
     # -- installation
     def install(self, patch: pytest.MonkeyPatch) -> None:
-        """Replace every seam in `SEAMS` with the matching method of this object, plus the recipemaker seams that
-        reach other parts (index, signatures) and the heavy packet step."""
+        """Replace every seam in `SEAMS` with the matching method of this object, plus the index."""
         self.real_index_get = index.get
         for module, name, method in SEAMS:
             label = f"{module.__name__.split('.')[-1]}.{name}"
             patch.setattr(module, name, self._counted(label, getattr(self, method)))
-        patch.setattr(draft, "m2c_target", lambda toolchain: "mips-test")
-        patch.setattr(state, "tool", lambda name, path=None: self.root / "tools" / name)
         patch.setattr(
             index,
             "get",
@@ -178,11 +167,6 @@ class Fakes:
                 uses={},
             ),
         )
-        patch.setattr(signatures, "context", lambda snapshot, version: self.root / "context.c")
-        patch.setattr(signatures, "declarations", lambda snapshot, names: {})
-        patch.setattr(crack, "packet", self._packet)
-        patch.setattr(draft, "split_slot", lambda snapshot, member: self.split.get(member))
-        patch.setattr(draft, "data_text", lambda snapshot, member: "unsigned int data_d[] = {\n    0x0,\n};\n")
 
     def _counted(self, name: str, function: Any) -> Any:
         def call(*args: Any, **kwargs: Any) -> Any:
@@ -201,65 +185,6 @@ class Fakes:
 
     def unit_of(self, snapshot: Snapshot, member: str) -> Unit | None:
         return next((u for u in self.layout.units.values() if member in u.members), None)
-
-    def overlay(self, snapshot: Snapshot, writes: Any) -> Snapshot:
-        return replace(snapshot, overlays={**snapshot.overlays, **writes})
-
-    def fuzzy_scores(self, snapshot: Snapshot, name: str) -> dict[str, float]:
-        return dict(self.fuzzy.get(name, {}))
-
-    # -- verdicts
-    def _proofs(self, member: str) -> tuple[Proof, ...]:
-        score = self.scores.popleft() if self.scores else self.default_score
-        error = (f"compile.error: {self.compile_error}",) if self.compile_error else ()
-        return tuple(proof(member, v, 0.0 if error else score, error) for v in ("a", "b"))
-
-    def _busy(self) -> None:
-        with self.lock:
-            self.inflight += 1
-            self.peak = max(self.peak, self.inflight)
-        try:
-            time.sleep(0.001)
-        finally:
-            with self.lock:
-                self.inflight -= 1
-
-    def score(self, config: Config, file: Path, member: str, extras: Any = None, *, version: str = "") -> judge.Verdict:
-        self._busy()
-        canned = self.run_result.get("proofs")  # a test that canned what proving the candidate answers
-        proofs = tuple(judge.proof(p) for p in canned) if canned is not None else self._proofs(member)
-        return judge.Verdict(proofs, all(p.exact for p in proofs), ("- a", "+ b"))
-
-    def score_many(self, config: Config, rows: Sequence[tuple[Path, str, Any]]) -> list[judge.Verdict]:
-        self._busy()
-        out = []
-        for _, member, _ in rows:
-            score = self.screens.popleft() if self.screens else self.default_score
-            error = (f"compile.error: {self.compile_error}",) if self.compile_error else ()
-            proofs = (proof(member, "a", 0.0 if error else score, error),)
-            out.append(judge.Verdict(proofs, all(p.exact for p in proofs), ()))
-        return out
-
-    def compare_run(self, config: Config, file: Path, member: str) -> Json:
-        return dict(self.run_result)
-
-    def submit(self, config: Config, file: Path, member: str, extras: Any = None) -> Json:
-        if self.run_result and self.run_result.get("drain") is None:
-            return {"submissions": [{"member": member, "id": None}], "drain": None}
-        self.landed.append(member)
-        self.extras = dict(extras or {})
-        return {"submissions": [{"member": member, "id": f"id-{member}"}], "drain": self.drain(config)}
-
-    def drain(self, config: Config) -> Json:
-        if self.run_result and self.run_result.get("drain") is not None:
-            return dict(self.run_result["drain"])
-        rows = [
-            {"id": f"id-{m}", "member": m, "operation": self.operation, "files": [], "message": m} for m in self.landed
-        ]
-        return {"running": False, "landed": rows, "refused": []}
-
-    def report_items(self, snapshot: Snapshot) -> list[Json]:
-        return list(self.items)
 
     # -- processes
     def process_run(self, argv: Sequence[str], cwd: Path, config: Config, **kwargs: Any) -> SimpleNamespace:
@@ -290,19 +215,3 @@ class Fakes:
         pickle.dumps((function, key))  # unbake's workers compute keys: a lambda or closure cannot cross
         self.pool_jobs.append((name, len(items)))
         return [function(item) for item in items]
-
-    # -- the packet stands in for the real one, which reads ROM bytes and assembly
-    def _packet(self, snapshot: Snapshot, member: str) -> Json:
-        kind = self.layout.members[member].kind
-        return {
-            "member": member,
-            "kind": kind,
-            "target": {"a": {"asm": "" if kind == "data" else f"asm/a/{member}.s", "size": 8}},
-            "best": {"source": f".unbake/recipe/work/{member}.c", "score": {"a": 0.5}, "errors": []},
-            "diff": "- a\n+ b",
-            "worst": "a",
-            "regions": self.regions,
-            "why": [],
-            "twin": None,
-            "types": {"signature": "void f(void)", "declarations": []},
-        }

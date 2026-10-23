@@ -16,8 +16,6 @@ from typing import Any
 
 from unbake.contracts import Config, Json, Proof
 
-from recipemaker.state import Attempt
-
 VRAM_BASE, ROM_BASE, PAGE = 0x80000400, 0x1000, 0x1000
 TOOLS = (
     *("git", "make", "cpp", "mips_as", "mips_ld", "mips_objcopy", "mips_objdump"),
@@ -198,15 +196,6 @@ def proof(
     sha = hashlib.sha256(f"{unit}:{member}:{version}".encode()).hexdigest()
     built = sha if exact else hashlib.sha256(sha.encode()).hexdigest()
     return Proof(unit, member, version, "recipe", sha, sha, built, sha, exact, tuple(missing), score, symptoms)
-
-
-def attempt(**fields: Any) -> Attempt:
-    """A complete Attempt for tests; fields override the defaults."""
-    values: dict[str, Any] = {"member": "func_80000400", "step": "plain", "score": 0.5, "best_before": 0.0}
-    values |= {"outcome": "better", "symptoms": {"bytes_differ": True, "score": 0.5}, "note": ""}
-    values |= {"time": "2026-10-08T00:00:00Z"}
-    values |= fields
-    return Attempt(**values)
 
 
 def rom_bytes(game_code: bytes = b"NXX", region: bytes = b"E", order: str = "z64", body: bytes = b"") -> bytes:

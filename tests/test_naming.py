@@ -724,3 +724,22 @@ def test_unowned_global_patch_updates_source_and_all_version_tables(project, mon
 def test_a_symbol_inside_a_datums_rom_span_spells_that_datum():
     spans = [(0x100, 0x110, "D"), (0x120, 0x124, "E")]
     assert [naming._within(spans, r) for r in (0x102, 0x10F, 0x110, 0x120, None)] == ["D", "D", "", "E", ""]
+
+
+def test_a_rename_reaches_every_neutral_spelling_the_tables_give_the_address(project, monkeypatch):
+    table = {"func_80700000": (VRAM, 0x1000, 8, "func"), "func_80700000_us": (VRAM, 0x1000, 8, "func")}
+    monkeypatch.setattr(
+        naming, "_tables", lambda config, versions: {"us": table, "de": {"osYield": (VRAM, 0, 8, "func")}}
+    )
+    ctx = naming.Map(project, document(), dict(GRAPH))
+    assert ctx.spellings("func_80700000") == ["func_80700000", "func_80700000_us"]  # a named spelling is left alone
+
+
+def test_the_functions_the_libultra_table_names_are_named_without_a_pack_row(project):
+    ctx = SimpleNamespace(
+        members={"func_80700000": {"kind": "function"}, "Actor_Update": {"kind": "function"}},
+        sdk_name=lambda n: "osYield" if n == "func_80700000" else "",
+    )
+    assert naming._sdk(ctx) == [
+        {"target": "func_80700000", "kind": "function", "name": "osYield", "doc": "The SDK's osYield.", "evidence": []}
+    ]

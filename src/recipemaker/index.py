@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from unbake import api
-from unbake.contracts import Finding, Refusal, Snapshot, digest
+from unbake.contracts import Snapshot, digest
 
 from recipemaker import cparse, headers, host, ledger, world
 
@@ -245,20 +245,6 @@ def _uses(snapshot: Snapshot) -> dict[str, Uses]:
             if names.get(at):
                 found.setdefault(names[at], []).append((name, mnemonic, address + offset - at))
     return {k: tuple(v) for k, v in found.items()}
-
-
-def reference(snapshot: Snapshot, member: str) -> str:
-    """Use names_from if the member holds it, else its lexically first holder, as unbake's Member.reference does."""
-    item = world.of(snapshot).members.get(member)
-    if item is None or not item.placements:
-        raise Refusal(Finding("types.usage", f"{member} is in no version of this layout", unit=member))
-    return item.reference(snapshot.config.project.names_from)
-
-
-def asm(snapshot: Snapshot, member: str, version: str = "") -> str:
-    """The assembly of `member` in `version`, else in its reference version."""
-    version = version or world.of(snapshot).members[member].reference(snapshot.config.project.names_from)
-    return world.read_asm(world.asm_path(snapshot.config, version, member))
 
 
 def source(snapshot: Snapshot, path: str) -> str:

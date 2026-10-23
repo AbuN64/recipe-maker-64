@@ -12,9 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent / "src" / "recipemaker"
 KNOWLEDGE = ROOT / "knowledge"
-TOOLCHAINS = ("ido-5.3", "ido-7.1", "gcc-2.7.2-kmc", "gcc-2.8.1-sn64")
 AUTHORED_CAP = 3000  # lines of cards, and errors.toml together (owner decision)
-FIXES = {"", "drop-local-definition"}  # the ids errors.autofix knows
 
 
 def _toml(path: Path) -> dict[str, Any]:
@@ -55,36 +53,10 @@ def test_no_code_block_over_three_lines_and_no_embedded_bytes() -> None:
 
 @pytest.mark.parametrize("pattern", [r"/home/", r"/mnt/", r"\.z64|\.n64|\.v64"])
 def test_no_machine_paths_or_rom_names(pattern: str) -> None:
-    for path in [*KNOWLEDGE.glob("**/*"), *(ROOT / "tables").glob("*")]:
+    for path in KNOWLEDGE.glob("**/*"):
         if path.is_file():
             assert not re.search(pattern, path.read_text()), path.name
 
 
 def test_authored_size_is_under_the_cap_and_tables_are_not_counted() -> None:
     assert sum(len(p.read_text().splitlines()) for p in _authored()) < AUTHORED_CAP
-
-
-def test_compiler_cards_cover_every_toolchain_with_one_target_each() -> None:
-    cards = [_toml(p) for p in sorted((KNOWLEDGE / "compilers").glob("*.toml"))]
-    assert len(cards) == 3
-    claimed = [t for card in cards for t in card["toolchains"]]
-    assert sorted(claimed) == sorted(TOOLCHAINS)  # each toolchain is on exactly one card
-    for card in cards:
-        assert card["m2c_target"].startswith("mips-") and card["tells"] and card["notes"]
-
-
-def test_error_classes_have_a_pattern_or_a_key_and_known_fixes() -> None:
-    classes = _toml(KNOWLEDGE / "errors.toml")["class"]
-    assert {"decl-conflict", "header-disagreement", "undeclared", "not-exact"} == set(classes)
-    for name, row in classes.items():
-        assert "match" in row or "key" in row, name
-        if "match" in row:
-            re.compile(row["match"])
-        assert row["what"] and "fix" in row and row.get("autofix", "") in FIXES, name
-
-
-def test_display_command_table_is_plain_data() -> None:
-    table = _toml(ROOT / "tables" / "gbi.toml")
-    commands = table["command"]
-    assert len(commands) > 50
-    assert all(isinstance(c["macro"], str) and 0 <= c["opcode"] <= 255 for c in commands)

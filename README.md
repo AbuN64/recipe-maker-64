@@ -1,6 +1,6 @@
 # recipe-maker-64
 
-Proposes C for N64 decompilation functions and data. [unbake](https://github.com/AbuN64/cake-unbake-64) proves it.
+Cleanup patches and names for N64 decompilation trees: module structure, names, original types, style. [unbake](https://github.com/AbuN64/cake-unbake-64) builds and proves the tree.
 
 > This is a personal tool. It is not officially maintained and may change or break without notice.
 
@@ -16,7 +16,7 @@ pip install git+https://github.com/AbuN64/recipe-maker-64
 recipe --help
 ```
 
-It only writes candidate files, which `unbake compare` or `unbake submit` then prove. Design and boundary with unbake are in [docs/usage.md](docs/usage.md).
+It writes patches under `.unbake/recipe/patches/`; `recipe apply` applies them and the tree is proved by building. Design and boundary with unbake are in [docs/usage.md](docs/usage.md).
 
 ## Development
 

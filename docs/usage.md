@@ -1,33 +1,25 @@
 # Usage
-
-Recipe maker for N64 decompilation. It proposes C for a function or data item. [unbake](https://github.com/AbuN64/cake-unbake-64) judges it.
-
-unbake is the objective side. It extracts, builds, proves every unit against the ROM and lands what matches. Its answers are facts or refusals.
-Recipe maker is the creative side. It drafts C, infers types and writes briefs a small model can act on. It may be wrong. It never writes to the project. It only produces candidate files that `unbake compare` or `unbake submit` then prove.
+Recipe maker for N64 decompilation cleanup. It proposes file patches and names for a tree that [unbake](https://github.com/AbuN64/cake-unbake-64) builds and proves; it never decides whether a change is right.
 
 It reads the project through `unbake.api` (the captured tree, symbol facts, caches, the pool and stage timing) and
-`unbake.contracts` (the records), and asks for verdicts through the unbake command line and its JSON output: `unbake
-score` (one candidate, or `--variants` for many in one process), `unbake compare`, `unbake submit` and `unbake report
---next`. It imports nothing else of unbake; `tests/test_imports.py` walks `src/recipemaker` with `ast` and fails on any
-other `unbake` import.
+`unbake.contracts` (the records), and runs the unbake command line for the map and for `sync`. It imports nothing else
+of unbake; `tests/test_imports.py` walks `src/recipemaker` with `ast` and fails on any other `unbake` import.
 
-A candidate is the function's C (with the declarations it brings) in `.unbake/recipe/work/NAME.c`; unbake splices it
-into the module that owns the name in place of its `INCLUDE_ASM` line. Header edits travel as `PATH=FILE` change-set
-files. Structure proposals are unified diffs: `recipe structure` writes them, `recipe apply` runs `git apply`, then
-`unbake sync`.
+Verbs: `structure`, `apply`, `name`, `style`, `look`. The draft verbs (`next`, `work`, `try`, `skip`, `status`) and the
+modules behind them (m2c draft ladder, rungs, declaration and type items, leases and tries) were retired by RECIPE-FIX-1
+(10-23); git history keeps them.
 
-Declaration items (a name declared more than one way) are planned, not written by hand. `recipe next --kind declaration`
-ranks the conflicts (names the open functions need first, a record width mismatch counts as critical), plans for the
-best one change set (the prototype once in the definition's family header, the other copies deleted, an include where a
-unit loses sight of the name, scalar casts only where a call site's old declaration took other types) and leases it.
-`recipe try NAME [--dry]` measures the set (the sources it edits, compiled with the set laid over the tree) and lands it
-as its own commit: unbake lands only candidates that replace a stand-in, so `settle` writes the set, runs `make check`
-through `unbake-run`, and commits when every ROM still equals its base (else the old bytes go back). A name with no
-landed definition, or whose header would break a unit that includes it, is reported with the names it waits for.
+`recipe structure` writes module moves, file renames and include edits as a unified diff under `.unbake/recipe/patches/`
+and prints it; it never moves a function into a `DATA` module. `recipe apply` runs `git apply` on the oldest saved patch
+that still applies (one that no longer does is set aside as `.stale`), then `unbake sync`.
 
-Type items (a `void *` parameter the code reaches by offsets) are planned the same way: `recipe work F --kind type [--arg N]`
-builds one record from every access (the function, the callees it passes the object to, the functions handed the same
-object, the members the module's other functions already typed), declares the prototype once taking it, and leases the
-change set as item `F.argN`; `recipe try F.argN [--dry]` proves it like a declaration. Call sites are reported with what
-they pass, never cast. A function skipped as `needs-header-change` or `type-unresolved` names its type item as `next`
-(`recipe next --kind type` leases it) and ranks again when the prototype changes.
+`recipe name next --step N1..N4` writes an evidence pack for an LLM to name functions, data, subsystems; `submit FILE`
+judges the rows and writes the renames as a patch (every version's symbol table follows, the functions the project's
+libultra table names take the SDK name by themselves, and the `#define NAME fz_OLD` shims and local `extern`s a header
+declares go). `--step T` renames invented project records to the original types of the debug catalog: records that match
+one original are merged into one (the duplicate is deleted, every spelling follows) when each member can take its original
+name; a member spelling that other records share is renamed only where the base of every `.name` and `->name` is typed
+(`access.py`); a report line says why each record did not move.
+
+`recipe style [PATHS | --paths PATH...]` checks names and layout against the clean-code rules; a name the debug catalog
+spells so is the original and is not a finding. `recipe look NAME` shows a prototype, type, field or global.

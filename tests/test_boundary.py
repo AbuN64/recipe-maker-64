@@ -10,7 +10,7 @@ from unbake import api as unbake_api
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "recipemaker"
 FILES = sorted(SRC.glob("*.py"))
-WRITERS = {"draft.py": 1, "host.py": 1, "structure.py": 1}  # the candidate file, the atomic write, the saved patch
+WRITERS = {"host.py": 1, "structure.py": 1}  # the atomic write, the saved patch
 
 
 def api_uses(path: Path) -> list[tuple[str, int]]:

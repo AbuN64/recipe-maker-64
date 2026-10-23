@@ -3,7 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from recipemaker import headers, world
+from recipemaker import headers
 
 
 def snapshot(tmp_path: Path, files: dict[str, str], groups=()):
@@ -62,26 +62,6 @@ def test_a_name_declared_two_ways_is_one_conflict_and_a_definition_is_canonical(
     by = {f.unit: f for f in found}
     assert set(by) == {"gX", "f"} and "declared 2 ways and defined nowhere" in by["gX"].reason
     assert by["f"].symptoms["definition"]["path"] == "src/f.c"
-
-
-def test_consumers_are_the_modules_a_header_reaches_through_other_headers(tmp_path, monkeypatch):
-    files = {
-        "include/a.h": "",
-        "include/b.h": '#include "a.h"\n',
-        "src/m.c": '#include "b.h"\n',
-        "src/n.c": "",
-    }
-    snap = snapshot(tmp_path, files, groups=("src/m.c", "src/n.c"))
-    monkeypatch.setattr(world, "of", lambda s: s.layout)
-    assert headers.consumers(snap, ["include/a.h"]) == ("src/m.c",)
-    assert headers.consumers(snap, []) == ()
-
-
-def test_normal_blanks_attributes_and_plain_spells_gnu_words():
-    text = 'int f(void) __attribute__((noreturn));\n# 1 "a.h" 1 3\nstatic __inline__ int g(void);\n'
-    out = headers.normal(text)
-    assert "__attribute__" not in out and out.count("\n") == text.count("\n")
-    assert '# 1 "a.h"\n' in out and "static inline int g(void);" in out
 
 
 def test_the_source_and_header_suffixes_are_the_ones_of_unbakes_unit_contract():

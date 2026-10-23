@@ -18,7 +18,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import cparse, debug, ladder, state, structure, style, table, tree
+from recipemaker import cparse, debug, state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 # style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
@@ -244,6 +244,14 @@ class Map:
                 return next(iter(held))
         return name
 
+    def spellings(self, target: str) -> list[str]:
+        """The target and every other neutral spelling a version's symbol table gives the same address, so a rename
+        reaches the table (and the assembly extracted from it) of every version, not only the one the name came from."""
+        member = self.members.get(self.canon(target))
+        places = {(p["version"], p["vram"]) for p in member["placements"]} if member else set()
+        found = [t for v, table in self.tables.items() for t, row in table.items() if (v, row[0]) in places]
+        return [target, *dict.fromkeys(t for t in found if t != target and style.neutral(t))]
+
     def sdk_name(self, member: str) -> str:
         """The SDK name the project's `versions/<v>/libultra_names.tsv` (vram, name, ...) gives a member's address in
         a version that places it, or "" when no table names it."""
@@ -372,13 +380,14 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     rule, reason = ("", "") if original else _form(ctx, row)
     if rule:
         return rule, reason
-    if name in ctx.taken or (kind == "subsystem" and ctx.folder_taken(name)):
+    sdk = kind == "function" and ctx.sdk_name(ctx.canon(target)) == name  # another version may spell it already
+    if (name in ctx.taken and not sdk) or (kind == "subsystem" and ctx.folder_taken(name)):
         return "duplicate", f"{name} is already a symbol, folder or file name"
     if kind == "subsystem" and (
         clash := [f"{a} -> {b}" for a, b in ctx.carried(target, name).items() if b in ctx.taken]
     ):
         return "duplicate", f"carrying the prefix to {name} gives a name already taken: {clash[0]}"
-    if kind == "function" and ctx.sdk_name(ctx.canon(target)) == name:
+    if sdk:
         return "", ""  # the libultra table line for this address is the evidence, with or without a caller
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
@@ -398,7 +407,7 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
     kind, target, name = row["kind"], row["target"], row["name"]
     ctx.taken.add(name)
     if kind not in ("subsystem", "module"):
-        return [{"op": "symbol", "subject": target, "target": name}]
+        return [{"op": "symbol", "subject": old, "target": name} for old in ctx.spellings(target)]
     out: list[dict[str, str]] = []
     if kind == "module":
         module = ctx.modules.pop(target)
@@ -547,6 +556,15 @@ def _auto(ctx: Map) -> list[Json]:
     return out
 
 
+def _sdk(ctx: Map) -> list[Json]:
+    """Rows for the functions the project's libultra table names at their address: the SDK's own name, in any step."""
+    return [
+        {"target": n, "kind": "function", "name": sdk, "doc": f"The SDK's {sdk}.", "evidence": []}
+        for n, m in ctx.members.items()
+        if m["kind"] == "function" and style.neutral(n) and (sdk := ctx.sdk_name(n))
+    ]
+
+
 def _identifiers(root: Path) -> set[str]:
     """Every word the project's sources and headers spell."""
     files = structure.Files(root)
@@ -554,7 +572,7 @@ def _identifiers(root: Path) -> set[str]:
 
 
 def _scope(config: Config, doc: Json, target: str) -> set[str]:
-    """The words one function spells: its candidate file when it has one, else its unit source."""
+    """The words one function spells: its unit source."""
     ctx = Map(config, doc, {})
     name = _chosen(ctx, "T", target)[1]  # an unknown name is refused
     if name not in ctx.members and ctx.canon(name) not in ctx.members:  # a symbol no module owns: the files spelling it
@@ -563,10 +581,8 @@ def _scope(config: Config, doc: Json, target: str) -> set[str]:
             files.get(p) or "" for p in files.everything() if re.search(rf"\b{re.escape(name)}\b", files.get(p) or "")
         )
         return {name, *re.findall(r"[A-Za-z_]\w*", text)}
-    path = ladder.candidate_path(config, name)
-    if not path.is_file():
-        module = ctx.members.get(name, {}).get("module", "")
-        path = config.project.root / ctx.modules.get(module, {}).get("source", "-")
+    module = ctx.members.get(name, {}).get("module", "")
+    path = config.project.root / ctx.modules.get(module, {}).get("source", "-")
     return {name, *re.findall(r"[A-Za-z_]\w*", path.read_text(encoding="utf-8") if path.is_file() else "")}
 
 
@@ -594,9 +610,10 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
     moves = [*found.moves, *names]
     k = _number(config)
     report = _root(config) / f"types-{k}.json"
-    body = {"catalog": catalog.path, "proposals": list(found.proposals), "names": names, "refused": refused}
-    structure.write(report, json.dumps(body, indent=1))
     built = _patch(config, doc, moves)
+    body = {"catalog": catalog.path, "proposals": list(found.proposals), "names": names, "refused": refused}
+    structure.write(report, json.dumps({**body, "skipped": built.get("skipped", [])}, indent=1))
+    reasons = Counter(re.sub(r"\d+", "N", p["why"]) or "moved" for p in found.proposals)
     return {
         "action": "next",
         "step": "T",
@@ -604,9 +621,10 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
         "pack": str(report.relative_to(root)),
         "targets": len(found.proposals),
         "proposed": sum(1 for p in found.proposals if p["moved"]),
+        "reasons": dict(reasons),
         "names": len(names),
         **built,
-        "next": _SHIP.format(built["path"]) if built["moves"] else "recipe status",
+        "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
         "after": "",
     }
 
@@ -638,7 +656,7 @@ def next_(config: Config, params: Json) -> Json:
         return _types(config, doc, params.get("target"))
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
-    for row in _auto(ctx) if step == "N2" else []:
+    for row in [*(_auto(ctx) if step == "N2" else []), *_sdk(ctx)]:
         if not judge(ctx, row)[0]:
             moves, done = [*moves, *_moves(ctx, row)], done | {row["target"]}
     wanted = params.get("target")
@@ -673,7 +691,7 @@ def next_(config: Config, params: Json) -> Json:
         if built["moves"]
         else f"recipe name submit {answer}"
         if pick
-        else "recipe status",
+        else "recipe name next",
         "after": f"recipe name submit {answer}" if pick else "",
     }
 

@@ -1,18 +1,15 @@
 """The source tree as Recipe Maker reads it: members, the module that owns each, and its placements per version.
 Built from `api.snapshot` (the captured tree and its symbol facts); nothing here reads unbake's internals."""
 
-import dataclasses
-import mmap
 import posixpath
 import re
-import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
 
 from unbake import api
-from unbake.contracts import Config, Json, Snapshot, Version, digest
+from unbake.contracts import Config, Json, Snapshot
 
 
 @dataclass(frozen=True)
@@ -86,17 +83,6 @@ def capture(config: Config) -> Snapshot:
     return api.snapshot(config)
 
 
-def overlay(snapshot: Snapshot, writes: Mapping[str, bytes | None]) -> Snapshot:
-    """The snapshot with proposed writes laid over it; its tree is captured again only when a source changes."""
-    if not writes:
-        return snapshot
-    merged = {**snapshot.overlays, **writes}
-    sources = any(p.startswith("src/") for p in writes)
-    files = api.capture(snapshot.config, merged) if sources else snapshot.files
-    key = digest((snapshot.digest, sorted((p, None if b is None else digest(b)) for p, b in writes.items())))
-    return dataclasses.replace(snapshot, files=files, overlays=merged, digest=key, reads={})
-
-
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)  # the quoted includes of a text
 
 
@@ -115,13 +101,6 @@ def header_of(path: str, text: bytes) -> str:
 
 def _library(config: Config, path: str) -> bool:
     return any(Path(path).is_relative_to(folder) for folder in config.project.libraries)
-
-
-def scores(snapshot: Snapshot, name: str) -> dict[str, float]:
-    """The cached fuzzy score of a member per version, {} for a name with no NON_MATCHING body."""
-    if name not in of(snapshot).fuzzy:
-        return {}
-    return api.memo(("recipe.score", snapshot.digest, name), lambda: dict(api.score(snapshot.config, name)))
 
 
 def _build(snapshot: Snapshot) -> Layout:
@@ -184,22 +163,6 @@ def of(snapshot: Snapshot) -> Layout:
     return api.memo(("recipe.world", snapshot.digest), lambda: _build(snapshot))
 
 
-def open_items(snapshot: Snapshot) -> list[Json]:
-    """The work list: every member no file defines as C yet, {member, kind, segment, size, address} in its reference
-    version, largest first and the tiny ones last."""
-    layout, names_from = of(snapshot), snapshot.config.project.names_from
-    rows = []
-    for name, member in layout.members.items():
-        if member.landed:
-            continue
-        version = member.reference(names_from)
-        places = [p for p in member.placements if p.version == version]
-        segment = layout.groups[member.group].segment if member.group in layout.groups else ""
-        size, address = sum(p.size for p in places), min(p.vram for p in places)
-        rows.append({"member": name, "kind": member.kind, "segment": segment, "size": size, "address": address})
-    return sorted(rows, key=lambda r: (r["size"] < 16, -r["size"], r["address"], r["member"]))
-
-
 def unit_of(snapshot: Snapshot, name: str) -> Unit | None:
     """The decompiled unit that defines `name` as C, None while it is behind a stand-in or fuzzy."""
     layout = of(snapshot)
@@ -207,17 +170,6 @@ def unit_of(snapshot: Snapshot, name: str) -> Unit | None:
     if member is None or not member.landed:
         return None
     return layout.units.get(member.group)
-
-
-def _rom(path: Path) -> mmap.mmap:
-    with path.open("rb") as handle:
-        return mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
-
-
-def rom_bytes(version: Version, start: int, end: int) -> bytes:
-    """The ROM bytes [start, end) of one version, the image mapped once per command."""
-    image = api.memo(("recipe.rom", str(version.rom), version.rom_sha256), lambda: _rom(version.rom))
-    return bytes(image[start:end])
 
 
 def _symbol_table(
@@ -253,21 +205,6 @@ def asm_path(config: Config, version: str, name: str) -> Path:
 
 
 ASM_WAIT = 45.0  # seconds a missing assembly file is waited for: a concurrent extraction swaps asm/<v>/ in minutes
-
-
-def read_asm(path: Path) -> str:
-    """The text of an extracted assembly file. Another process's extraction replaces the whole asm/<v>/ directory
-    (old one moved aside, fresh one written), so a file that is missing is polled for before it is called absent."""
-    deadline = time.monotonic() + ASM_WAIT
-    while True:
-        try:
-            return path.read_text(errors="replace")
-        except FileNotFoundError as gone:
-            if time.monotonic() >= deadline:
-                raise AsmMissing(
-                    f"{path} is missing: an extraction replacing asm/ was still running, or the file is truly absent"
-                ) from gone
-            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
 
 class AsmMissing(FileNotFoundError):

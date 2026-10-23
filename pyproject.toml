@@ -30,7 +30,7 @@ where = ["src"]
 include = ["recipemaker", "recipemaker.*"]
 
 [tool.setuptools.package-data]
-recipemaker = ["knowledge/**/*", "tables/**/*"]
+recipemaker = ["knowledge/**/*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "T20"]

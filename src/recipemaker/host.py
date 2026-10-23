@@ -3,9 +3,7 @@
 import fcntl
 import json
 import os
-import shutil
 import subprocess
-import tempfile
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -29,11 +27,6 @@ def write(path: Path, content: bytes) -> bool:
     part.write_bytes(content)
     part.replace(path)
     return True
-
-
-def clear(folder: Path) -> None:
-    """Remove a work folder of ours (copies from an earlier lease must not read as this lease's edits)."""
-    shutil.rmtree(folder, ignore_errors=True)
 
 
 def stem(member: str) -> str:
@@ -91,27 +84,10 @@ def _lock(path: Path, *, wait: bool = True) -> Iterator[bool]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-@contextmanager
-def exclusive(config: Config, name: str, *, wait: bool) -> Iterator[bool]:
-    """Take the named project lock; yield False at once when not waiting and another process holds it."""
-    with _lock(config.project.root / ".unbake" / f"{name}.lock", wait=wait) as held:
-        yield held
-
-
 def scratch(config: Config) -> Path:
     path = config.project.root / ".unbake" / "tmp"
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-@contextmanager
-def work(config: Config) -> Iterator[Path]:
-    """A fresh scratch directory inside the project's .unbake/tmp, removed on exit."""
-    path = Path(tempfile.mkdtemp(dir=scratch(config)))
-    try:
-        yield path
-    finally:
-        shutil.rmtree(path, ignore_errors=True)
 
 
 def run(argv: list[str], cwd: Path, config: Config, *, stdin: bytes = b"", timeout: float | None = None) -> Any:

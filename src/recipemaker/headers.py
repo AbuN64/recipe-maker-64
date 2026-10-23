@@ -1,17 +1,16 @@
 """What the project's headers and sources declare: the header list, the first header declaration of each name, the
 externs a source makes, the units a header reaches, and the names declared more than one way."""
 
-import posixpath
 import re
 from collections import defaultdict
-from collections.abc import Collection, Iterator
+from collections.abc import Iterator
 from functools import partial
 from typing import Any
 
 from unbake import api
 from unbake.contracts import Finding, Snapshot, digest
 
-from recipemaker import records, world
+from recipemaker import records
 
 _SOURCE = (".c", ".cpp")
 _HEADER = (".h", ".hpp")
@@ -42,51 +41,6 @@ def sources(snapshot: Snapshot, place: str = "include", suffix: str = ".h") -> l
     paths = set(api.memo(("recipe.sources", str(root), place, suffix, snapshot.digest), listed))
     paths.update(p for p in snapshot.overlays if p.startswith(place + "/") and kind(p))
     return sorted(p for p in paths if p not in snapshot.overlays or snapshot.overlays[p] is not None)
-
-
-def included_by(snapshot: Snapshot, changed: Collection[str] = ()) -> dict[str, set[str]]:
-    """Per file the files that include it directly; a quoted name is found beside the includer, under include/ or
-    under src/."""
-
-    def graph() -> dict[str, set[str]]:
-        known = {*sources(snapshot), *world.of(snapshot).groups, *changed}
-        found: dict[str, set[str]] = defaultdict(set)
-        seen: dict[str, bytes | None] = {}
-
-        def read(path: str) -> bytes | None:
-            if path not in seen:
-                seen[path] = snapshot.peek(path)
-            return seen[path]
-
-        pending = sorted(known)
-        while pending:
-            path = pending.pop()
-            for name in world.INCLUDE.findall((read(path) or b"").decode(errors="replace")):
-                for base in (posixpath.dirname(path), "include", "src"):
-                    target = posixpath.normpath(posixpath.join(base, name))
-                    if target in known or read(target) is not None:
-                        found[target].add(path)
-                        if target not in known:
-                            known.add(target)
-                            pending.append(target)
-        return found
-
-    return api.memo(("recipe.included-by", snapshot.digest, tuple(sorted(changed))), graph)
-
-
-def consumers(snapshot: Snapshot, changed: Collection[str]) -> tuple[str, ...]:
-    """Every module that includes a changed header directly or through others."""
-    if not changed:
-        return ()
-    direct = included_by(snapshot, changed)
-    reached: set[str] = set()
-    todo = list(changed)
-    while todo:
-        new = direct.get(todo.pop(), set()) - reached
-        reached |= new
-        todo.extend(new)
-    modules = world.of(snapshot).groups
-    return tuple(sorted(p for p in reached if p in modules))
 
 
 _DIRECTIVE = r"^[ \t]*#(?:[^\n]*\\\n)*[^\n]*"  # a preprocessor line with its backslash continuations
@@ -364,13 +318,3 @@ def _rows(paths: list[str], scans: list[dict[str, Any]]) -> tuple[dict[str, str]
                 )
             )
     return agreed, findings
-
-
-def normal(text: str) -> str:
-    """C text pycparser reads: attributes blanked, line-marker flags dropped, GNU spellings made plain."""
-    while match := re.search(r"\b__attribute__\s*\(", text):
-        end = records.call(text, match.end())[1]
-        text = text[: match.start()] + re.sub(r"[^\n]", " ", text[match.start() : end]) + text[end:]
-    text = re.sub(r'^(# \d+ "[^"\n]*")(?: \d+)+[ \t]*$', r"\1", text, flags=re.M)
-    text = re.sub(r"\b(?:__extension__|__restrict)\b", "", text)
-    return re.sub(r"\b(?:__inline__|__inline)\b", "inline", text)

@@ -566,6 +566,12 @@ def test_structure_without_paths_is_unchanged_and_with_paths_is_the_narrow_patch
     assert narrow["findings"] == [] and [m["op"] for m in narrow["suggestions"]] == ["module", "source"]
 
 
+def test_a_scope_of_many_files_names_each_no_module_holds_and_still_proposes_for_the_rest(tmp_path, monkeypatch, doc):
+    config = _project(tmp_path, monkeypatch, doc)
+    got = structure.run(config, {"host": None, "segment": None, "paths": [f"{W}_2.CPP", "src/a.c", "src/b.c"]})
+    assert got["moves"] == 1 and got["findings"] == ["no module holds src/a.c", "no module holds src/b.c"]
+
+
 def test_a_scope_no_module_holds_is_a_finding_with_an_empty_proposal_not_an_error(tmp_path, monkeypatch, doc):
     config = _project(tmp_path, monkeypatch, doc)
     got = structure.run(config, {"host": None, "segment": None, "paths": ["src/nothing.c"]})
@@ -627,14 +633,58 @@ def test_apply_keeps_the_index_and_marks_only_the_files_the_patch_makes(tmp_path
     assert len(after) == len(before.splitlines()) + 2
 
 
-def test_a_patch_git_refuses_stays_saved_and_sync_is_not_run(tmp_path, monkeypatch):
+def test_a_patch_git_refuses_is_set_aside_as_stale_and_sync_is_not_run(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.c": "x\n"})
     structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")
     calls = _fake_unbake(monkeypatch, [])
     with pytest.raises(Refusal) as caught:
         structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
-    assert "git apply refused" in caught.value.findings[0].reason and calls == []
-    assert (root / ".unbake/recipe/patches/patch-1.diff").exists()
+    assert "no saved patch applies" in caught.value.findings[0].reason and calls == []
+    assert (root / ".unbake/recipe/patches/patch-1.stale").exists()
+
+
+def test_apply_skips_a_stale_older_patch_and_applies_the_next_one(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.c": "INCLUDE_ASM(main, func_8000);\n"})
+    built = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")
+    structure.write(root / ".unbake/recipe/patches/patch-2.diff", built["patch"])
+    _fake_unbake(monkeypatch, [{"ok": True, "result": {}, "findings": []}])
+    got = structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
+    assert got["patch"] == "patch-2.diff" and got["left"] == 0
+    assert (root / ".unbake/recipe/patches/patch-1.stale").exists()
+
+
+def test_a_function_is_never_moved_into_a_data_module():
+    atoms = {
+        "f": {"kind": "function", "module": "src/a/A.CPP"},
+        "d": {"kind": "data", "module": "src/a/A.CPP"},
+        "g": {"kind": "function", "module": "src/DATA/X/D.CPP"},
+    }
+    data = {
+        "name": "D",
+        "origin": "src/DATA/X/D.CPP",
+        "keeps": True,
+        "source": "src/DATA/X/D.CPP",
+        "atoms": ["f", "d", "g"],
+    }
+    code = {"name": "C", "origin": "src/a/A.CPP", "keeps": True, "source": "src/a/A.CPP", "atoms": ["f"]}
+    new = {"name": "N", "origin": "src/a/A.CPP", "keeps": False, "source": "src/DATA/X/N.CPP", "atoms": ["f"]}
+    modules = [data, code, new]
+    existing = {"src/DATA/X/D.CPP": {"source": "src/DATA/X/D.CPP"}, "src/a/A.CPP": {"source": "src/a/A.CPP"}}
+    told = structure._data_guard(modules, existing, atoms)
+    assert data["atoms"] == ["d", "g"] and modules == [data, code] and len(told) == 2
+    assert "src/DATA/X/D.CPP is a data module" in told[0]
+
+
+def test_a_function_moved_into_a_new_file_takes_the_externs_it_spells_along(tmp_path):
+    src = '#include "a.h"\nextern void helper(s32 x);\nextern s32 other;\nextern s32 table[4];\n'
+    src += "void fn(void) {\n    helper(table[0]);\n}\n"
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.c").write_text(src)
+    moves = [{"op": "member", "subject": "fn", "target": "N"}, {"op": "source", "subject": "N", "target": "src/n.c"}]
+    built = structure.build(tmp_path, moves, lambda n: "src/a.c", {"N": {"source": "src/n.c", "header": ""}})
+    new = built["patch"].split("+++ b/src/n.c")[1]
+    assert "+extern void helper(s32 x);" in new and "+extern s32 table[4];" in new and "other" not in new
 
 
 def test_a_failing_sync_is_refused_with_unbakes_findings(tmp_path, monkeypatch):
@@ -752,3 +802,18 @@ def test_the_evidence_is_built_once_per_tree_state(tmp_path, monkeypatch):
     monkeypatch.setattr(structure, "_evidence", lambda config, host: built.append(1) or {"digest": len(built)})
     config = SimpleNamespace(project=SimpleNamespace(root=tmp_path))
     assert [structure.evidence(config)["digest"] for _ in range(4)] == [1, 1, 2, 3]  # a, a (held), b, "" (no state)
+
+
+def test_a_rename_drops_the_fuzzy_define_and_the_local_extern_a_header_declares_the_same_way(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/m.h").write_text("extern void *func_8000(s32 x);\n")
+    (tmp_path / "src/a.c").write_text(
+        '#include "TYPES.H"\n#ifdef NON_MATCHING\n#define func_8000 fz_func_8000\n#endif\n'
+        "extern void *func_8000(); extern void other(s32);\nvoid f(void) { func_8000(1); }\n"
+    )
+    built = structure.build(tmp_path, [{"op": "symbol", "subject": "func_8000", "target": "Mem_Alloc"}], {}.get, {})
+    patch = built["patch"]
+    assert "-#define func_8000 fz_func_8000" in patch and "+#define" not in patch
+    assert '+#include "m.h"' in patch and "extern void *Mem_Alloc();" not in patch.replace("-extern", "")
+    assert "+extern void other(s32);" in patch and "Mem_Alloc(1)" in patch

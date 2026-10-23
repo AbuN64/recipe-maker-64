@@ -166,10 +166,10 @@ def test_a_typedef_with_its_own_tag_moves_the_tag_too(catalog):
     assert got.moves[1] == {"op": "type", "subject": "Rec14_s", "target": "CWarp_t"}
 
 
-def test_a_member_spelling_another_record_has_too_keeps_its_name(catalog):
+def test_a_member_spelling_another_record_has_too_is_still_a_field_move_for_the_typed_build(catalog):
     other = layout("Other", 8, [f("level", 0), f("b", 4)], path="include/b.h")
     got = plan(catalog, [WHOLE, other])
-    assert [m["subject"] for m in got.moves if m["op"] == "field"] == ["pos", "rot", "region"]
+    assert [m["subject"] for m in got.moves if m["op"] == "field"] == ["pos", "rot", "level", "region"]
 
 
 def test_an_original_record_with_placeholder_members_takes_only_the_member_names(catalog):
@@ -203,16 +203,28 @@ def test_the_field_move_renames_the_declarator_and_every_access_but_no_other_wor
 
 @pytest.mark.parametrize(
     ("case", "why"),
-    [("named", "named here"), ("taken", "already a name in the project"), ("twice", "2 project records match it")],
+    [("named", "named here"), ("taken", "already a name in the project")],
 )
 def test_no_move_without_an_invented_name_a_free_original_name_and_one_claimant(catalog, case, why):
     layouts = {
         "named": [replace(WHOLE, name="WarpPoint")],
         "taken": [WHOLE],
-        "twice": [WHOLE, replace(WHOLE, name="Rec14B", path="include/b.h")],
     }[case]
     got = plan(catalog, layouts, ("CWarp",) if case == "taken" else ())
     assert got.moves == () and got.proposals and all(why in p["why"] and not p["moved"] for p in got.proposals)
+
+
+def test_two_invented_records_matching_one_original_merge_the_second_into_the_first(catalog):
+    twin = replace(WHOLE, name="Rec14B", path="include/b.h")
+    got = plan(catalog, [WHOLE, twin])
+    assert [m["op"] for m in got.moves].count("type") == 2 and got.moves[-1]["op"] == "merge"
+    assert got.moves[-1] | {"subject": "Rec14B", "target": "CWarp", "into_tag": "CWarp_t"} == got.moves[-1]
+    assert [p["why"] for p in got.proposals] == ["", "merged into Rec14"]
+
+
+def test_a_named_record_with_a_whole_heavy_match_follows_it_but_a_light_one_does_not(catalog):
+    heavy = replace(WHOLE, name="WarpPoint", fields=(f("a", 0, 12, "s"), f("b", 12, kind="f"), *WHOLE.fields[2:]))
+    assert not debug.whole(debug.matches([heavy], catalog)["WarpPoint"][0])
 
 
 def test_a_record_already_spelled_as_the_original_is_left_alone(catalog):
@@ -358,53 +370,59 @@ def test_step_t_without_a_catalog_says_how_to_configure_one(named, monkeypatch):
         naming.run(named, params)
 
 
-def test_the_field_move_does_nothing_when_another_record_body_spells_the_member(tmp_path):
+SHARED = "struct A {\n    s32 level;\n};\nstruct B {\n    s32 level;\n};\n"
+MOVE_A = {"op": "field", "subject": "level", "target": "m_nLevel", "path": "include/a.h", "tag": "A", "alias": ""}
+
+
+def _shared(tmp_path, code):
     (tmp_path / "include").mkdir()
-    (tmp_path / "include/a.h").write_text("struct A {\n    s32 level;\n};\nstruct B {\n    s32 level;\n};\n")
-    move = {"op": "field", "subject": "level", "target": "m_nLevel", "path": "include/a.h", "tag": "A", "alias": ""}
-    assert structure.build(tmp_path, [move], lambda name: None, {})["moves"] == 0
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/a.h").write_text(SHARED)
+    (tmp_path / "src/a.c").write_text(code)
+    return structure.build(tmp_path, [MOVE_A], lambda name: None, {})
 
 
-def test_step_t_for_one_target_keeps_only_what_its_candidate_spells_and_ships_the_patch(named, monkeypatch):
-    from recipemaker import cparse
-
-    monkeypatch.setattr(naming.api, "snapshot", lambda config: None)
-    monkeypatch.setattr(cparse, "load", lambda snapshot: [WHOLE])
-    monkeypatch.setattr(naming, "_patch", lambda cfg, d, moves: named.ops.extend(moves) or {
-        "patch": "x", "files": [], "moves": len(moves), "path": ".unbake/recipe/patches/patch-1.diff"})  # fmt: skip
-    root = named.project.root
-    (root / "include").mkdir()
-    (root / "include/a.h").write_text("typedef struct Rec14 Rec14;\n")
-    work = root / ".unbake/recipe/work"
-    work.mkdir(parents=True)
-    (work / "func_80001000.c").write_text("void func_80001000(Rec14 *r) {\n}\n")
-    params = {"host": None, "action": "next", "step": "T", "count": 40, "file": None, "target": "func_80001000"}
-    got = naming.run(named, params)
-    assert [m["op"] for m in named.ops] == ["type", "type", "field", "field", "field", "field", "symbol"]
-    assert named.ops[-1] == {"op": "symbol", "subject": "func_80001000", "target": "Warp_Init"}
-    assert got["next"] == "decomp ship --patch LANE=.unbake/recipe/patches/patch-1.diff:MESSAGE"
-    named.ops.clear()
-    (work / "func_80001000.c").write_text("void func_80001000(void) {\n}\n")
-    naming.run(named, params)
-    assert named.ops == [{"op": "symbol", "subject": "func_80001000", "target": "Warp_Init"}]
+def test_the_field_move_of_a_shared_spelling_renames_only_the_accesses_typed_as_its_record(tmp_path):
+    built = _shared(
+        tmp_path,
+        "void f(struct A *a, struct B *b) { a->level = 1; b->level = 2; g(a)->x; }\n"
+        "void g(void) { struct A v; v.level = 3; }\n",
+    )
+    assert built["moves"] == 1 and built["skipped"] == []
+    assert "a->m_nLevel = 1; b->level = 2;" in built["patch"] and "v.m_nLevel = 3" in built["patch"]
+    assert "struct B {\n-    s32 level" not in built["patch"]
 
 
-def test_submit_of_a_pack_or_types_report_says_it_is_no_names_file(named):
-    report = named.project.root / "types-15.json"
-    report.write_text("{}")
-    params = {"host": None, "action": "submit", "step": None, "count": 40, "file": str(report)}
-    with pytest.raises(Exception, match="no names file"):
-        naming.run(named, params)
+def test_the_field_move_of_a_shared_spelling_stops_at_an_access_with_an_untyped_base(tmp_path):
+    built = _shared(tmp_path, "void f(void) { get()->level = 1; }\n")
+    assert built["moves"] == 0 and "no known record type" in built["skipped"][0]["why"]
 
 
-def test_step_t_target_resolves_a_symbol_no_module_owns_to_the_files_that_spell_it(named, monkeypatch):
-    table = {"us": {"D_90000000": (0x90000000, None, 4, "data")}}  # a bss datum: in the symbol table, in no module
-    monkeypatch.setattr(naming, "_tables", lambda config, versions: table)
-    root = named.project.root
-    (root / "src").mkdir()
-    (root / "src/menu.CPP").write_text("extern Profile D_90000000[];\nint f(void) { return D_90000000[0].rank; }\n")
-    (root / "src/other.CPP").write_text("extern Stranger elsewhere;\n")
-    scope = naming._scope(named, structure.evidence(named), "D_90000000")
-    assert {"D_90000000", "Profile", "rank"} <= scope and "Stranger" not in scope
-    with pytest.raises(Exception, match="no member or folder is named D_9"):
-        naming._scope(named, structure.evidence(named), "D_9")
+def test_a_merge_deletes_the_duplicate_and_spells_the_survivor_everywhere(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/a.h").write_text("typedef struct A {\n    s32 x;\n} A;\n")
+    (tmp_path / "include/b.h").write_text(
+        "struct Dup;\ntypedef struct Dup Dup;\nstruct Dup {\n    s32 x;\n};\nextern Dup g;\n"
+    )
+    (tmp_path / "src/a.c").write_text("void f(struct Dup *d, Dup e) {}\n")
+    move = {"op": "merge", "subject": "Dup", "target": "A", "path": "include/b.h", "tag": "Dup", "alias": "Dup"}
+    move |= {"into_path": "include/a.h", "into_tag": "A", "into_alias": "A"}
+    built = structure.build(tmp_path, [move], lambda name: None, {})
+    assert built["moves"] == 1
+    assert '+#include "a.h"' in built["patch"] and "+extern A g;" in built["patch"]
+    assert "+void f(A *d, A e) {}" in built["patch"] and "-struct Dup {" in built["patch"]
+
+
+def test_a_merge_after_a_refused_member_rename_does_nothing(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include/a.h").write_text(
+        "struct A {\n    s32 level;\n};\nstruct B {\n    s32 level;\n};\nstruct Dup {\n    s32 b;\n};\n"
+    )
+    (tmp_path / "include/c.h").write_text("void f(void) { get()->level; }\n")
+    rename = MOVE_A | {"tag": "Dup"}
+    merge = {"op": "merge", "subject": "Dup", "target": "struct A", "path": "include/a.h", "tag": "Dup", "alias": ""}
+    built = structure.build(
+        tmp_path, [rename, merge | {"into_path": "include/a.h", "into_tag": "A", "into_alias": ""}], lambda n: None, {}
+    )
+    assert built["moves"] == 0 and "original name" in built["skipped"][1]["why"]

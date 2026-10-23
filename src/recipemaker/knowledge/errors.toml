@@ -1,44 +1,6 @@
-# Error classes, first match in file order wins. `match` is a regular expression tried against each compiler line of a
-# proof's `missing`; `key` is the exact key of an unbake finding. A row may have either or both. Named groups of the
-# expression, `line` and the caller's context fill the `what` and `fix` templates; {name} is the symbol the error
-# names. `autofix` is an id the caller runs before the next try, or empty. Seed rows: the translator in errors.py reads these and the file grows from feedback events.
+# Sentences and fixes for the findings recipe and unbake refuse with, by finding key.
 schema = 1
 source = "original"
-
-[text]
-order = "same instructions, different order around {}: try a different statement order, or keep the value in a temp before the call"
-compare = "operand order differs around {}: swap the comparison (a > b against b < a)"
-register = "same code, different register allocation around {}: try the declaration order of locals, or merging or splitting temps; the score counts bytes, so a correct shape can score lower"
-toolchain = "the target was compiled with different flags or a different compiler (MIPS-I load delays: {}); source cannot fix this; the unit needs a toolchain or flag pin in layout (recipe skip {{item}} --reason other --note toolchain)"
-neighbour = "the neighbouring globals are one object: a struct over them is needed, which is a header or data change (skip with the reason needs-header-change); never reach them through a pointer to another symbol"
-unused = "a local never read is a codegen trick no landing may keep: delete it, or move it into a static inline helper that the function calls (an inlined helper's locals make the frame, as hitImpulse in CODE_802661FC.CPP does), or skip --reason other --note refused-form"
-placeholder = "unbake refuses M2C_ text in landed source"
-perm = "PERM_ marks never land: try replaces them with the permuter's best variant, so remove each one left"
-cast = "a cast hides the declared type: type the parameter or local as the struct pointer; a call through an untyped field needs it typed in the header: skip with the reason needs-header-change, never cast"
-sessions = "sessions: RECIPE_SESSION if set, else the parent process id (the shell or agent running the commands). Set it\nonce per worker so every command is one session. A lease whose owner process has exited is taken over at once."
-
-[class.header-disagreement]
-match = "(?P<name>\\w+): candidate declares '(?P<mine>[^']*)', (?P<where>\\S+) declares '(?P<theirs>[^']*)'"
-what = "{name} is declared as '{mine}' in the candidate but as '{theirs}' in {where}"
-fix = "declare {name} as '{theirs}' like {where}, or delete the candidate's declaration of it"
-autofix = "drop-local-definition"
-
-[class.decl-conflict]
-match = "(?:conflicting types for|redefinition of)\\W*(?P<name>\\w+)"
-key = "headers.conflict"
-what = "{name} is declared twice with different types"
-fix = "use the type the project header declares for {name}"
-autofix = "drop-local-definition"
-
-[class.undeclared]
-match = "(?:\\W(?P<name>\\w+)\\W undeclared|identifier \\W(?P<named>\\w+)\\W is not declared|implicit declaration of function \\W(?P<called>\\w+))"
-what = "{name} is used before it is declared"
-fix = "add {decl} before its first use; {typed}"
-
-[class.not-exact]
-key = "land.not_exact"
-what = "the candidate compiles but its bytes differ from the target"
-fix = "read \"Why it is not exact\" in the brief: it names the size, frame, section or relocation that differs"
 
 [key."move.syntax"]
 sentence = "the move stream is not valid moves"

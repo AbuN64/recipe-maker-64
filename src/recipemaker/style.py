@@ -12,7 +12,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, sha256
 
-from recipemaker import cparse, host, table
+from recipemaker import cparse, debug, host, table
 
 FACTS = 3  # the version of what _facts reads: bump it and every file is read again
 SEVERITY = {"m2c-local": "warning"}
@@ -209,9 +209,25 @@ class Context:
         self.config = config
         self.versions: set[str] = set(config.project.versions)
         self._tables: dict[str, Any] | None = None
+        self._original: set[str] | None = None
 
     def known(self) -> set[str]:
         return self.versions
+
+    def original(self, name: str) -> bool:
+        """Whether the debug catalog (the original developers' records) spells this type, function or datum so: the
+        original spelling is the style whatever the pattern says (CGameAnimateState_t)."""
+        if self._original is None:
+            catalog = debug.load(self.config)
+            self._original = (
+                set()
+                if catalog is None
+                else {
+                    *(n for r in catalog.records for n in (r.name, debug.tag_of(r))),
+                    *(f.name for f in (*catalog.functions, *catalog.globals)),
+                }
+            )
+        return name in self._original
 
     def placed(self, name: str) -> dict[str, str] | None:
         """Per version the VRAM of a symbol as hex, or None when no version has the symbol."""
@@ -238,17 +254,17 @@ def _words(path: str) -> list[str]:
     return [w for w in found if w not in rules["paths"]["no_prefix"] and re.fullmatch(rules["names"]["subsystem"], w)]
 
 
-def _names(facts: Json, words: Sequence[str]) -> Iterator[tuple[str, str]]:
+def _names(facts: Json, words: Sequence[str], context: Context) -> Iterator[tuple[str, str]]:
     for name, static, defined in facts["fns"]:
-        if words and not any(legal("function", name, w) for w in words):
+        if words and not any(legal("function", name, w) for w in words) and not context.original(name):
             yield "function-name", name
-        if (defined or static) and (word := banned(name)) and not neutral(name):
+        if (defined or static) and (word := banned(name)) and not neutral(name) and not context.original(name):
             yield "banned-word", f"{name} ({word})"
     for name, static, _ in facts["vars"]:
         kind = "static" if static else "global"
-        if not legal(kind, name):
+        if not legal(kind, name) and not context.original(name):
             yield _KINDS[kind], name
-    yield from (("type-name", n) for n in facts["types"] if not legal("type", n))
+    yield from (("type-name", n) for n in facts["types"] if not legal("type", n) and not context.original(n))
     yield from (("macro-name", n) for n in facts["macros"] if not legal("macro", n))
 
 
@@ -259,7 +275,7 @@ def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]
     if not kind(where) or any(path.startswith(x) for x in rules["paths"]["exempt"]):
         return []
     words = _words(path)
-    out += [(rule, path, detail) for rule, detail in _names(facts, words)]
+    out += [(rule, path, detail) for rule, detail in _names(facts, words, context)]
     if kind(where) == "c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
         out.append(("file-name", path, where.stem))
     folder = where.parent.name
@@ -401,5 +417,5 @@ def run(config: Config, params: Json) -> Json:
         "audited": audited,
         "findings": [{"rule": r, "path": p, "detail": d} for r, p, d in found],
         "debt": [{"rule": r, "path": p, "detail": d} for r, p, d in debt],
-        "next": "recipe status",
+        "next": "recipe name next",
     }

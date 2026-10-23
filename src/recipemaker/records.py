@@ -182,36 +182,3 @@ def where(headers: Mapping[str, str]) -> dict[str, str]:
         for name in bodies(path, text):
             found.setdefault(name, path)
     return found
-
-
-def fold(
-    text: str,
-    headers: Mapping[str, str],
-    defined: Mapping[str, str] | None = None,
-    alias: Mapping[str, str] | None = None,
-) -> tuple[str, dict[str, str], list[str]]:
-    """The draft without each struct m2c printed again for a header that defines it, the header texts that hold m2c's
-    new fields instead, and one note per fold. `defined` and `alias` are `where` and `aliases` of the headers."""
-    defined = where(headers) if defined is None else defined
-    alias = aliases(headers) if alias is None else alias
-    edits: dict[str, str] = {}
-    notes: list[str] = []
-    out = text
-    for m in list(_PRINTED.finditer(text)):
-        tag = m[1]
-        if tag.startswith("_m2c_stack_"):
-            continue
-        path = defined.get(tag)
-        known = bodies(path, edits.get(path, headers[path])).get(tag) if path else None
-        if known is None:
-            continue
-        merged = merge(known.text, m[2], alias)
-        if merged is None:
-            continue
-        out = out.replace(m[0], "", 1)
-        if merged == known.text:  # the header's definition already holds every field m2c printed
-            continue
-        head = edits.get(known.path, headers[known.path])
-        edits[known.path] = head[: known.start] + merged + head[known.end :]
-        notes.append(f"folded the fields m2c read inside struct {tag} into {known.path}")
-    return out, edits, notes

@@ -68,40 +68,10 @@ def test_a_bss_placement_has_no_rom_bytes_and_keeps_its_size(tmp_path):
     assert (place.rom_start, place.rom_end, place.size) == (0x3000, 0x3000, 0x40)
 
 
-def test_rom_bytes_reads_a_slice_of_the_versions_image(tmp_path):
-    rom = tmp_path / "rom.z64"
-    rom.write_bytes(bytes(range(16)))
-    version = SimpleNamespace(rom=rom, rom_sha256="x")
-    assert world.rom_bytes(version, 4, 8) == bytes([4, 5, 6, 7])
-
-
-def test_the_work_list_holds_what_no_file_defines_largest_first(tmp_path):
-    mods = [module("src/m.c", {"a": ("f", "g", "d"), "b": ("f",)}, stand_ins={"a": ("g", "d")})]
-    snap = snapshot(tmp_path, mods, SYMBOLS)
-    snap.layout = world._build(snap)
-    rows = world.open_items(snap)
-    assert [(r["member"], r["kind"], r["size"]) for r in rows] == [("g", "function", 8), ("d", "data", 4)]
-    assert rows[0] == {"member": "g", "kind": "function", "segment": "main", "size": 8, "address": 0x80000408}
-
-
 def test_a_symbol_without_a_size_spans_to_the_next_symbol(tmp_path):
     symbols = {"a": {"f": (0x80000400, 0x1000, None, "func"), "g": (0x80000420, 0x1020, 8, "func")}}
     mods = [module("src/m.c", {"a": ("f", "g")})]
     assert world._build(snapshot(tmp_path, mods, symbols)).members["f"].placements[0].size == 0x20
-
-
-def test_an_empty_write_and_a_deletion_are_different_overlays(tmp_path):
-    from dataclasses import dataclass, field
-
-    @dataclass(frozen=True)
-    class Snap:
-        digest: str = "s"
-        overlays: dict = field(default_factory=dict)
-        files: object = None
-        reads: dict = field(default_factory=dict)
-
-    empty, gone = world.overlay(Snap(), {"include/a.h": b""}), world.overlay(Snap(), {"include/a.h": None})
-    assert empty.digest != gone.digest and empty.overlays == {"include/a.h": b""}
 
 
 def test_asm_path_reads_the_fact_files_once_for_any_number_of_members_and_again_when_they_change(tmp_path, monkeypatch):

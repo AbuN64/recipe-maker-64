@@ -18,13 +18,13 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, S
 from contextlib import contextmanager
 from importlib.util import find_spec
 from itertools import pairwise
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal, digest, file_facts
 
-from recipemaker import clash, cparse, debug, state, tree, world
+from recipemaker import access, clash, cparse, debug, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
@@ -344,6 +344,7 @@ def propose(
             m["batch"] = folder
             if folder not in order:
                 order.append(folder)
+    refused = _data_guard(modules, existing, {a["name"]: a for a in every})
     is_c = {a["name"]: a["c"] for a in every}
     counted = [m for m in modules if any(is_c.get(n) for n in m["atoms"])]  # asm-only modules are no C units
     touched = {a["module"] for a in free}
@@ -359,6 +360,7 @@ def propose(
         "scope": scope,
         "modules": modules,
         "boundaries": [dict(row) for row in evidence],
+        "refused": refused,
         "order": order,
         "current": {a["name"]: a["module"] for a in every},
         "existing": {n: {"source": m["source"], "header": m["header"], "atoms": held[n]} for n, m in existing.items()},
@@ -381,6 +383,22 @@ def propose(
             "single_atom_modules": (sizes.count(1), [len(m["atoms"]) for m in modules].count(1)),
         },
     }
+
+
+def _data_guard(modules: list[dict[str, Any]], existing: Mapping[str, Json], atoms: Mapping[str, Json]) -> list[str]:
+    """A function never moves into a DATA module: the padding there is ROM another version's layout needs. The functions
+    a module would take from other files are dropped from it (a module left with no atom is dropped), and told."""
+    refused: list[str] = []
+    for m in list(modules):
+        home = m["origin"] if m["keeps"] and m["origin"] in existing else m["name"]
+        source = m.get("source") or existing.get(m["origin"], {}).get("source", "")
+        if "DATA" in map(str.upper, PurePosixPath(source).parts):
+            stay = [a for a in m["atoms"] if atoms[a]["kind"] == "function" and atoms[a]["module"] != home]
+            refused += [f"{a} stays in {atoms[a]['module']}: {source} is a data module" for a in stay]
+            m["atoms"] = [a for a in m["atoms"] if a not in stay]
+            if not m["atoms"]:
+                modules.remove(m)
+    return refused
 
 
 _LIBGCC = re.compile(r"__\w+[sdt]i[23]|__(?:fix|float)\w+")  # the compiler's runtime: __udivdi3, __fixunsdfdi
@@ -451,7 +469,8 @@ def _batches(proposal: Json) -> list[tuple[str, list[dict[str, Any]]]]:
 # ------------------------------------------------------------------------------------------------ the patch
 
 BEAT = 10.0  # seconds between the progress lines of a long step
-_TEXT = (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".s", ".inc")
+_C = (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp")
+_TEXT = (*_C, ".s", ".inc")
 _STAND_IN = r"^[ \t]*INCLUDE_(?:ASM|DATA|RODATA|BSS)\([ \t]*[^,()]+,[ \t]*{name}\b[^\n]*\n"
 
 
@@ -507,6 +526,20 @@ def cut(text: str, name: str) -> tuple[str, str] | None:
 def _preamble(text: str) -> str:
     """The `#include` lines a file opens with: a new file that takes a unit from it starts from the same ones."""
     return "".join(x for x in text.splitlines(keepends=True) if x.lstrip().startswith("#include"))
+
+
+def _needed(source: str, body: str, have: str) -> str:
+    """The file-level declarations of `source` (extern data, typedefs, prototypes) that `body` spells by name and `have`
+    does not hold: a function moved into a file of its own keeps the externs the file it left declared."""
+    words, held = set(re.findall(r"[A-Za-z_]\w*", body)), " ".join(have.split())
+    out = ""
+    for lo, hi, directive in cparse.spans(source):
+        stmt = source[lo:hi].strip()
+        name = re.search(r"(\w+)\s*\(", stmt) or re.search(r"(\w+)\s*(?:\[[^\]]*\]\s*)*;$", stmt)
+        wanted = stmt.startswith(("extern", "typedef")) or re.search(r"\)\s*;$", stmt)
+        if not directive and wanted and name and name[1] in words and not re.search(r"[={]|^INCLUDE_", stmt):
+            out += "" if " ".join(stmt.split()) in held else stmt + "\n"
+    return out
 
 
 _INCLUDE_SPELLING = re.compile(r'#[ \t]*include[ \t]*[<"]([^>"]*)[>"]')
@@ -657,6 +690,9 @@ def build(
     `note` hears a progress line at most every `BEAT` seconds."""
     files, applied, beat = Files(root), 0, time.monotonic()
     member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move
+    types: access.Types | None = None  # the records and the data they type, read at the first shared member move
+    skipped: list[Json] = []  # the moves that changed nothing, with the reason
+    refused: set[tuple[str, str, str]] = set()  # the records (path, tag, alias) a member rename was refused on
     where: dict[str, str] = {}
     path = {n: m["source"] for n, m in modules.items()}
     header = {n: m["header"] for n, m in modules.items()}
@@ -717,7 +753,8 @@ def build(
             have = files.get(dest)
             if have is None and files.orig.get(dest) is None:  # a new piece: it is compiled as the file it leaves
                 born.setdefault(dest, files.origin.get(src, src))
-            files.put(dest, (_preamble(text or "") + "\n" if have is None else have + "\n") + taken[1])
+            need = _needed(text or "", taken[1], have or "")
+            files.put(dest, (_preamble(text or "") + "\n" if have is None else have + "\n") + need + taken[1])
             path[target], where[subject] = dest, dest
             applied += 1
         elif op in ("source", "header"):
@@ -731,19 +768,28 @@ def build(
                 else:
                     where.update({n: target for n, w in list(where.items()) if w == old})
                 applied += 1
-        elif op == "field":
+        elif op in ("field", "merge"):
             if member_words is None:
                 member_words = _member_words(files)
-            applied += _field(files, move, member_words)
+            if types is None and (op == "merge" or member_words.get(subject, 0) > 1):
+                types = _types(files)
+            if op == "field":
+                why = _field(files, move, member_words, types)
+                refused |= {(move["path"], move.get("tag", ""), move.get("alias", ""))} if why else set()
+            else:
+                why = _merge(files, move, types, refused)
+            applied += not why
+            skipped += [{**move, "why": why}] if why else []
         elif op == "file":
             applied += bool(include(subject, target))
             if files.get(subject) is not None and files.get(target) is None:
                 files.rename(subject, target)
+    _tidy(files, {m["target"] for m in moves if m["op"] == "symbol"})
     _rekey(files)
     _inherit(files, born)
     if note:
         note(f"structure > build diff of {len(files.changed())} files")
-    return {"patch": files.diff(), "files": files.changed(), "moves": applied}
+    return {"patch": files.diff(), "files": files.changed(), "moves": applied, "skipped": skipped}
 
 
 _RECORD_HEAD = re.compile(r"\b(?:struct|union)\s*(\w+)?\s*\{")
@@ -758,25 +804,153 @@ def _bodies(text: str) -> Iterator[tuple[int, int, str, str]]:
         yield head.end(), end - 1, head[1] or "", alias[1] if alias and typedef else ""
 
 
-def _field(files: Files, move: Json, members: dict[str, int]) -> int:
-    """A member rename: its declarator in the one record body of the project that has a member of that spelling
-    (the record `tag` or typedef `alias` in `path`), and every `.old` and `->old` of the project. Nothing moves when
-    another body spells the member too: an access could be that record's."""
-    old, new = move["subject"], move["target"]
-    text = files.get(move["path"])
+def _types(files: Files) -> access.Types:
+    texts = {p: files.get(p) or "" for p in files.everything()}
+    found = access.Types(texts)
+    found.learn(texts)
+    return found
+
+
+def _spot(files: Files, path: str, tag: str, alias: str) -> tuple[int, int] | None:
+    """The inside of the one record body of `path` that has this tag or typedef name."""
+    text = files.get(path)
     wanted = [
         (a, b)
-        for a, b, tag, alias in (_bodies(text) if text is not None else ())
-        if (move.get("tag") and tag == move["tag"]) or (move.get("alias") and alias == move["alias"])
+        for a, b, t, x in (_bodies(text) if text is not None else ())
+        if (tag and t == tag) or (alias and x == alias)
     ]
-    if text is None or len(wanted) != 1 or members.get(old, 0) != 1:
-        return 0
-    a, b = wanted[0]
-    files.put(move["path"], text[:a] + _word(old).sub(new, text[a:b]) + text[b:])
-    members[old], members[new] = 0, members.get(new, 0) + 1
-    access = re.compile(rf"(\.|->)(\s*){re.escape(old)}(?![\w])")
-    files.replace(access, lambda m: f"{m[1]}{m[2]}{new}", files.everything())
-    return 1
+    return wanted[0] if len(wanted) == 1 else None
+
+
+def _field(files: Files, move: Json, members: dict[str, int], types: access.Types | None) -> str:
+    """A member rename: its declarator in the one record body of the project that has a member of that spelling
+    (the record `tag` or typedef `alias` in `path`), and every `.old` and `->old` of the project. Another body that
+    spells the member too: each access must have a base expression typed as this record or another (`access`); one
+    that is not typed stops the move. Returns why nothing moved, empty when the member is renamed."""
+    old, new, path = move["subject"], move["target"], move["path"]
+    spot = _spot(files, path, move.get("tag", ""), move.get("alias", ""))
+    if spot is None:
+        return f"no one record body in {path} is {move.get('tag') or move.get('alias')}"
+    shared = members.get(old, 0) > 1
+    if members.get(old, 0) < 1 or (shared and types is None):
+        return f"no record body spells {old}"
+    key = ""
+    if shared and types is not None:
+        key = types.key.get(move.get("alias") or "") or types.key.get(move.get("tag") or "") or ""
+        if (key, old) in types.twice:
+            return f"more than one definition of {key} spells {old}"
+        found = types.sites({p: files.get(p) or "" for p in files.everything() if p.lower().endswith(_C)}, [old])
+        if loose := [s for s in found if not s.owner]:
+            return (
+                f"{len(loose)} of {len(found)} accesses of {old} have a base of no known record type ({loose[0].path})"
+            )
+        by_file: dict[str, list[int]] = defaultdict(list)
+        for site in found:
+            if site.owner == key:
+                by_file[site.path].append(site.at)
+        for file, ats in by_file.items():
+            text = files.get(file) or ""
+            for at in sorted(ats, reverse=True):
+                text = text[:at] + new + text[at + len(old) :]
+            files.put(file, text)
+        types.rename(key, old, new)
+    text, spot = files.get(path) or "", _spot(files, path, move.get("tag", ""), move.get("alias", "")) or spot
+    a, b = spot
+    files.put(path, text[:a] + _word(old).sub(new, text[a:b]) + text[b:])
+    members[old], members[new] = members[old] - shared, members.get(new, 0) + 1
+    if not shared:
+        access_ = re.compile(rf"(\.|->)(\s*){re.escape(old)}(?![\w])")
+        files.replace(access_, lambda m: f"{m[1]}{m[2]}{new}", files.everything())
+        members[old] = 0
+    return ""
+
+
+def _merge(files: Files, move: Json, types: access.Types | None, refused: Collection[tuple[str, str, str]]) -> str:
+    """A duplicate record folded into the one it equals: its definition and forward declarations go, every spelling of
+    it becomes `target`, and its header includes the survivor's header. The member moves before it gave the duplicate
+    the survivor's member names; one refused stops the merge. Returns why nothing moved."""
+    tag, alias, path, into = move.get("tag", ""), move.get("alias", ""), move["path"], move["into_path"]
+    dup, keep = _spot(files, path, tag, alias), _spot(files, into, move.get("into_tag", ""), move.get("into_alias", ""))
+    if dup is None or keep is None:
+        return f"the body of {alias or tag if dup is None else move['target']} is not found"
+    if types is not None and types.defined[types.key.get(alias or tag, "")] > 1:
+        return f"{alias or tag} is defined more than once"
+    if (path, tag, alias) in refused:
+        return f"a member of {alias or tag} could not take its original name"
+    if path != into and not into.startswith("include/"):
+        return f"{into} is not a header under include/"
+    spelled = f"{into.removeprefix('include/')}"
+    if path != into and re.search(
+        rf'#[ \t]*include[ \t]*[<"]{re.escape(path.removeprefix("include/"))}[>"]', files.get(into) or ""
+    ):
+        return f"{into} includes {path}"
+    text = files.get(path) or ""
+    head = next(h for h in _RECORD_HEAD.finditer(text) if h.end() == dup[0])
+    lo, hi = head.start(), dup[1] + 1
+    before = text[:lo].rstrip()
+    lo = len(before) - len("typedef") if before.endswith("typedef") else lo
+    tail = re.match(r"\s*\w*\s*;[ \t]*\n?", text[hi:])
+    hi += tail.end() if tail else 0
+    note = (
+        ""
+        if path == into or re.search(rf'#[ \t]*include[ \t]*"{re.escape(spelled)}"', text)
+        else f'#include "{spelled}"\n'
+    )
+    text = text[:lo] + note + text[hi:]
+    files.put(path, text)
+    bare = {alias} - {""}
+    for word in filter(None, (tag, alias)):
+        one = re.escape(word)
+        typedef = re.compile(rf"(?m)^[ \t]*typedef[ \t]+(?:struct|union)[ \t]+{one}[ \t]+(\w+)[ \t]*;\s*\n")
+        bare |= {m[1] for p in files.everything() for m in typedef.finditer(files.get(p) or "")}
+        forward = rf"(?m)^[ \t]*(?:struct|union)[ \t]+{one}[ \t]*;\s*\n"
+        files.replace(re.compile(forward), "", files.everything())
+        files.replace(typedef, "", files.everything())
+        files.replace(re.compile(rf"\b(?:struct|union)\s+{one}\b"), move["target"], files.everything())
+    for word in bare - {move["target"]}:
+        files.replace(_word(word), move["target"], files.everything())
+    if types is not None:
+        types.key.update({w: types.key.get(move["target"].removeprefix("struct "), "") for w in (tag, alias) if w})
+    return ""
+
+
+_PROTOTYPE = re.compile(r"(?m)^[ \t]*extern[ \t]+([^;{}()]*?)\b(\w+)[ \t]*\([^;{}]*\)[ \t]*;[ \t]*\n?")
+
+
+def _tidy(files: Files, names: Collection[str]) -> None:
+    """After a rename: the `#define NAME fz_OLD` shims a fuzzy file kept go (the name is real now), and a local `extern`
+    of a renamed function that a header declares with the same return type goes, the header included instead."""
+    if not names:
+        return
+    shim = re.compile(rf"(?m)^[ \t]*#[ \t]*define[ \t]+(?:{'|'.join(map(re.escape, names))})[ \t]+fz_\w+[ \t]*\n")
+    paths = [p for p in files.everything() if p.lower().endswith(_C)]
+    files.replace(shim, "", paths)
+    header: dict[str, tuple[str, str]] = {}
+    for path in (p for p in paths if p.lower().endswith((".h", ".hpp"))):
+        for found in _PROTOTYPE.finditer(files.get(path) or ""):
+            if found[2] in names:
+                header.setdefault(found[2], (path, " ".join(found[1].split())))
+    for path in paths:
+        used: set[str] = set()
+
+        def drop(m: re.Match[str], path: str = path, used: set[str] = used) -> str:
+            held = header.get(m[2])
+            if held and held[0] != path and held[1] == " ".join(m[1].split()):
+                used.add(held[0])
+                return ""
+            return m[0]
+
+        text = files.get(path) or ""
+        if not path.lower().endswith((".h", ".hpp")) and "extern" in text:
+            changed = _PROTOTYPE.sub(drop, text)
+            for need in sorted(used):
+                spelled = need.removeprefix("include/")
+                if not re.search(rf'#[ \t]*include[ \t]*"{re.escape(spelled)}"', changed):
+                    last = list(re.finditer(r"(?m)^[ \t]*#[ \t]*include[^\n]*\n", changed))
+                    at = last[-1].end() if last else 0
+                    changed = changed[:at] + f'#include "{spelled}"\n' + changed[at:]
+            if changed != text:
+                files.put(path, changed)
 
 
 def _member_words(files: Files) -> dict[str, int]:
@@ -922,6 +1096,10 @@ def run(config: Config, params: Json) -> Json:
                 closure = scope_modules(document, proposal, paths)
                 proposal = dict(scoped(proposal, closure))
                 confine(proposal, closure)
+                held = {x for m in document["modules"] for x in (m["source"], m["header"])}
+                found = [
+                    f"no module holds {p}" for p in paths if p not in held | {u["path"] for u in document["units"]}
+                ]
             except Refusal as refusal:
                 found = [f.reason for f in refusal.findings]
                 proposal = {**proposal, "modules": []}
@@ -940,7 +1118,7 @@ def run(config: Config, params: Json) -> Json:
         "path": _saved(config, built) if kept else "",
         "stream": stream(built),
         **({"suggestions": ops(proposal), "findings": found} if paths else {}),
-        "next": "recipe apply" if built["moves"] else "recipe status",
+        "next": "recipe apply" if built["moves"] else "recipe name next",
     }
 
 
@@ -966,9 +1144,17 @@ def apply(config: Config, params: Json) -> Json:
         (root / ".unbake/recipe/patches").glob("patch-*.diff"),
         key=lambda p: int("".join(c for c in p.name if c.isdigit())),
     )
-    patch = Path(params["patch"]) if params.get("patch") else saved[0] if saved else None
+    patch = Path(params["patch"]) if params.get("patch") else None
+    for candidate in [] if patch else saved:  # a patch saved before the tree changed no longer applies: set it aside
+        if not recipe_host.run(
+            ["git", "-C", str(root), "apply", "--check", str(candidate.resolve())], root, config
+        ).exit:
+            patch = candidate
+            break
+        candidate.rename(candidate.with_suffix(".stale"))
+        saved = [p for p in saved if p != candidate]
     if patch is None or not patch.is_file():
-        raise state.stop("recipe.apply", "no patch is saved", action="recipe structure")
+        raise state.stop("recipe.apply", "no saved patch applies to the tree", action="recipe structure")
     # the patch edits the work tree only: `git apply --intent-to-add` without `--index` replaces the whole index with
     # the new files alone (10-20: ~6,420 entries lost per apply), so the index stays as it was and the files the patch
     # makes are then marked intent-to-add one by one
@@ -985,7 +1171,7 @@ def apply(config: Config, params: Json) -> Json:
         if marked.exit:
             tail = bytes(marked.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git add failed"]
             raise state.stop(
-                "recipe.apply", f"git add -N refused after {patch.name}: {tail[0]}", action="recipe status"
+                "recipe.apply", f"git add -N refused after {patch.name}: {tail[0]}", action="recipe name next"
             )
     patch.rename(patch.with_suffix(".applied"))
     document, _ = _unbake(config, params["host"], "sync")

@@ -404,6 +404,12 @@ def strong(match: Match) -> bool:
     return all(f.kind != "p" or slots[f.offset].kind == "p" for f in _members(match.layout) if f.offset in slots)
 
 
+def whole(match: Match) -> bool:
+    """A match a record named here may follow too: strong, at least six members, weight at least 15 (words alone say
+    little: six floats, or a dozen words with pointers, say it)."""
+    return strong(match) and match.total >= 6 and match.weight >= 15.0
+
+
 _TYPEDEF_OF = r"typedef\s+(?:struct|union)\s+(\w+)\s*(?:\{{|{alias}\s*;)"
 
 
@@ -437,23 +443,33 @@ def plan(
     found = matches(layouts, catalog)
     by_name = {layout.name: layout for layout in layouts}
     taken = set(identifiers)
-    owners: dict[str, set[str]] = {}  # a member spelling to the records that have a member of that spelling
-    for layout in layouts:
-        for member in (*layout.fields, *layout.records, *layout.pads):
-            owners.setdefault(member.name, set()).add(spelled_name(layout.name))
     claims: dict[str, list[str]] = {}
     for name, ms in found.items():
         if (one := unique(ms)) is not None:
             claims.setdefault(one.record.name, []).append(name)
-    moves: list[Json] = []
-    proposals: list[Json] = []
+    verdicts: dict[str, tuple[Match, str, str]] = {}  # per project record: its match, its tag, why it does not move
     for name, ms in sorted(found.items()):
         one = unique(ms)
         if one is None:
             continue
-        layout, record = by_name[name], one.record
-        current = spelled_name(name)
+        layout, record, current = by_name[name], one.record, spelled_name(name)
         tag = tag_in(read(layout.path) or "", current) if not name.startswith(("struct ", "union ")) else current
+        if current in (record.name, tag_of(record)) or tag == tag_of(record):
+            why = "already the original name"
+        elif not (invented(layout) or whole(one)):
+            why = "named here, not invented: a reader decides"
+        elif not strong(one):
+            why = "not every member is a whole original member, or a pointer is not one"
+        else:
+            why = ""
+        verdicts[name] = (one, tag, why)
+    used = set(taken)  # the names the project spells before this pass moves any
+    moves: list[Json] = []
+    fields: list[Json] = []
+    merges: list[Json] = []
+    proposals: list[Json] = []
+    for name, (one, tag, why) in verdicts.items():
+        layout, record, current = by_name[name], one.record, spelled_name(name)
         if scope is not None and not {current, tag} & scope:
             continue
         row: dict[str, Any] = {
@@ -465,24 +481,21 @@ def plan(
             "members": [{"current": c, "original": o, "offset": at} for c, o, at in one.fields],
             "evidence": one.evidence(),
         }
-        keyword = "union" if record.union else "struct"
-        why = ""
-        if current in (record.name, tag_of(record)) or tag == tag_of(record):
-            why = "already the original name"
-        elif not invented(layout):
-            why = "named here, not invented: a reader decides"
-        elif not strong(one):
-            why = "not every member is a whole original member, or a pointer is not one"
-        elif len(claims[record.name]) > 1:
-            why = f"{len(claims[record.name])} project records match it: merge them into one first"
-        elif record.name in taken or (tag_of(record) and tag_of(record) in taken):
+        group = [n for n in sorted(claims[record.name]) if verdicts[n][2] in ("", "already the original name")]
+        free = not (record.name in used or (tag_of(record) and tag_of(record) in used))
+        keep = next((n for n in group if verdicts[n][2]), next((n for n in group if not verdicts[n][2] and free), ""))
+        merged = not why and keep not in ("", name)
+        if not why and not merged and not free:
             why = f"{record.name} is already a name in the project"
-        row["moved"], row["why"] = not why, why
+        if merged and (stuck := next(iter(_stuck(one)), None)):
+            why, merged = f"member {stuck[0]} has no original name it can take ({stuck[1]})", False
+        row["moved"], row["why"] = not why, why or ("merged into " + spelled_name(keep) if merged else "")
         proposals.append(row)
         original = why == "already the original name" and strong(one)
         if why and not original:
             continue
-        if not why:
+        keyword = "union" if record.union else "struct"
+        if not why and not merged:
             moves.append({"op": "type", "subject": current, "target": record.name})
             if tag and tag != current:
                 moves.append({"op": "type", "subject": tag, "target": tag_of(record) or record.name})
@@ -491,27 +504,44 @@ def plan(
                     {"op": "type", "subject": f"{keyword} {record.name}", "target": f"{keyword} {tag_of(record)}"}
                 )
             taken |= {record.name, tag_of(record)}
-        final_tag = tag_of(record) if not why else tag
-        alias = record.name if not why else ("" if name.startswith(("struct ", "union ")) else current)
-        row["renamed"] = fields = _member_moves(one, owners, spelled_name(name), layout.path, final_tag, alias)
-        moves += fields
-    return Plan(tuple(moves), tuple(proposals))
+        spelled = name.startswith(("struct ", "union "))
+        final_tag = (tag_of(record) or record.name) if not why and not merged else tag
+        alias = record.name if not why and not merged and not spelled else ("" if spelled else current)
+        row["renamed"] = renamed = _member_moves(one, layout.path, final_tag, alias)
+        fields += renamed
+        if merged:
+            into, (_, into_tag, _) = by_name[keep], verdicts[keep]
+            kept = keep.startswith(("struct ", "union "))
+            kept_tag = into_tag if verdicts[keep][2] else tag_of(record) or record.name
+            kept_alias = "" if kept else record.name if not verdicts[keep][2] else spelled_name(keep)
+            target = kept_alias or f"{keyword} {kept_tag}"
+            merge: dict[str, Any] = {"op": "merge", "subject": current, "target": target, "path": layout.path}
+            merges.append(
+                merge
+                | {"tag": tag, "alias": alias, "into_path": into.path, "into_tag": kept_tag, "into_alias": kept_alias}
+            )
+    return Plan(tuple([*moves, *fields, *merges]), tuple(proposals))
 
 
-def _member_moves(
-    match: Match, owners: Mapping[str, set[str]], record: str, path: str, tag: str, alias: str
-) -> list[Json]:
-    """Member renames of a matched record: each whole member whose spelling no other project record has (so every
-    `.name` and `->name` in the project is this record's) takes its original name, unless the record has that name."""
+def _stuck(match: Match) -> list[tuple[str, str]]:
+    """The members whose original name a rename cannot give: a path into an inner record, or a name the record has."""
     have = {f.name for f in (*match.layout.fields, *match.layout.records, *match.layout.pads)}
-    out: list[Json] = []
-    for current, original, _ in match.fields:
-        if current == original or not original or "." in original or "[" in original or original in have:
-            continue
-        if owners.get(current, set()) != {record} or not re.fullmatch(r"[A-Za-z_]\w*", original):
-            continue
-        out.append({"op": "field", "subject": current, "target": original, "path": path, "tag": tag, "alias": alias})
-    return out
+    return [
+        (current, original)
+        for current, original, _ in match.fields
+        if current != original and (not re.fullmatch(r"[A-Za-z_]\w*", original) or original in have)
+    ]
+
+
+def _member_moves(match: Match, path: str, tag: str, alias: str) -> list[Json]:
+    """Member renames of a matched record: each whole member takes its original name, unless the record has that name.
+    A spelling other records have too is renamed by the typed accesses of the build, or not at all."""
+    have = {f.name for f in (*match.layout.fields, *match.layout.records, *match.layout.pads)}
+    return [
+        {"op": "field", "subject": current, "target": original, "path": path, "tag": tag, "alias": alias}
+        for current, original, _ in match.fields
+        if current != original and re.fullmatch(r"[A-Za-z_]\w*", original) and original not in have
+    ]
 
 
 # ---------------------------------------------------------------- functions and files
@@ -565,7 +595,8 @@ def root_of(files: Iterable[str]) -> str:
 
 def boundaries(catalog: Catalog, doc: Json) -> list[Json]:
     """Module evidence rows for `recipe structure`: per source file, its first and last function in the .text order
-    of the version whose stream placed them, with the path below the catalog's common source folder."""
+    of the version whose stream placed them (by address, else by member name), with the path below the catalog's
+    common source folder."""
     by_place = {
         (p["version"], p["vram"]): m["name"]
         for m in doc["members"]
@@ -574,10 +605,12 @@ def boundaries(catalog: Catalog, doc: Json) -> list[Json]:
         if p["section"] == ".text"
     }
     base = root_of(f.file for f in catalog.functions if f.vram is not None)
+    at = {m["name"]: p["vram"] for m in doc["members"] if m["kind"] == "function" for p in m["placements"][:1]}
     files: dict[tuple[str, str], list[tuple[int, str]]] = {}
-    for f in catalog.functions:
-        if f.vram is not None and f.file and (member := by_place.get((f.version, f.vram))):
-            files.setdefault((f.version, f.file), []).append((f.vram, member))
+    for f in catalog.functions:  # placed by address, else by the name a member already has (a function named from it)
+        member = by_place.get((f.version, f.vram)) if f.vram is not None else None
+        if f.file and (member := member or (f.name if f.name in at else None)):
+            files.setdefault((f.version, f.file), []).append((f.vram if f.vram is not None else at[member], member))
     rows: list[Json] = []
     seen: set[str] = set()
     for (_, file), held in sorted(files.items()):
