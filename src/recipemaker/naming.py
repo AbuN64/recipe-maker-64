@@ -191,8 +191,8 @@ class Map:
             found.update([table("knowledge/style.toml")["gbi"]["tag"]] * self.gbi(name))
         return found
 
+    def symbol_kind(self, name: str) -> str:
         """The kind of a name some version's symbol table holds ("function" or "global"), else "" for no such symbol."""
-        """ "function" or "global" for a name some version's symbol table holds, else "" (no such symbol)."""
         for symbols in _tables(self.config, self.doc["versions"]).values():
             if name in symbols:
                 return "function" if symbols[name][3] == "func" else "global"
