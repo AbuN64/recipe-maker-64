@@ -248,10 +248,9 @@ def kind(path: str | PurePosixPath) -> str:
 
 def _words(path: str) -> list[str]:
     """The subsystem words a file can take its prefix from: its folder, and for a header its own stem."""
-    rules = _rules()
     parts = PurePosixPath(path)
     found = [parts.parent.name, *([parts.stem] if kind(parts) == "h" else [])]
-    return [w for w in found if w not in rules["paths"]["no_prefix"] and re.fullmatch(rules["names"]["subsystem"], w)]
+    return list(dict.fromkeys(word for folder in found if (word := prefix_word(folder))))
 
 
 def _names(facts: Json, words: Sequence[str], context: Context) -> Iterator[tuple[str, str]]:
@@ -279,7 +278,12 @@ def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]
     if kind(where) == "c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
         out.append(("file-name", path, where.stem))
     folder = where.parent.name
-    if kind(where) == "c" and folder not in [*rules["paths"]["no_prefix"], ""] and not words and not neutral(folder):
+    if (
+        kind(where) == "c"
+        and folder.lower() not in [*rules["paths"]["no_prefix"], ""]
+        and not words
+        and not neutral(folder)
+    ):
         out.append(("dir-name", str(where.parent), folder))
     out += [("collision-suffix", path, where.stem)] * collision(where.stem)
     out += [("guard-tool", path, facts["guard"])] * (rules["comments"]["guard_tool"] in facts["guard"])

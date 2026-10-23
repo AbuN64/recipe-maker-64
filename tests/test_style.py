@@ -303,3 +303,27 @@ def test_generated_placeholders_are_neutral_names_of_every_kind():
     ):
         assert style.neutral(name), name
     assert not style.neutral("g_selectionLayoutTail") and not style.neutral("Menu_Draw")
+
+
+@pytest.mark.parametrize(
+    ("folder", "file", "name"),
+    [
+        ("FRONTEND", "frontend_message.CPP", "Frontend_MarkMessageHandled"),
+        ("frontend", "frontend_message.cpp", "Frontend_MarkMessageHandled"),
+        ("MENU_2", "menu_message.CPP", "Menu_MarkMessageHandled"),
+        ("COMMON", "message.CPP", "MarkMessageHandled"),
+    ],
+)
+def test_style_uses_the_same_case_and_placeholder_prefix_as_naming(tmp_path, folder, file, name):
+    config = project(tmp_path, {f"src/game/{folder}/{file}": f"int {name}(void) {{ return 0; }}\n"})
+    got = run(config)
+    assert got["audited"] == 1 and got["findings"] == []
+
+
+def test_uppercase_folders_still_enforce_their_real_function_and_module_prefix(tmp_path):
+    config = project(
+        tmp_path,
+        {"src/game/FRONTEND/wrong_message.CPP": "int Wrong_MarkMessageHandled(void) { return 0; }\n"},
+    )
+    got = run(config)
+    assert {f["rule"] for f in got["findings"]} == {"function-name", "file-name"}
