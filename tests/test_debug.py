@@ -395,3 +395,16 @@ def test_submit_of_a_pack_or_types_report_says_it_is_no_names_file(named):
     params = {"host": None, "action": "submit", "step": None, "count": 40, "file": str(report)}
     with pytest.raises(Exception, match="no names file"):
         naming.run(named, params)
+
+
+def test_step_t_target_resolves_a_symbol_no_module_owns_to_the_files_that_spell_it(named, monkeypatch):
+    table = {"us": {"D_90000000": (0x90000000, None, 4, "data")}}  # a bss datum: in the symbol table, in no module
+    monkeypatch.setattr(naming, "_tables", lambda config, versions: table)
+    root = named.project.root
+    (root / "src").mkdir()
+    (root / "src/menu.CPP").write_text("extern Profile D_90000000[];\nint f(void) { return D_90000000[0].rank; }\n")
+    (root / "src/other.CPP").write_text("extern Stranger elsewhere;\n")
+    scope = naming._scope(named, structure.evidence(named), "D_90000000")
+    assert {"D_90000000", "Profile", "rank"} <= scope and "Stranger" not in scope
+    with pytest.raises(Exception, match="no member or folder is named D_9"):
+        naming._scope(named, structure.evidence(named), "D_9")

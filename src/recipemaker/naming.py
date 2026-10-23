@@ -191,6 +191,13 @@ class Map:
             found.update([table("knowledge/style.toml")["gbi"]["tag"]] * self.gbi(name))
         return found
 
+        """The kind of a name some version's symbol table holds ("function" or "global"), else "" for no such symbol."""
+        """ "function" or "global" for a name some version's symbol table holds, else "" (no such symbol)."""
+        for symbols in _tables(self.config, self.doc["versions"]).values():
+            if name in symbols:
+                return "function" if symbols[name][3] == "func" else "global"
+        return ""
+
     def canon(self, name: str) -> str:
         """The member a spelling names: itself, or the member that sits where a version's symbol table puts that
         spelling (a per-version name, an alias such as D_blob_* or D_auto_*, a function's old name in stale assembly),
@@ -518,6 +525,12 @@ def _scope(config: Config, doc: Json, target: str) -> set[str]:
     """The words one function spells: its candidate file when it has one, else its unit source."""
     ctx = Map(config, doc, {})
     name = _chosen(ctx, "T", target)[1]  # an unknown name is refused
+    if name not in ctx.members and ctx.canon(name) not in ctx.members:  # a symbol no module owns: the files spelling it
+        files = structure.Files(config.project.root)
+        text = "\n".join(
+            files.get(p) or "" for p in files.everything() if re.search(rf"\b{re.escape(name)}\b", files.get(p) or "")
+        )
+        return {name, *re.findall(r"[A-Za-z_]\w*", text)}
     path = ladder.candidate_path(config, name)
     if not path.is_file():
         path = config.project.root / ctx.modules.get(ctx.members.get(name, {}).get("module"), {}).get("source", "-")
@@ -580,6 +593,8 @@ def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
         return ("global" if len(readers) >= 2 else "static", member["name"])
     if target in {ctx.folder(m) for m in ctx.modules}:
         return ("subsystem", target)
+    if kind := ctx.symbol_kind(target):  # a symbol some version's table knows, owned by no module (a bss datum)
+        return (kind, target)
     raise state.stop("recipe.name", f"no member or folder is named {target}", action="recipe name next --step N3")
 
 
@@ -597,6 +612,12 @@ def next_(config: Config, params: Json) -> Json:
     wanted = params.get("target")
     if wanted:  # the one thing the caller already chose: its card alone, never the step's best other target
         pick = [_chosen(ctx, step, wanted)]
+        if pick[0][1] not in ctx.members:
+            raise state.stop(
+                "recipe.name",
+                f"{wanted} is a symbol no module owns; only step T takes it",
+                action="recipe name next --step T",
+            )
     else:
         pick = [t for t in _targets(Map(config, doc, graph), step) if t[1] not in done][: int(params["count"])]
     path = None

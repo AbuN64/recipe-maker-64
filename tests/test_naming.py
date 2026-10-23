@@ -662,3 +662,9 @@ def test_an_sdk_function_takes_its_catalog_name_with_no_evidence_when_nothing_ca
     ]
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
+
+
+def test_a_symbol_no_module_owns_is_known_to_step_t_only(project, monkeypatch):
+    monkeypatch.setitem(TABLES["us"], "D_90000000", (0x90000000, None, 4, "data"))
+    with pytest.raises(Exception, match="D_90000000 is a symbol no module owns; only step T takes it"):
+        run(project, "next", step="N4", target="D_90000000")
