@@ -134,8 +134,8 @@ def _parser() -> argparse.ArgumentParser:
         "--base", default="HEAD", help="only findings the files did not have at this commit gate (default HEAD)"
     )
     one.add_argument("--full", action="store_true", help="every finding gates, whatever the base had")
-    one = verb("apply", "git apply the oldest saved patch, then unbake sync")
-    one.add_argument("patch", nargs="?", help="a patch file (default: the oldest saved one)")
+    one = verb("apply", "git apply the newest saved patch, then unbake sync")
+    one.add_argument("patch", nargs="?", help="a patch file (default: the newest saved one)")
     return parser
 
 

@@ -1136,8 +1136,8 @@ def _made_paths(patch: str) -> list[str]:
 
 
 def apply(config: Config, params: Json) -> Json:
-    """`recipe apply`: `git apply` the oldest saved patch (or PATCH), its new files intent-to-add, then `unbake sync`;
-    sync's result comes back.
+    """`recipe apply`: `git apply` the newest saved patch that applies (or PATCH), its new files intent-to-add, then
+    `unbake sync`; sync's result comes back.
     The one explicit operator action that writes."""
     root = config.project.root
     saved = sorted(
@@ -1145,7 +1145,8 @@ def apply(config: Config, params: Json) -> Json:
         key=lambda p: int("".join(c for c in p.name if c.isdigit())),
     )
     patch = Path(params["patch"]) if params.get("patch") else None
-    for candidate in [] if patch else saved:  # a patch saved before the tree changed no longer applies: set it aside
+    # the newest saved patch is the one the caller just made (an older one was made over an older tree or name table)
+    for candidate in [] if patch else reversed(saved):  # one saved before the tree changed no longer applies: set aside
         if not recipe_host.run(
             ["git", "-C", str(root), "apply", "--check", str(candidate.resolve())], root, config
         ).exit:

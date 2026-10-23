@@ -643,15 +643,15 @@ def test_a_patch_git_refuses_is_set_aside_as_stale_and_sync_is_not_run(tmp_path,
     assert (root / ".unbake/recipe/patches/patch-1.stale").exists()
 
 
-def test_apply_skips_a_stale_older_patch_and_applies_the_next_one(tmp_path, monkeypatch):
+def test_apply_skips_a_stale_newer_patch_and_applies_the_next_older_one(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.c": "INCLUDE_ASM(main, func_8000);\n"})
     built = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
-    structure.write(root / ".unbake/recipe/patches/patch-1.diff", "garbage\n")
-    structure.write(root / ".unbake/recipe/patches/patch-2.diff", built["patch"])
+    structure.write(root / ".unbake/recipe/patches/patch-1.diff", built["patch"])
+    structure.write(root / ".unbake/recipe/patches/patch-2.diff", "garbage\n")
     _fake_unbake(monkeypatch, [{"ok": True, "result": {}, "findings": []}])
     got = structure.apply(SimpleNamespace(project=SimpleNamespace(root=root)), {"host": None})
-    assert got["patch"] == "patch-2.diff" and got["left"] == 0
-    assert (root / ".unbake/recipe/patches/patch-1.stale").exists()
+    assert got["patch"] == "patch-1.diff" and got["left"] == 0
+    assert (root / ".unbake/recipe/patches/patch-2.stale").exists()
 
 
 def test_a_function_is_never_moved_into_a_data_module():
@@ -817,3 +817,25 @@ def test_a_rename_drops_the_fuzzy_define_and_the_local_extern_a_header_declares_
     assert "-#define func_8000 fz_func_8000" in patch and "+#define" not in patch
     assert '+#include "m.h"' in patch and "extern void *Mem_Alloc();" not in patch.replace("-extern", "")
     assert "+extern void other(s32);" in patch and "Mem_Alloc(1)" in patch
+
+
+def test_apply_takes_the_newest_saved_patch_and_sets_aside_a_stale_one(tmp_path, monkeypatch):
+    saved = tmp_path / ".unbake/recipe/patches"
+    saved.mkdir(parents=True)
+    for n in (2, 9, 10):
+        (saved / f"patch-{n}.diff").write_text(f"diff {n}\n")
+    ran: list[list[str]] = []
+
+    def fake_run(argv, root, config):
+        ran.append(list(argv))
+        stale = "--check" in argv and argv[-1].endswith("patch-10.diff")
+        return SimpleNamespace(exit=1 if stale else 0, stderr=b"")
+
+    monkeypatch.setattr(structure.recipe_host, "run", fake_run)
+    monkeypatch.setattr(structure, "_unbake", lambda config, host, *a: ({"ok": True, "result": {}}, ""))
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+    result = structure.apply(config, {"host": None})
+    assert result["patch"] == "patch-9.diff" and result["left"] == 1  # patch-10 was stale, patch-2 stays
+    assert (saved / "patch-10.stale").exists() and (saved / "patch-9.applied").exists()
+    result = structure.apply(config, {"host": None})
+    assert result["patch"] == "patch-2.diff"
