@@ -21,7 +21,7 @@ DRAIN = {"running": False, "landed": [], "refused": []}
 @pytest.fixture
 def lane(tmp_path, monkeypatch):
     project = Project(
-        tmp_path, "fixture", "Fixture", "gcc-test", "a", (), (), (), (), None, None, ("a", "b"), {}, {}, "0" * 64
+        tmp_path, "fixture", "Fixture", "gcc-test", "a", (), (), (), (), None, None, None, ("a", "b"), {}, {}, "0" * 64
     )
     host = Host(
         2, 2, 1 << 30, 1 << 30, tmp_path / "cache", 1 << 30, tmp_path / "tools", {}, None, 2, 2, 0.8, 2,

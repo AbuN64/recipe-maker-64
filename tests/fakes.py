@@ -103,7 +103,22 @@ class Fakes:
     # -- the world
     def _config(self) -> Config:
         project = Project(
-            self.root, "fixture", "Fixture", "gcc-test", "a", (), (), (), (), None, None, ("a", "b"), {}, {}, "0" * 64
+            self.root,
+            "fixture",
+            "Fixture",
+            "gcc-test",
+            "a",
+            (),
+            (),
+            (),
+            (),
+            None,
+            None,
+            None,
+            ("a", "b"),
+            {},
+            {},
+            "0" * 64,
         )
         host_ = Host(
             self.workers, self.workers, 1 << 30, 1 << 30, self.root / "cache", 1 << 30, self.root / "tools", {}, None,
