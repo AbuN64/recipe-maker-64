@@ -221,11 +221,20 @@ class Context:
         return found or None
 
 
+_SUFFIXES = {".c": "c", ".cpp": "c", ".h": "h"}
+
+
+def kind(path: str | PurePosixPath) -> str:
+    """The one discovery rule: "c" for a source, "h" for a header, "" for anything the audit does not read. The
+    suffix is read in any letter case (RW spells .CPP and .H)."""
+    return _SUFFIXES.get(PurePosixPath(path).suffix.lower(), "")
+
+
 def _words(path: str) -> list[str]:
     """The subsystem words a file can take its prefix from: its folder, and for a header its own stem."""
     rules = _rules()
     parts = PurePosixPath(path)
-    found = [parts.parent.name, *([parts.stem] if parts.suffix == ".h" else [])]
+    found = [parts.parent.name, *([parts.stem] if kind(parts) == "h" else [])]
     return [w for w in found if w not in rules["paths"]["no_prefix"] and re.fullmatch(rules["names"]["subsystem"], w)]
 
 
@@ -247,19 +256,19 @@ def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]
     """The findings (rule, path, detail) of one file from its facts."""
     rules, out = _rules(), []
     where = PurePosixPath(path)
-    if where.suffix not in (".c", ".h") or any(path.startswith(x) for x in rules["paths"]["exempt"]):
+    if not kind(where) or any(path.startswith(x) for x in rules["paths"]["exempt"]):
         return []
     words = _words(path)
     out += [(rule, path, detail) for rule, detail in _names(facts, words)]
-    if where.suffix == ".c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
+    if kind(where) == "c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
         out.append(("file-name", path, where.stem))
     folder = where.parent.name
-    if where.suffix == ".c" and folder not in [*rules["paths"]["no_prefix"], ""] and not words and not neutral(folder):
+    if kind(where) == "c" and folder not in [*rules["paths"]["no_prefix"], ""] and not words and not neutral(folder):
         out.append(("dir-name", str(where.parent), folder))
     out += [("collision-suffix", path, where.stem)] * collision(where.stem)
     out += [("guard-tool", path, facts["guard"])] * (rules["comments"]["guard_tool"] in facts["guard"])
-    out += [("header-order", path, "")] * (where.suffix == ".h" and facts["disorder"])
-    if where.suffix == ".c":
+    out += [("header-order", path, "")] * (kind(where) == "h" and facts["disorder"])
+    if kind(where) == "c":
         own = next((i for i in facts["includes"] if PurePosixPath(i).stem in (where.parent.name, where.stem)), None)
         rest = sorted({i for i in facts["includes"] if i != own})
         if facts["includes"] != [*([own] if own else []), *rest]:
@@ -301,7 +310,7 @@ def gather(config: Config, files: Sequence[str]) -> tuple[dict[str, Json], int]:
     """Facts per C file through the digest cache; only the unseen contents go to the pool. Returns the facts and the
     number of files parsed."""
     root = config.project.root
-    texts = {f: (root / f).read_text(encoding="utf-8", errors="replace") for f in files if f.endswith((".c", ".h"))}
+    texts = {f: (root / f).read_text(encoding="utf-8", errors="replace") for f in files if kind(f)}
     keys = {f: sha256(f"{FACTS}\n{t}".encode()) for f, t in texts.items()}
     path, cache = _cache(root)
     todo = sorted({keys[f]: texts[f] for f in texts if keys[f] not in cache}.items())
@@ -312,8 +321,9 @@ def gather(config: Config, files: Sequence[str]) -> tuple[dict[str, Json], int]:
     return {f: cache[k] for f, k in keys.items()}, len(todo)
 
 
-def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str, str, str]], int, int]:
-    """All findings over the repo or the given paths, the number of files read and the number parsed."""
+def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str, str, str]], int, int, int]:
+    """All findings over the repo or the given paths, the number of files read, the number parsed afresh and the
+    number audited (files with facts, cached or new)."""
     rules, listing = _rules(), _listing(config, paths)
     facts, parsed = gather(config, listing)
     context, out = Context(config), []
@@ -328,21 +338,26 @@ def findings(config: Config, paths: Sequence[str] = ()) -> tuple[list[tuple[str,
     ]
     stems: defaultdict[str, list[str]] = defaultdict(list)
     for f in listing:
-        if f.endswith(".c") and not any(f.startswith(x) for x in rules["paths"]["exempt"]) and _words(f):
+        if kind(f) == "c" and not any(f.startswith(x) for x in rules["paths"]["exempt"]) and _words(f):
             stems[PurePosixPath(f).name].append(f)
     out += [("file-name", f, "basename is not unique") for same in stems.values() if len(same) > 1 for f in same]
-    return out, len(listing), parsed
+    return out, len(listing), parsed, len(facts)
 
 
 def run(config: Config, params: Json) -> Json:
     """`recipe style`: the findings for the paths; exit 1 when one is an error."""
-    found, files, parsed = findings(config, params["paths"])
+    found, files, parsed, audited = findings(config, params["paths"])
+    if not audited:  # an audit that read no source proves nothing: it fails
+        found.append(
+            ("nothing-audited", ",".join(params["paths"]) or ".", f"{files} files listed, no C source or header")
+        )
     bad = any(SEVERITY.get(f[0], "error") == "error" for f in found)
     return {
         "ok": not bad,
         "exit": int(bad),
         "files": files,
         "parsed": parsed,
+        "audited": audited,
         "findings": [{"rule": r, "path": p, "detail": d} for r, p, d in found],
         "next": "recipe status",
     }

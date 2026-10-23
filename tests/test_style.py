@@ -236,3 +236,12 @@ def test_macro_bodies_and_neutral_hex_names_are_no_findings(tmp_path):
 def test_an_anonymous_enum_is_no_global(tmp_path):
     files = {"include/game/main/actor.h": "enum { ACTOR_A, ACTOR_B };\nint g_a;\n"}
     assert run(project(tmp_path, files))["findings"] == []
+
+
+def test_uppercase_cpp_and_h_are_audited_and_an_audit_of_nothing_fails(tmp_path):
+    config = project(tmp_path, {"src/game/MENU/80424E30.CPP": "int D_80100000;\n", "src/game/MENU/ITEMS.H": "int x;\n"})
+    got = run(config)
+    assert (got["audited"], got["parsed"]) == (2, 2) and "nothing-audited" not in rules(got)[0]
+    bare = run(project(tmp_path / "bare", {"README.md": "no source\n"}))
+    assert bare["audited"] == 0 and bare["ok"] is False and bare["exit"] == 1
+    assert [f["rule"] for f in bare["findings"]] == ["nothing-audited"]
