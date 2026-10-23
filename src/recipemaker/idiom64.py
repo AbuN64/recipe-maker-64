@@ -85,12 +85,7 @@ def _casts(expr: str) -> str:
         m = match[-1]
         end = m.end()
         if expr[end] == "(":
-            depth = 0
-            while True:
-                depth += (expr[end] == "(") - (expr[end] == ")")
-                end += 1
-                if not depth:
-                    break
+            end = records.after(expr, end + 1, "(", ")")
         else:
             end += len(re.match(r"\w+", expr[end:])[0])  # type: ignore[index]
         expr = f"{expr[: m.start()]}{m[1]}({expr[m.end() : end]}){expr[end:]}"

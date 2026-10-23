@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 
 from unbake.contracts import Finding, Snapshot
 
-from recipemaker import advice, headers, index, resource, table, world
+from recipemaker import advice, headers, index, records, resource, table, world
 
 _STANDARD = {"NULL": "stddef.h", "size_t": "stddef.h", "offsetof": "stddef.h", "bool": "stdbool.h", "true": "stdbool.h"}
 _LINE = re.compile(r":(\d+)(?::\d+)?:")
@@ -107,12 +107,7 @@ def _inlined(text: str) -> list[range]:
     """Character spans of the bodies of the static inline helpers in `text` (their locals make the caller's frame)."""
     spans = []
     for head in _INLINE.finditer(text):
-        depth = 1
-        end = head.end()
-        while end < len(text) and depth:
-            depth += {"{": 1, "}": -1}.get(text[end], 0)
-            end += 1
-        spans.append(range(head.end(), end))
+        spans.append(range(head.end(), records.after(text, head.end())))
     return spans
 
 

@@ -4,7 +4,7 @@ externs a source makes, the units a header reaches, and the names declared more 
 import posixpath
 import re
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Collection, Iterator
 from functools import partial
 from typing import Any
 
@@ -31,18 +31,10 @@ def is_header(path: str) -> bool:
     return path.lower().endswith(_HEADER)
 
 
-def _kind_of(suffix: str) -> Callable[[str], bool]:
-    """ ".c" any source (.c, .cpp, any case), ".h" any header, else that exact suffix."""
-    if suffix in (".c", ".h"):
-        endings = _SOURCE if suffix == ".c" else _HEADER
-        return lambda path: path.lower().endswith(endings)
-    return lambda path: path.endswith(suffix)
-
-
 def sources(snapshot: Snapshot, place: str = "include", suffix: str = ".h") -> list[str]:
     """The project files of one kind under a folder, with the snapshot's overlays laid over the disk."""
     root = snapshot.config.project.root
-    kind = _kind_of(suffix)
+    kind = is_source if suffix == ".c" else is_header
 
     def listed() -> list[str]:
         return sorted(r for p in (root / place).rglob("*") if p.is_file() and kind(r := p.relative_to(root).as_posix()))
@@ -50,9 +42,6 @@ def sources(snapshot: Snapshot, place: str = "include", suffix: str = ".h") -> l
     paths = set(api.memo(("recipe.sources", str(root), place, suffix, snapshot.digest), listed))
     paths.update(p for p in snapshot.overlays if p.startswith(place + "/") and kind(p))
     return sorted(p for p in paths if p not in snapshot.overlays or snapshot.overlays[p] is not None)
-
-
-_QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 
 
 def included_by(snapshot: Snapshot, changed: Collection[str] = ()) -> dict[str, set[str]]:
@@ -72,7 +61,7 @@ def included_by(snapshot: Snapshot, changed: Collection[str] = ()) -> dict[str, 
         pending = sorted(known)
         while pending:
             path = pending.pop()
-            for name in _QUOTED_INCLUDE.findall((read(path) or b"").decode(errors="replace")):
+            for name in world.INCLUDE.findall((read(path) or b"").decode(errors="replace")):
                 for base in (posixpath.dirname(path), "include", "src"):
                     target = posixpath.normpath(posixpath.join(base, name))
                     if target in known or read(target) is not None:
@@ -145,16 +134,6 @@ def statements(text: str) -> Iterator[tuple[int, int, str]]:
             start = None
 
 
-def _parts(text: str) -> Iterator[str]:
-    start = depth = 0
-    for i, char in enumerate(text):
-        depth += (char in "([{") - (char in ")]}")
-        if char == "," and not depth:
-            yield text[start:i]
-            start = i + 1
-    yield text[start:]
-
-
 # a pointer declarator `(*name)`, else a plain name, its arrays and parameters
 _DECLARATOR = re.compile(r"\(\s*\*\s*(\w+)\s*\)|\b(\w+)\s*(?:\[[^]]*\]\s*)*(?:\((?!\s*\*)[^{};]*\))?\s*$")
 _DEFINITION = re.compile(
@@ -185,7 +164,7 @@ def _declared(text: str) -> list[tuple[str, int, str]]:
     for start, end, declaration in statements(text):
         names = [f"{kind} {tag}" for kind, tag in re.findall(r"\b(struct|union|enum)\s+(\w+)\s*\{", declaration)]
         if re.search(r"\b(?:extern|typedef)\b", declaration):
-            for part in _parts(declaration.rstrip(";")):
+            for part in records.split(declaration.rstrip(";"), ","):
                 match = _DECLARATOR.search(part)
                 if match:
                     names.append(match[1] or match[2])
@@ -223,7 +202,7 @@ def _scanned(snapshot: Snapshot, paths: list[str]) -> list[dict[str, Any]]:
     out = []
     for path in paths:
         data = snapshot.read(path)
-        source = _kind_of(".c")(path)
+        source = is_source(path)
         out.append(api.memo(("recipe.scan", digest(data), source), partial(_scan, data.decode(), source)))
     return out
 
@@ -263,7 +242,7 @@ def externs(snapshot: Snapshot) -> dict[str, list[tuple[str, int, str]]]:
 def _type_of(statement: str, name: str) -> str:
     """The type one declaration gives a name: its specifiers, the stars before it, and what follows it."""
     base: str | None = None
-    for part in _parts(statement.rstrip(";")):
+    for part in records.split(statement.rstrip(";"), ","):
         match = _DECLARATOR.search(part)
         if match and base is None:
             base = part[: match.start()].rstrip("* ").strip()

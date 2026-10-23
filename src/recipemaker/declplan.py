@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from recipemaker import headers
+from recipemaker import headers, records, world
 
 _SCALAR = re.compile(r"(?:[suf]\d+|vu\d+|int|char|short|long|float|double|unsigned|signed|size_t)")
 _WORDS = {"const", "volatile", "unsigned", "signed", "struct", "union", "enum", "int", "char", "short", "long"}
@@ -63,7 +63,7 @@ def _declares(declarator: str, name: str) -> bool:
 
 def remove(text: str, one: Copy, name: str) -> str:
     """`text` without the declaration of `name` that `one` is; a statement that declares other names keeps them."""
-    parts = list(headers._parts(text[one.start : one.end].rstrip(";")))
+    parts = records.split(text[one.start : one.end].rstrip(";"), ",")
     first = headers._DECLARATOR.search(parts[0])
     if len(parts) > 1 and first:
         decls = [parts[0][first.start() :], *parts[1:]]
@@ -135,9 +135,6 @@ def add_include(text: str, header: str) -> str:
     return text[:at] + ("\n" if not text[:at].endswith("\n") else "") + line + text[at:]
 
 
-_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
-
-
 def resolve(path: str, spelled: str, known: Callable[[str], bool]) -> str | None:
     """The project file a quoted include names: beside the includer, under include/ or under src/."""
     for base in (posixpath.dirname(path), "include", "src"):
@@ -155,7 +152,7 @@ def reaches(path: str, target: str, read: Callable[[str], str | None], seen: set
     if path in seen:
         return False
     seen.add(path)
-    for spelled in _INCLUDE.findall(read(path) or ""):
+    for spelled in world.INCLUDE.findall(read(path) or ""):
         found = resolve(path, spelled, lambda p: read(p) is not None)
         if found and reaches(found, target, read, seen):
             return True
@@ -169,7 +166,7 @@ def split_signature(prototype: str, name: str) -> tuple[str, list[str]] | None:
         return None
     ret = prototype[: found.start()].replace("extern", "").strip()
     inner = prototype[found.end() : prototype.rfind(")")]
-    params = [] if inner.strip() in ("", "void") else [typed(p) for p in headers._parts(inner)]
+    params = [] if inner.strip() in ("", "void") else [typed(p) for p in records.split(inner, ",")]
     return ret, params
 
 

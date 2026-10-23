@@ -91,12 +91,19 @@ def arguments(text: str) -> list[str]:
     return [part.strip() for part in split(text, ",")]
 
 
+def after(text: str, at: int, opening: str = "{", closing: str = "}") -> int:
+    """The index just after the bracket that closes the one that ends just before `at` (the text's end when it never
+    closes)."""
+    depth = 1
+    while depth and at < len(text):
+        depth += (text[at] == opening) - (text[at] == closing)
+        at += 1
+    return at
+
+
 def call(text: str, at: int) -> tuple[list[str], int]:
     """The arguments of the call whose `(` ends just before `at`, and the index after its `)`."""
-    depth, end = 1, at
-    while end < len(text) and depth:
-        depth += (text[end] == "(") - (text[end] == ")")
-        end += 1
+    end = after(text, at, "(", ")")
     return arguments(text[at : end - 1]), end
 
 

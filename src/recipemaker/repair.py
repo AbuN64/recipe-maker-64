@@ -4,7 +4,7 @@ used as field offsets, and scalars that are dereferenced. Each is a text rewrite
 import re
 from collections.abc import Callable, Mapping
 
-from recipemaker import declplan, headers, records
+from recipemaker import declplan, records
 
 _STACK = re.compile(r"\bsp(?=[0-9A-F]*[0-9])[0-9A-F]+\b")
 _OFFSET = re.compile(
@@ -83,11 +83,7 @@ def _calls(text: str) -> list[tuple[int, int]]:
             found.append(at + 1)
     out = []
     for start in sorted(set(found)):
-        depth, at = 1, start
-        while at < len(text) and depth:
-            depth += (text[at] in "([") - (text[at] in ")]")
-            at += 1
-        out.append((start, at - 1))
+        out.append((start, records.after(text, start, "(", ")") - 1))
     return out
 
 
@@ -229,14 +225,16 @@ def by_value(text: str, member: str, declaration: str, structs: Callable[[], Map
         return text
     kinds = [t.replace("struct ", "") for t in found[1]]
     plain = [k.endswith("*") or k.split()[-1] in _WORD | {"void"} for k in kinds]
-    known, flat = (structs() if not all(plain) else {}), list(headers._parts(mark[2]))
+    known, flat = (structs() if not all(plain) else {}), records.split(mark[2], ",")
     words = [[""] if p else _fields(known.get(k.split()[-1], "")) for k, p in zip(kinds, plain, strict=True)]
     if all(plain) or None in words or sum(len(w or []) for w in words) != len(flat):
         return text
     given = [m[1] if (m := re.search(r"(\w+)\s*$", f)) else "" for f in flat]
     if "" in given:
         return text
-    params, rename, at = [], {}, 0
+    params: list[str] = []
+    rename: dict[str, str] = {}
+    at = 0
     for kind, w in zip(found[1], words, strict=True):
         params.append(f"{kind}{'' if kind.endswith('*') else ' '}{given[at]}")
         rename |= {given[at + n]: f"{given[at]}.{field}" for n, field in enumerate(w or []) if field}

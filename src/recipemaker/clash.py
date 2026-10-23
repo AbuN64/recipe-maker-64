@@ -7,20 +7,12 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from recipemaker import records, world
+
 Types = dict[str, str]
 _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
-_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)
 _BODY = re.compile(r"\b(struct|union|enum)\s+(\w+)\s*\{")
 _WORD = re.compile(r"[A-Za-z_]\w*")
-
-
-def _closing(text: str, at: int) -> int:
-    """The index just after the brace that closes the one before `at`."""
-    depth = 1
-    while depth and at < len(text):
-        depth += (text[at] == "{") - (text[at] == "}")
-        at += 1
-    return at
 
 
 def _typedefs(text: str) -> Types:
@@ -44,7 +36,9 @@ def definitions(text: str) -> Types:
     text = _COMMENT.sub(" ", text)
     out: Types = {}
     for found in _BODY.finditer(text):
-        out.setdefault(f"{found[1]} {found[2]}", " ".join(text[found.start() : _closing(text, found.end())].split()))
+        out.setdefault(
+            f"{found[1]} {found[2]}", " ".join(text[found.start() : records.after(text, found.end())].split())
+        )
     for key, statement in _typedefs(text).items():
         out.setdefault(key, statement)
     return out
@@ -75,7 +69,7 @@ def reader(root: Path) -> Callable[[str], Types]:
             except OSError:
                 parsed[path] = None
             else:
-                parsed[path] = (_INCLUDE.findall(_COMMENT.sub(" ", text)), definitions(text))
+                parsed[path] = (world.INCLUDE.findall(_COMMENT.sub(" ", text)), definitions(text))
         return parsed[path]
 
     def of(path: str, trail: tuple[str, ...] = ()) -> Types:

@@ -230,6 +230,20 @@ def sync(root: Path, remote: str, branch: str) -> str:
     return sha
 
 
+def _publish(root: Path, remote: str, branch: str, subject: str) -> Json:
+    """Push HEAD fast-forward (a rebase onto the moved branch, three tries); a push that cannot land takes only our
+    unpushed commit back out of the private tree."""
+    for _ in range(3):
+        if _try(root, "push", "-q", remote, f"HEAD:refs/heads/{branch}")[0] == 0:
+            return {"landed": True, "commit": _git(root, "rev-parse", "--short", "HEAD").strip(), "subject": subject}
+        _git(root, "fetch", "-q", remote, branch)
+        if _try(root, "rebase", f"{remote}/{branch}")[0]:
+            _try(root, "rebase", "--abort")
+            break
+    _git(root, "reset", "-q", "--hard", f"{remote}/{branch}")
+    return {"landed": False, "why": "push refused and the rebase did not apply"}
+
+
 def land_file(root: Path, remote: str, branch: str, path: str, base: str, text: str, names: Sequence[str]) -> Json:
     """Write one module, commit it alone, push fast-forward (a rebase onto the moved branch, three tries)."""
     with file_lock(root, path):
@@ -239,24 +253,11 @@ def land_file(root: Path, remote: str, branch: str, path: str, base: str, text: 
             return {"landed": False, "why": "module changed on the branch since it was drafted"}
         host.write(file, text.encode())
         stem = Path(path).name
-        subject = f"Fuzzy m2c bodies for {len(names)} functions in {stem}"[:72]
-        if len(names) == 1:
-            subject = f"Fuzzy m2c body for {names[0]} in {stem}"[:72]
+        what = f"body for {names[0]}" if len(names) == 1 else f"bodies for {len(names)} functions"
+        subject = f"Fuzzy m2c {what} in {stem}"[:72]
         _git(root, "add", "--", path)
         _git(root, "commit", "-q", "-m", subject, "--", path)
-        for _ in range(3):
-            if _try(root, "push", "-q", remote, f"HEAD:refs/heads/{branch}")[0] == 0:
-                return {
-                    "landed": True,
-                    "commit": _git(root, "rev-parse", "--short", "HEAD").strip(),
-                    "subject": subject,
-                }
-            _git(root, "fetch", "-q", remote, branch)
-            if _try(root, "rebase", f"{remote}/{branch}")[0]:
-                _try(root, "rebase", "--abort")
-                break
-        _git(root, "reset", "-q", "--hard", f"{remote}/{branch}")  # our private tree: only the unpushed commit goes
-        return {"landed": False, "why": "push refused and the rebase did not apply"}
+        return _publish(root, remote, branch, subject)
 
 
 # ------------------------------------------------------------------------------------------------ rename proof
@@ -296,19 +297,7 @@ def land_renames(config: Config, patch: Path, subject: str, remote: str = _REMOT
         if code:
             _git(root, "reset", "-q", "--hard", head)
             return {"landed": False, "why": f"commit refused: {said.strip()[-120:]}"}
-        for _ in range(3):
-            if _try(root, "push", "-q", remote, f"HEAD:refs/heads/{branch}")[0] == 0:
-                return {
-                    "landed": True,
-                    "commit": _git(root, "rev-parse", "--short", "HEAD").strip(),
-                    "subject": subject,
-                }
-            _git(root, "fetch", "-q", remote, branch)
-            if _try(root, "rebase", f"{remote}/{branch}")[0]:
-                _try(root, "rebase", "--abort")
-                break
-        _git(root, "reset", "-q", "--hard", f"{remote}/{branch}")
-    return {"landed": False, "why": "push refused and the rebase did not apply"}
+        return _publish(root, remote, branch, subject)
 
 
 # ------------------------------------------------------------------------------------------------ metrics
@@ -316,11 +305,11 @@ def metrics(config: Config, layout: world.Layout, scores: dict[str, float]) -> J
     """Functions with C / all per version, and the size-weighted score from docs/map-*.json (new bodies by their
     gate score). A function has C when it is landed or has a NON_MATCHING body."""
     root = config.project.root
-    out: Json = {}
+    out: dict[str, Any] = {}
     for version in config.project.versions:
         funcs = [m for m in layout.members.values() if m.kind == "function" and version in m.holders()]
         withc = [m for m in funcs if m.landed or m.name in layout.fuzzy or m.name in scores]
-        row: Json = {
+        row: dict[str, Any] = {
             "with_c": len(withc),
             "functions": len(funcs),
             "pct": round(100 * len(withc) / max(1, len(funcs)), 2),
@@ -369,7 +358,7 @@ def _chunk(
     base = {p: (root / p).read_text(encoding="utf-8") for p in by_module}
     held = {m: layout.members[m].standing or layout.members[m].holders() for ms in by_module.values() for m in ms}
     text = dict(base)
-    live = {p: sorted(ms, key=lambda m, p=p: _at(base[p], m)) for p, ms in by_module.items()}
+    live = {p: sorted(ms, key=lambda m: _at(base[p], m)) for p, ms in by_module.items()}
     scores: dict[str, float] = {}
     for _ in range(3):  # a body that sinks its module's build is dropped; the rest are measured again
         for path, ms in live.items():

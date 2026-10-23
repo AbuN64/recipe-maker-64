@@ -110,8 +110,8 @@ def _closure(snapshot: Snapshot, function: str, position: int, depth: int = 0) -
                 reach.subs.setdefault(a.via, []).append(replace(a, offset=a.offset - a.via, via=0))
         for at, callee in one.derived if depth < 2 else ():
             reach.subs.setdefault(at, []).extend(_closure(snapshot, *callee, depth + 1).rows)
-        for callee, a in one.returned:
-            reach.returns.setdefault(callee, []).append(a)
+        for returner, a in one.returned:
+            reach.returns.setdefault(returner, []).append(a)
         reach.extents.update({c: max(reach.extents.get(c, 0), n) for c, n in one.extents})
         todo += list(one.passes)
     reach.passed = sorted({n for n, _ in seen} - {function})

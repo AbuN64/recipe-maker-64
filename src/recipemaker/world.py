@@ -97,7 +97,7 @@ def overlay(snapshot: Snapshot, writes: Mapping[str, bytes | None]) -> Snapshot:
     return dataclasses.replace(snapshot, files=files, overlays=merged, digest=key, reads={})
 
 
-_INCLUDE = re.compile(rb'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)  # the quoted includes of a text
 
 
 def _header(snapshot: Snapshot, path: str) -> str:
@@ -107,8 +107,7 @@ def _header(snapshot: Snapshot, path: str) -> str:
 def header_of(path: str, text: bytes) -> str:
     """The quoted include of a module whose file stem is the module's own, as an include/ path."""
     stem = posixpath.splitext(posixpath.basename(path))[0].lower()
-    for name in _INCLUDE.findall(text):
-        spelled = name.decode(errors="replace")
+    for spelled in INCLUDE.findall(text.decode(errors="replace")):
         if posixpath.splitext(posixpath.basename(spelled))[0].lower() == stem:
             return posixpath.normpath(posixpath.join("include", spelled))
     return ""

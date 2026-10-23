@@ -151,6 +151,11 @@ def parameters(text: str, member: str) -> list[str]:
     return records.arguments(found[1])
 
 
+def _named(text: str, member: str) -> list[str]:
+    """The trailing word of each parameter of the definition of `member` ("" when it has none)."""
+    return [m[1] if (m := re.search(r"(\w+)\s*$", p)) else "" for p in parameters(text, member)]
+
+
 def _type_of(expression: str, local: Mapping[str, str], declared: Mapping[str, tuple[str, int, str]]) -> str | None:
     """The record type an argument expression points at: a cast to `T *`, a pointer variable of the caller or a
     global, or `&` of a record variable; None when the caller shows none."""
@@ -270,6 +275,26 @@ def _sibling_type(snapshot: Snapshot, name: str, position: int) -> str:
     return found[0] if found else ""
 
 
+def _origin(
+    code: Sequence[dispatch.Row],
+    at: int,
+    position: int,
+    program: tuple[ledger.Scope, dict[str, ledger.Identity], dict[str, str]],
+    parent: Callable[[int], list[tuple[str, str]]],
+    label: str,
+) -> tuple[str, str]:
+    """(record type, "") argument `position` points at in the call at instruction `at`, or ("", why not); the object
+    a function got as its own parameter is what `parent` (the evidence for that parameter) shows."""
+    run = [*code[:at], *code[at + 1 : at + 2]]  # the delay slot runs before the call
+    term = _value(run, len(run), f"$a{position}")
+    if term[0] != "parameter":
+        return _pointee(term, *program)
+    inner = parent(int(term[1][-1]))
+    kinds = {k for k, _ in inner if k}
+    why = "/".join(sorted({w for _, w in inner if w})) or "no caller"
+    return (kinds.pop(), "") if len(kinds) == 1 else ("", f"{label} parameter ({why})")
+
+
 def _dispatched(
     snapshot: Snapshot,
     member: str,
@@ -289,17 +314,15 @@ def _dispatched(
                 code = dispatch.instructions(index.asm(snapshot, reader))
             except (KeyError, OSError):
                 continue
-            for at, row in enumerate(code):
-                if row and row[0] == "jalr":
-                    run = [*code[:at], *code[at + 1 : at + 2]]
-                    term = _value(run, len(run), f"$a{position}")
-                    if term[0] != "parameter":
-                        out.append(_pointee(term, *program))
-                        continue
-                    inner = asm_evidence(snapshot, reader, int(term[1][-1]), seen | {member})
-                    kinds = {k for k, _ in inner if k}
-                    why = "/".join(sorted({w for _, w in inner if w})) or "no caller"
-                    out.append((kinds.pop(), "") if len(kinds) == 1 else ("", f"dispatcher parameter ({why})"))
+
+            def up(i: int, reader: str = reader) -> list[tuple[str, str]]:
+                return asm_evidence(snapshot, reader, i, seen | {member})
+
+            out += [
+                _origin(code, at, position, program, up, "dispatcher")
+                for at, row in enumerate(code)
+                if row and row[0] == "jalr"
+            ]
         if not readers:
             out.append(("", "table read by no function"))
     return out
@@ -326,17 +349,12 @@ def asm_evidence(
         for at, row in enumerate(code):
             if not (row and row[0] == "jal" and row[1] == [member]):
                 continue
-            run = [*code[:at], *code[at + 1 : at + 2]]  # the delay slot runs before the call
-            term = _value(run, len(run), f"$a{position}")
-            if term[0] != "parameter":
-                out.append(_pointee(term, scope, owner, returns))
-                continue
-            index_ = int(term[1][-1])
-            proto = passed(snapshot, f"{caller}({', '.join(['_'] * index_ + ['x'])});", "x")
-            inner = [(k, "") for k in proto] or asm_evidence(snapshot, caller, index_, seen | {member})
-            kinds = {k for k, _ in inner if k}
-            why = "/".join(sorted({w for _, w in inner if w})) or "no caller"
-            out.append((kinds.pop(), "") if len(kinds) == 1 else ("", f"caller parameter ({why})"))
+
+            def up(i: int, caller: str = caller) -> list[tuple[str, str]]:
+                proto = passed(snapshot, f"{caller}({', '.join(['_'] * i + ['x'])});", "x")
+                return [(k, "") for k in proto] or asm_evidence(snapshot, caller, i, seen | {member})
+
+            out.append(_origin(code, at, position, (scope, owner, returns), up, "caller"))
     return out + _dispatched(snapshot, member, position, (scope, owner, returns), seen)
 
 
@@ -380,10 +398,10 @@ def _retyped(params: Sequence[str], position: int, kind: str) -> str:
 def _untyped_params(text: str, member: str, left: Sequence[ledger.Left]) -> list[tuple[str, int]]:
     """(name, position) of each parameter base the resolver left untyped, with no pointer arithmetic on it (a new type
     would scale it)."""
-    names = [re.search(r"(\w+)\s*$", p) for p in parameters(text, member)]
+    names = _named(text, member)
     out = []
     for base in dict.fromkeys(row.base for row in left if not row.type):
-        position = next((i for i, n in enumerate(names) if n and n[1] == base), None)
+        position = names.index(base) if base in names else None
         if position is not None and not re.search(rf"\b{base}\s*[-+\[]|[-+]\s*{base}\b", text):
             out.append((base, position))
     return out
@@ -426,26 +444,34 @@ def _param_typed(
     return after.text, edits, notes
 
 
+def _typed_param(
+    snapshot: Snapshot, member: str, text: str, typing: tuple[str, int, str], label: str, why: str
+) -> Proposal | None:
+    """The proposal `label` typing parameter `base` (position and kind from `typing`) as a record a header defines,
+    saying `why`; None for a kind that is no such record or a change that misses an access."""
+    known, (base, position, kind) = index.get(snapshot).identities, typing
+    got = _view(known, kind) if kind and kind not in _UNTYPED and not fake_name(kind) else None
+    spelled = got[1].name if got and got[1].name.startswith("struct ") else kind
+    made = _param_typed(snapshot, member, text, (base, position, spelled), known, {}) if got else None
+    if made is None or got is None:
+        return None
+    line = f"retyped {base} as {spelled}{why} ({got[1].path})"
+    return Proposal(f"{label} {base}", ledger.including(made[0], got[1].path), made[1], (line, *made[2]))
+
+
 def retype_from_callers(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
     """An untyped parameter base given the one record type every landed caller that shows a type passes it, with the
     project's prototype retyped in the same change; the accesses then name that type's fields, its padding split for
     the ones it lacks. Nothing is proposed without such evidence or when the type misses an access."""
-    known = index.get(snapshot).identities
     out = []
     for base, position in _untyped_params(text, member, index.resolve(snapshot, text).left):
         calls = [t for t in evidence(snapshot, member, position) if t] + passed(snapshot, text, base)
         seen = set(calls)
-        kind = seen.pop() if len(seen) == 1 else ""
-        got = _view(known, kind) if kind and kind not in _UNTYPED and not fake_name(kind) else None
-        if got is None:
-            continue
-        view = got[1]
-        spelled = view.name if view.name.startswith("struct ") else kind
-        made = _param_typed(snapshot, member, text, (base, position, spelled), known, {})
-        if made is None:
-            continue
-        line = f"retyped {base} as {spelled} from {len(calls)} landed calls ({view.path})"
-        out.append(Proposal(f"caller type {base}", ledger.including(made[0], view.path), made[1], (line, *made[2])))
+        why = f" from {len(calls)} landed calls"
+        proposal = _typed_param(
+            snapshot, member, text, (base, position, seen.pop() if len(seen) == 1 else ""), "caller type", why
+        )
+        out += [proposal] if proposal else []
     return out
 
 
@@ -492,18 +518,9 @@ def group_record(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
         if len(kinds) > 1:
             continue
         if kinds:
-            kind = kinds.pop()
-            got = _view(known, kind) if kind not in _UNTYPED and not fake_name(kind) else None
-            if got is None:
-                continue
-            spelled = got[1].name if got[1].name.startswith("struct ") else kind
-            made = _param_typed(snapshot, member, text, (base, position, spelled), known, {})
-            if made is None:
-                continue
-            line = f"retyped {base} as {spelled}, the record of dispatch group {found.name} ({got[1].path})"
-            out.append(
-                Proposal(f"group type {base}", ledger.including(made[0], got[1].path), made[1], (line, *made[2]))
-            )
+            why = f", the record of dispatch group {found.name}"
+            proposal = _typed_param(snapshot, member, text, (base, position, kinds.pop()), "group type", why)
+            out += [proposal] if proposal else []
             continue
         made_record = group_evidence(snapshot, member, text, base, found)
         path = dispatch.header(snapshot, found.nodes)
@@ -560,16 +577,11 @@ def _hopped(
 _SCALAR_WORD = frozenset({"s32", "u32", "int", "unsigned int", "long"})
 
 
-def _scalar_uses(snapshot: Snapshot, name: str) -> list[str]:
-    """The landed sources naming the global `name` other than by its address: they read it as it is declared."""
-    pattern = re.compile(rf"(?<![&\w]){re.escape(name)}\b")
-    return [p for p in cparse.landed_sources(snapshot) if pattern.search(index.source(snapshot, p))]
-
-
-def _scaled_uses(snapshot: Snapshot, name: str) -> list[str]:
-    """The landed sources adding to or indexing the pointer global `name`, uncast."""
+def _uses(snapshot: Snapshot, name: str, scaled: bool) -> list[str]:
+    """The landed sources naming the global `name` other than by its address (they read it as it is declared), or with
+    `scaled` adding to or indexing it uncast."""
     n = re.escape(name)
-    pattern = re.compile(rf"(?<![\w)])\s*{n}\s*[-+\[]|[-+]\s*{n}\b")
+    pattern = re.compile(rf"(?<![\w)])\s*{n}\s*[-+\[]|[-+]\s*{n}\b" if scaled else rf"(?<![&\w]){n}\b")
     return [p for p in cparse.landed_sources(snapshot) if pattern.search(index.source(snapshot, p))]
 
 
@@ -643,9 +655,9 @@ def global_evidence(
         return f"declared {seen.type}{'*' * seen.stars}{'[]' * seen.array}, not an untyped pointer"
     else:
         mode = "retype" if seen is not None and seen.path else "declare"
-    if mode != "extend" and (plain or address) and (users := _scalar_uses(snapshot, name)):
+    if mode != "extend" and (plain or address) and (users := _uses(snapshot, name, False)):
         return f"landed code reads it as the {seen.type if seen else 'scalar'} it is declared ({users[0]})"
-    if mode != "extend" and not plain and (users := _scaled_uses(snapshot, name)):
+    if mode != "extend" and not plain and (users := _uses(snapshot, name, True)):
         return f"landed code does arithmetic on it, which a record pointer would scale ({users[0]})"
     path = seen.path if mode != "declare" else owner_header(snapshot, name, member)  # type: ignore[union-attr]
     if not path:
@@ -666,8 +678,7 @@ def fed(text: str, member: str, base: str, scaled: bool = False) -> tuple[str, b
     """(symbol, address) when the draft's local `base` only ever holds one data symbol's value (`x = D;`) or address
     (`x = &D;`), is declared an untyped pointer or word, and takes no pointer arithmetic (`scaled`: arithmetic
     allowed, for the census); else None."""
-    params = {m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))}
-    if base in params or not re.fullmatch(r"\w+", base):
+    if base in _named(text, member) or not re.fullmatch(r"\w+", base):
         return None
     if not re.search(rf"^[ \t]*(?:void \*|s32 |u32 |int )\s*{re.escape(base)};", text, re.M):
         return None
@@ -686,8 +697,7 @@ def _roots(
 ) -> dict[tuple[str, bool], list[str]]:
     """Per data symbol root (name, address) the locals of the draft it feeds; a base naming the symbol itself adds the
     root with no local."""
-    params = {m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))}
-    local = {*ledger.declared_types(text), *params}
+    local = {*ledger.declared_types(text), *_named(text, member)}
     addresses = index.get(snapshot).addresses
     out: dict[tuple[str, bool], list[str]] = {}
     for row in left:
@@ -711,20 +721,14 @@ def _define(header: str, one: dispatch.Record, name: str, address: bool, mode: s
     if mode == "extend":
         old = re.search(rf"^typedef struct {one.name} \{{\n(?:[^}}]*\n)*?\}} {one.name};\n", header, re.M)
         return None if old is None else header[: old.start()] + one.text() + header[old.end() :]
-    if mode == "declare":
-        return _declare(header, one, spelled)
+    if mode == "declare":  # the owner header takes the record and the declaration before its include guard's end
+        guard = re.search(r"^[ \t]*#[ \t]*endif\b[^\n]*\n?\s*\Z", header, re.M)
+        at = guard.start() if guard else len(header)
+        return header[:at] + ("" if not at or header[at - 1] == "\n" else "\n") + one.text() + spelled + header[at:]
     extern = re.search(rf"^[ \t]*extern\b[^;\n]*\b{re.escape(name)}\b[^;\n]*;[^\n]*\n?", header, re.M)
     if extern is None:
         return None
     return header[: extern.start()] + one.text() + spelled + header[extern.end() :]
-
-
-def _declare(header: str, one: dispatch.Record, spelled: str) -> str:
-    """The owner header with the record and the symbol's declaration before its include guard's end."""
-    guard = re.search(r"^[ \t]*#[ \t]*endif\b[^\n]*\n?\s*\Z", header, re.M)
-    at = guard.start() if guard else len(header)
-    lead = "" if not at or header[at - 1] == "\n" else "\n"
-    return header[:at] + lead + one.text() + spelled + header[at:]
 
 
 def global_record(snapshot: Snapshot, member: str, text: str) -> list[Proposal]:
@@ -815,7 +819,7 @@ def _grouped(snapshot: Snapshot, member: str, text: str, base: str, position: in
 def classify(snapshot: Snapshot, member: str, text: str, left: Sequence[ledger.Left]) -> tuple[ledger.Left, ...]:
     """Each placeholder left with the class of what keeps it one: an expression base, a typed base with no field and no
     padding there, an untyped base whose callers show no type or a type that misses an access."""
-    params = [m[1] for p in parameters(text, member) if (m := re.search(r"(\w+)\s*$", p))]
+    params = [n for n in _named(text, member) if n]
     local = ledger.declared_types(text)
     addresses = index.get(snapshot).addresses
     out = []

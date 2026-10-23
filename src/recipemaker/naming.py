@@ -439,17 +439,24 @@ def _ledger(config: Config, name: str) -> str:
 
 
 def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
-    """The moves as a saved patch: `{"patch", "files", "moves", "path"}`, the patch built on the files as they are."""
-    captured = api.capture(config)
-    built = dict(
-        structure.build(
-            config.project.root,
-            moves,
-            lambda name: captured.owner(doc["names_from"], name),
-            structure.modules_of(doc),
+    """The moves as a saved patch: `{"patch", "files", "moves", "path", "stream"}`, the patch built on the files as they
+    are; `path` and `stream` (the patch for stdout) are empty when no move applied."""
+    built = {"patch": "", "files": [], "moves": 0}
+    if moves:
+        captured = api.capture(config)
+        built = dict(
+            structure.build(
+                config.project.root,
+                moves,
+                lambda name: captured.owner(doc["names_from"], name),
+                structure.modules_of(doc),
+            )
         )
-    )
-    return {**built, "path": structure.save(config, built) if built["moves"] else ""}
+    return {
+        **built,
+        "path": structure.save(config, built) if built["moves"] else "",
+        "stream": structure.stream(built) if built["moves"] else "",
+    }
 
 
 def _number(config: Config) -> int:
@@ -548,7 +555,8 @@ def _scope(config: Config, doc: Json, target: str) -> set[str]:
         return {name, *re.findall(r"[A-Za-z_]\w*", text)}
     path = ladder.candidate_path(config, name)
     if not path.is_file():
-        path = config.project.root / ctx.modules.get(ctx.members.get(name, {}).get("module"), {}).get("source", "-")
+        module = ctx.members.get(name, {}).get("module", "")
+        path = config.project.root / ctx.modules.get(module, {}).get("source", "-")
     return {name, *re.findall(r"[A-Za-z_]\w*", path.read_text(encoding="utf-8") if path.is_file() else "")}
 
 
@@ -578,7 +586,7 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
     report = _root(config) / f"types-{k}.json"
     body = {"catalog": catalog.path, "proposals": list(found.proposals), "names": names, "refused": refused}
     structure.write(report, json.dumps(body, indent=1))
-    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
+    built = _patch(config, doc, moves)
     return {
         "action": "next",
         "step": "T",
@@ -587,8 +595,7 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
         "targets": len(found.proposals),
         "proposed": sum(1 for p in found.proposals if p["moved"]),
         "names": len(names),
-        **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
-        "stream": structure.stream(built) if built["moves"] else "",
+        **built,
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe status",
         "after": "",
     }
@@ -644,15 +651,14 @@ def next_(config: Config, params: Json) -> Json:
         pack = {"step": step, "k": k, "targets": cards, "answer": answer}
         pack |= {x: rules[x] for x in ("names", "banned", "evidence_forms", "evidence_note")}
         structure.write(path, json.dumps(pack))
-    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
+    built = _patch(config, doc, moves)
     return {
         "action": "next",
         "step": step,
         "read": len(graph),
         "pack": str(path.relative_to(config.project.root)) if path else None,
         "targets": len(pick),
-        **{k: built[k] for k in ("patch", "files", "moves", "path")},
-        "stream": structure.stream(built) if built["moves"] else "",
+        **built,
         "next": _SHIP.format(built["path"])
         if built["moves"]
         else f"recipe name submit {answer}"
@@ -688,7 +694,7 @@ def submit(config: Config, params: Json) -> Json:
             continue
         accepted.append((row, _moves(ctx, row)))
     moves = [m for _, group in accepted for m in group]
-    built = _patch(config, doc, moves) if moves else {"patch": "", "files": [], "moves": 0, "path": ""}
+    built = _patch(config, doc, moves)
     banners = [{"name": r["name"], "kind": r["kind"], "doc": " ".join(r["doc"].split())} for r, _ in accepted]
     structure.write(_root(config) / f"banners-{k}.json", json.dumps(banners))
     old = _ledger(config, "refused.jsonl")
@@ -701,8 +707,7 @@ def submit(config: Config, params: Json) -> Json:
         "accepted": len(accepted),
         "refused": len(refused),
         "by_rule": dict(Counter(r["rule"] for r in refused)),
-        **{k_: built[k_] for k_ in ("patch", "files", "moves", "path")},
-        "stream": structure.stream(built) if built["moves"] else "",
+        **built,
         "banners": f".unbake/recipe/name/banners-{k}.json",
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
     }

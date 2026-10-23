@@ -145,7 +145,7 @@ def family(snapshot: Snapshot, path: str, spelled: Sequence[str] = ()) -> str:
     folder = posixpath.dirname(path).removeprefix("src/").lower()
     included = [
         h
-        for n in re.findall(r'^#include "([^"]+)"', text.decode(errors="replace"), re.M)
+        for n in world.INCLUDE.findall(text.decode(errors="replace"))
         if snapshot.peek(h := posixpath.normpath(posixpath.join("include", n))) is not None
     ]
     near = [h for h in included if posixpath.dirname(h).removeprefix("include/").lower() == folder]
@@ -186,7 +186,7 @@ def _clashes(snapshot: Snapshot, header: str, users: list[str], read: Callable[[
     the `users` that is about to include it: the include would stop that unit compiling."""
     closure = [header]
     for path in closure:
-        for spelled in declplan._INCLUDE.findall(read(path) or ""):
+        for spelled in world.INCLUDE.findall(read(path) or ""):
             if (found := declplan.resolve(path, spelled, lambda p: read(p) is not None)) and found not in closure:
                 closure.append(found)
 
@@ -317,7 +317,7 @@ def _headers(snapshot: Snapshot, row: Json) -> tuple[list[str], str]:
     known = set(headers.sources(snapshot))
     unit = world.unit_of(snapshot, row["name"])
     texts = [index.source(snapshot, p) for p in ([unit.path] if unit else spelled) if headers.is_source(p)]
-    names = (n for t in texts for n in re.findall(r'^#include "([^"]+)"', t, re.M))
+    names = (n for t in texts for n in world.INCLUDE.findall(t))
     included = [p for p in dict.fromkeys(f"include/{n}" for n in names) if p in known]
     declaring = [p for p in spelled if headers.is_header(p)]
     chosen = family(snapshot, row["definition"][0], spelled) if row.get("definition") else ""
@@ -520,8 +520,7 @@ def _drop_repeats(snapshot: Snapshot, edits: dict[str, bytes], name: str) -> tup
         if not headers.is_source(path):
             continue
         heads = (
-            out[h] if (h := f"include/{n}") in out else snapshot.peek(h) or b""
-            for n in re.findall(r'^#include "([^"]+)"', text, re.M)
+            out[h] if (h := f"include/{n}") in out else snapshot.peek(h) or b"" for n in world.INCLUDE.findall(text)
         )
         given = {_normal(m[0]) for h in heads for m in _STATEMENT.finditer(h.decode(errors="replace"))}
         word = re.compile(rf"\b{re.escape(name)}\b")

@@ -162,14 +162,11 @@ def _identities(snapshot: Snapshot) -> tuple[ledger.Identity, ...]:
     return tuple(ledger.identities(views, _evidence(snapshot, {v.name for v in views}), pairs))
 
 
-_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', re.M)
-
-
 def _globals(snapshot: Snapshot) -> dict[str, tuple[dict[str, ledger.Global], tuple[str, ...]]]:
     out = {}
     for path in headers.sources(snapshot):
         text = source(snapshot, path)
-        out[path] = (ledger.globals_in(text, path), tuple(f"include/{m}" for m in _INCLUDE.findall(text)))
+        out[path] = (ledger.globals_in(text, path), tuple(f"include/{m}" for m in world.INCLUDE.findall(text)))
     return out
 
 
@@ -177,7 +174,7 @@ def scope(snapshot: Snapshot, text: str) -> ledger.Scope:
     """What the draft `text` sees: the globals of the headers it includes, transitively, the first declaration of a
     name winning; the symbol addresses; the record globals of every other header."""
     table = get(snapshot).globals
-    todo = [f"include/{m}" for m in _INCLUDE.findall(text)]
+    todo = [f"include/{m}" for m in world.INCLUDE.findall(text)]
     seen: set[str] = set()
     visible: dict[str, ledger.Global] = {}
     while todo:
