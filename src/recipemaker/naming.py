@@ -383,7 +383,14 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     if not unnamed and not original:
         if kind == "function" and ctx.sdk_name(ctx.canon(target)) == target:
             return "catalog", f"{target} is an SDK function: its name is the catalog name"
-        return "named", f"{target} already has a name"
+        # An external name can gain a subsystem when its body is first placed.
+        # Permit only adding that required prefix; existing names remain stable.
+        placed = ctx.canon(target) in ctx.members
+        word = ctx.word(ctx.folder_of(ctx.canon(target))) if kind == "function" and placed else ""
+        prefix = word.title() + "_" if word else ""
+        repair = prefix and name == prefix + target and _form(ctx, {**row, "name": target})[0] == "regex"
+        if not repair or ctx.verifies(f"debug {target}", ctx.users(target, kind)):
+            return "named", f"{target} already has a name"
     if original and ctx.canon(target) == name:
         return "named", f"{target} already has its original name"
     rule, reason = ("", "") if original else _form(ctx, row)

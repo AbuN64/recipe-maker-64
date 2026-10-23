@@ -797,3 +797,22 @@ def test_unowned_function_rename_updates_callers_and_all_symbol_tables(project, 
     assert target not in (root / "src/c.c").read_text()
     for version in ("us", "eu"):
         assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("NotifyActorChange =")
+
+
+@pytest.mark.parametrize(
+    ("name", "evidence", "accepted", "rule"),
+    [
+        ("Actor_ApplyControls", ["callee func_80004020"], 1, ""),
+        ("Actor_ChangeControls", ["callee func_80004020"], 0, "named"),
+        ("Actor_ApplyControls", ["callee osMissing"], 0, "unverifiable"),
+    ],
+)
+def test_placed_external_name_can_gain_only_its_required_prefix(project, monkeypatch, name, evidence, accepted, rule):
+    doc = document()
+    doc["members"].append(member("ApplyControls", "code_80004000", unit="src/c.c"))
+    doc["modules"][2]["members"].append("ApplyControls")
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setattr(naming, "reads", lambda config, doc: {**GRAPH, "ApplyControls": (["func_80004020"], [])})
+    got = submit(project, [row("ApplyControls", name, evidence)])
+    assert got["accepted"] == accepted
+    assert got["by_rule"] == ({rule: 1} if rule else {})
