@@ -62,49 +62,6 @@ s32 later(void) { return 0; }
 """
 
 
-def test_reach_keeps_the_function_and_what_it_reaches_and_drops_the_rest():
-    got = structs.reach(UNIT, "target")
-    for kept in (
-        "#pragma pack(push, 1)",
-        "typedef int s32;",
-        "} Cup;",
-        "extern Cup gCup;",
-        "helper(s32 x)",
-        "extern s32 gOther;",
-        "s32 target(",
-    ):
-        assert kept in got
-    for dropped in ("Unused", "other(void)", "later", "# 1"):
-        assert dropped not in got
-
-
-def test_the_shrunk_unit_compiles_the_function_to_the_same_assembly():
-    import re
-    import shutil
-    import subprocess
-
-    import pytest
-
-    if not shutil.which("gcc"):
-        pytest.skip("no gcc")
-
-    def assembly(text):
-        out = subprocess.run(
-            ["gcc", "-S", "-O1", "-x", "c", "-", "-o", "-"], input=text, capture_output=True, text=True, check=True
-        )
-        return re.sub(r"\.L\w+\d+", "", out.stdout.partition("\ntarget:")[2].partition(".size\ttarget")[0])
-
-    assert assembly(structs.reach(UNIT, "target")) == assembly(UNIT) != ""
-
-
-def test_reach_refuses_a_function_the_unit_does_not_define():
-    import pytest
-    from unbake.contracts import Refusal
-
-    with pytest.raises(Refusal):
-        structs.reach(UNIT, "missing")
-
-
 def test_a_zero_length_pad_and_a_pointer_sizeof_do_not_end_the_struct() -> None:
     pads = "char pad4[0x8 - 0x4 - sizeof(char*)];\n  s32 b;\n  char pad8[0x10 - 0x8 - sizeof(s32)];"
     header = f"struct S {{\n  char pad0[0x4];\n  char *a;\n  {pads}\n  s32 c;\n}};\n"

@@ -215,22 +215,6 @@ def extent(identity: Identity) -> int:
     return max((f.offset + f.size * f.count for f in identity.fields), default=0)
 
 
-def rank(known: Iterable[Identity], offsets: Iterable[int], limit: int | None) -> list[tuple[str, int, int]]:
-    """(name, offsets covered, size) of the types with a field at some of `offsets`, best first; a type larger than
-    the object (`limit` bytes, None when unknown) is never offered."""
-    wanted = sorted(set(offsets))
-    rows = [
-        (
-            i.names[0],
-            sum(any(f.offset <= o < f.offset + f.size * f.count for f in i.fields) for o in wanted),
-            extent(i),
-        )
-        for i in known
-        if i.spelled and (limit is None or extent(i) <= limit)
-    ]
-    return sorted((r for r in rows if r[1]), key=lambda r: (-r[1], r[2], r[0]))
-
-
 def declared_types(text: str) -> dict[str, str]:
     """The declared type of each pointer name in the function: its parameters and locals, never a prototype above."""
     found: dict[str, str] = {}

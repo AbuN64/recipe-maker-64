@@ -1,14 +1,11 @@
 """Struct views read from the project's headers: where each named field sits and how big it is."""
 
 import re
-from bisect import bisect_left
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from pycparser import CParser, c_ast
-from pycparser.c_parser import ParseError
 from unbake import api
-from unbake.contracts import Finding, Refusal, Snapshot, digest
+from unbake.contracts import Snapshot, digest
 
 from recipemaker import headers
 
@@ -257,33 +254,6 @@ def load(snapshot: Snapshot) -> list[Layout]:
     return _layouts(parsed)
 
 
-class _Names(c_ast.NodeVisitor):
-    """The names a top-level node uses, and the ones it declares (its own name, the tags and enumerators it defines)."""
-
-    def __init__(self) -> None:
-        self.used: set[str] = set()
-        self.declared: set[str] = set()
-
-    def visit_IdentifierType(self, node: c_ast.IdentifierType) -> None:
-        self.used.update(node.names)
-
-    def visit_ID(self, node: c_ast.ID) -> None:
-        self.used.add(node.name)
-
-    def visit_Enumerator(self, node: c_ast.Enumerator) -> None:
-        self.declared.add(node.name)
-        self.generic_visit(node)
-
-    def visit_Struct(self, node: c_ast.Struct | c_ast.Union | c_ast.Enum) -> None:
-        if node.name:  # a tag is kept apart from a variable by nothing here: the over-kept name is harmless
-            (self.declared if getattr(node, "decls", None) or getattr(node, "values", None) else self.used).add(
-                node.name
-            )
-        self.generic_visit(node)
-
-    visit_Union = visit_Enum = visit_Struct
-
-
 _PIECE = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|^[ \t]*#.*$|[{}();]", re.M)
 
 
@@ -309,60 +279,3 @@ def spans(text: str) -> list[tuple[int, int, bool]]:
             )
             begin = found.end()
     return spans
-
-
-class Unit:
-    """One preprocessed unit parsed once, so any names can be cut to the statements that declare or define them and
-    what those reach, transitively. A statement is kept whole and as written; `#pragma` lines are always kept."""
-
-    def __init__(self, text: str) -> None:
-        try:
-            tree = CParser().parse(re.sub(r"^#\s+\d+.*$", "", headers.normal(text), flags=re.M))  # lines stay physical
-        except ParseError as error:
-            raise Refusal(Finding("recipe.parse", f"the unit does not parse: {error}")) from error
-        breaks = [m.start() for m in re.finditer("\n", text)]
-        found = spans(text)
-        self.text = text
-        self.pragmas = [(a, text[a:b]) for a, b, directive in found if directive and "#pragma" in text[a:b]]
-        self.spans = [
-            (a, b, bisect_left(breaks, a) + 1, bisect_left(breaks, b - 1) + 1)
-            for a, b, directive in found
-            if not directive
-        ]
-        ends = [last for _, _, _, last in self.spans]
-        groups: dict[int, list[c_ast.Node]] = {}
-        for node in tree.ext:
-            if node.coord and (at := bisect_left(ends, node.coord.line)) < len(self.spans):
-                groups.setdefault(at, []).append(node)
-        self.names: dict[int, _Names] = {}
-        self.providers: dict[str, list[int]] = {}
-        for at, group in groups.items():
-            self.names[at] = names = _Names()
-            for node in group:
-                names.visit(node)
-                top = node.decl if isinstance(node, c_ast.FuncDef) else node
-                if isinstance(top, (c_ast.Decl, c_ast.Typedef)) and top.name:
-                    names.declared.add(top.name)
-            for name in names.declared:
-                self.providers.setdefault(name, []).append(at)
-        self.defined = {n.decl.name for group in groups.values() for n in group if isinstance(n, c_ast.FuncDef)}
-
-    def cut(self, seeds: Iterable[str]) -> str:
-        kept = {at for name in seeds for at in self.providers.get(name, ())}
-        todo = list(kept)
-        while todo:
-            for name in self.names[todo.pop()].used:
-                for at in self.providers.get(name, ()):
-                    if at not in kept:
-                        kept.add(at)
-                        todo.append(at)
-        pieces = [(self.spans[at][0], self.text[self.spans[at][0] : self.spans[at][1]]) for at in kept]
-        return "\n".join(piece for _, piece in sorted(pieces + self.pragmas)) + "\n"
-
-
-def reach(text: str, member: str) -> str:
-    """The unit cut to the function `member` and the declarations it reaches."""
-    unit = Unit(text)
-    if member not in unit.defined:
-        raise Refusal(Finding("recipe.parse", f"{member} is not defined in the unit", unit=member))
-    return unit.cut([member])

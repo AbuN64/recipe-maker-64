@@ -106,14 +106,6 @@ def test_a_type_smaller_than_the_offsets_used_is_never_suggested():
     assert near.left[0].candidates == ("ActorA",) and ledger.extent(identity[0]) == 16
 
 
-def test_rank_orders_by_offsets_covered_and_never_offers_a_type_larger_than_the_object():
-    small = structs.Layout("Small", "h.h", (structs.Field("a", 0, 4, 1, "i"), structs.Field("b", 4, 4, 1, "i")))
-    wide = structs.Layout("Wide", "h.h", (*small.fields, structs.Field("c", 8, 0x40, 1, "i")))
-    known = [ledger.Identity((small,), small.fields), ledger.Identity((wide,), wide.fields)]
-    assert ledger.rank(known, [0, 4, 8], None)[0][:2] == ("Wide", 3)
-    assert ledger.rank(known, [0, 4, 8], 0x24) == [("Small", 2, 8)]
-
-
 def test_a_prototype_above_the_function_declares_no_type_for_the_functions_own_names():
     text = "void g(void *arg0);\nvoid f(Actor *arg0) {\n    Item *p;\n}\n"
     assert ledger.declared_types(text) == {"arg0": "Actor", "p": "Item"}
@@ -289,9 +281,3 @@ def test_a_base_of_a_union_type_or_with_a_union_member_names_the_member(line, wa
     text = f"void f(State *arg0) {{\n    {line}\n}}\n"
     got = ledger.resolve(text, UNION_KNOWN, {}, ledger.Scope({"gPreview": ledger.Global("Preview", 1, False)}))
     assert want in got.text and got.left == ()
-
-
-def test_a_type_written_untagged_inside_another_is_never_offered_for_an_untyped_base():
-    assert all(name != "State.ring" for name, *_ in ledger.rank(UNION_KNOWN, [0, 8], None))
-    got = ledger.resolve("void f(void *p) {\n    M2C_FIELD(p, f32 *, 0) = 0;\n}\n", UNION_KNOWN, {})
-    assert all("State.ring" not in left.candidates for left in got.left)
