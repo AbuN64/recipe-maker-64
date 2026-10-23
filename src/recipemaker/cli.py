@@ -164,10 +164,8 @@ def _parked(root: Path) -> list[str]:
     """decomp ship's notices of set-aside changes that no longer applied, said by every command until the patch goes."""
     path = root / ".unbake/ship-parked.json"
     rows = json.loads(path.read_text()) if path.is_file() else []
-    say = "ship.parked: {} no longer apply; owners: {}; git apply --3way {} then delete it"
-    return [
-        say.format(" ".join(r["files"]), ", ".join(r["owners"]), r["patch"]) for r in rows if Path(r["patch"]).is_file()
-    ]
+    say = "ship.parked: {} no longer apply; git apply --3way {} then delete it"
+    return [say.format(" ".join(r["files"]), r["patch"]) for r in rows if Path(r["patch"]).is_file()]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

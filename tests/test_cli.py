@@ -257,13 +257,11 @@ def test_a_ship_parked_notice_is_said_until_its_patch_is_gone(tmp_path):
     patch = tmp_path / "p.patch"
     patch.write_text("diff")
     rows = [
-        {"patch": str(patch), "files": ["a.c"], "owners": ["L (f)"]},
+        {"patch": str(patch), "files": ["a.c"]},
         {"patch": str(tmp_path / "gone"), "files": []},
     ]
     (tmp_path / ".unbake").mkdir()
     (tmp_path / ".unbake/ship-parked.json").write_text(json.dumps(rows))
-    assert cli._parked(tmp_path) == [
-        f"ship.parked: a.c no longer apply; owners: L (f); git apply --3way {patch} then delete it"
-    ]
+    assert cli._parked(tmp_path) == [f"ship.parked: a.c no longer apply; git apply --3way {patch} then delete it"]
     patch.unlink()
     assert cli._parked(tmp_path) == []
