@@ -4,6 +4,11 @@ set -eu
 cd "$(dirname "$0")/.."
 PY="${PYTHON:-python3}"
 [ -x .venv/bin/python ] && PY=.venv/bin/python
+# A python without the dev tools (ruff, mypy, pytest, types-jsonschema) falls back to the seat venv ($ABU_VENV, default
+# ~/venv-decomp), which `pip install '.[dev]'` fills; the gate never skips for a missing tool.
+if ! "$PY" -c 'import ruff, mypy, pytest, importlib.metadata as m; m.version("types-jsonschema")' >/dev/null 2>&1; then
+  PY="${ABU_VENV:-$HOME/venv-decomp}/bin/python"
+fi
 export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
 "$PY" -m ruff check src tests
 "$PY" -m ruff format --check src tests
