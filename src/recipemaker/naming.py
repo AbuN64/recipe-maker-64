@@ -18,7 +18,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import cparse, debug, state, structure, style, table, tree
+from recipemaker import cparse, debug, repair, state, structure, style, table, tree
 
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 # style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
@@ -487,13 +487,13 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
     are; `path` and `stream` (the patch for stdout) are empty when no move applied."""
     built = {"patch": "", "files": [], "moves": 0}
     if moves:
-        captured = api.capture(config)
+        captured = api.capture(config) if doc else None
         built = dict(
             structure.build(
                 config.project.root,
                 moves,
-                lambda name: captured.owner(doc["names_from"], name),
-                structure.modules_of(doc),
+                lambda name: captured.owner(doc["names_from"], name) if captured else None,
+                structure.modules_of(doc) if doc else {},
             )
         )
     return {
@@ -749,8 +749,9 @@ def submit(config: Config, params: Json) -> Json:
     if not path.is_file() or path.suffix != ".jsonl":  # a pack or types report is read, never submitted
         why = "does not exist" if not path.is_file() else "is no names file (one JSON row per line, .jsonl)"
         raise state.stop("recipe.name", f"{path} {why}", action="recipe name next")
-    doc = structure.evidence(config, params["host"])
-    ctx = Map(config, doc, reads(config, doc))
+    doc: Json = {}
+    ctx: Map | None = None
+    repairs = repair.Repairs(config.project.root)
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -759,8 +760,22 @@ def submit(config: Config, params: Json) -> Json:
             row = {"bad": line}
         rows += [row if isinstance(row, dict) else {"bad": line}] if row is not None else []
     k = m[1] if (m := re.search(r"names-(\d+)", path.name)) else str(_number(config))
-    accepted, refused = [], []
+    accepted: list[tuple[Json, Sequence[Json]]] = []
+    refused: list[Json] = []
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
+        if row.get("kind") in ("local", "repair"):
+            rule, reason, direct = repairs.judge(row)
+            if rule:
+                refused.append({"row": row, "rule": rule, "reason": reason})
+            else:
+                accepted.append((row, direct))
+            continue
+        if row.get("kind") not in _ORDER:
+            refused.append({"row": row, "rule": "shape", "reason": "unknown naming row kind"})
+            continue
+        if ctx is None:
+            doc = structure.evidence(config, params["host"])
+            ctx = Map(config, doc, reads(config, doc))
         if row.get("kind") == "module" and isinstance(row.get("target"), str):
             row = {**row, "target": ctx.module_of(row["target"])}
         rule, reason = judge(ctx, row) if "bad" not in row else ("shape", "not a JSON object")

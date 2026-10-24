@@ -24,7 +24,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal, digest, file_facts
 
-from recipemaker import access, clash, cparse, debug, state, tree, world
+from recipemaker import access, clash, cparse, debug, repair, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
@@ -633,6 +633,31 @@ class Files:
                     count += n
         return count
 
+    def identifiers(self, old: str, new: str, paths: Iterable[str], local: str = "") -> int:
+        """Rename C tokens, preserving comments, string bytes and unrelated local scopes."""
+        count = 0
+        token = re.compile(rf"\b{re.escape(old)}\b")
+        for path in paths:
+            text = self.get(path)
+            if text is None:
+                continue
+            span = repair.local_span(text, local) if local else (0, len(text))
+            if span is None:
+                continue
+            a, b = span
+            masked = access.mask(text)
+            hits = [
+                m
+                for m in token.finditer(masked, a, b)
+                if not local or not re.search(r"(?:\.|->)\s*$", masked[a : m.start()])
+            ]
+            for hit in reversed(hits):
+                text = text[: hit.start()] + new + text[hit.end() :]
+            if hits:
+                self.put(path, text)
+                count += len(hits)
+        return count
+
     def changed(self) -> list[str]:
         return sorted(p for p in self.text if self.text[p] != self.orig[p] or p in self.origin)
 
@@ -737,7 +762,9 @@ def build(
         if op in ("symbol", "type"):
             hits = 0
             if op == "symbol":
-                found = sorted((root / "versions").glob("*/symbol_addrs.txt"))
+                found = sorted(
+                    p for pattern in ("*/symbol_addrs.txt", "*/aliases.txt") for p in (root / "versions").glob(pattern)
+                )
                 line = re.compile(rf"(?m)^([ \t]*){re.escape(subject)}(?![\w])")
                 hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found])
                 # the literals name of a function follows its name wherever it is (its symbol_addrs.txt row,
@@ -750,10 +777,12 @@ def build(
                 hits += files.replace(
                     _word(LITERALS + subject), LITERALS + target, [*sorted(rows), *files.everything()]
                 )
-            hits += files.replace(_word(subject), target, files.everything())
+            hits += files.identifiers(subject, target, files.everything())
             applied += bool(hits)
             if subject in where:
                 where[target] = where.pop(subject)
+        elif op == "local":
+            applied += bool(files.identifiers(subject, target, [move["path"]], move["function"]))
         elif op == "module":
             for names in (path, header):
                 if subject in names:

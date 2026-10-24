@@ -49,3 +49,9 @@ reads Unbake's reviewed `config/symbol-name-baseline.json`; successful
 or findings fail audit. Land the reduced config together with source fixes.
 SDK implementation namespace exemptions apply only to source checks and never
 to names this tool proposes. Aliases remain plain C names and `#define`.
+Source-only portability repairs use recipe name submit FILE with JSONL rows: kind is repair
+(all source/header tokens and version symbol tables) or local (one function definition/prototype);
+target, name, path, line and doc are required. A local row also names function.
+The source path/line is checked evidence of the old nonportable identifier. New spellings must be portable
+and unused in scope. Original SDK names must be left out of repair submissions. These rows do not build a ROM map.
+Renames preserve comments and string bytes. Apply the saved patch with recipe apply PATH.
