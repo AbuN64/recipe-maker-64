@@ -327,3 +327,9 @@ def test_uppercase_folders_still_enforce_their_real_function_and_module_prefix(t
     )
     got = run(config)
     assert {f["rule"] for f in got["findings"]} == {"function-name", "file-name"}
+
+
+def test_class_separator_and_reserved_names_are_not_style_aliases():
+    assert style.legal("function", "CVector3_GetDirectionRotation2", "actor")
+    for name in ("CVector3__GetDirectionRotation2", "__ClassMethod", "_ClassMethod", "__osPopThread"):
+        assert not style.legal("function", name, "actor")

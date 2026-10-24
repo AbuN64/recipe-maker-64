@@ -11,6 +11,8 @@ evidence_forms = ["callee NAME", "caller NAME", "reads NAME", "tag WORD", "debug
 evidence_note = "any form may end in a note in parentheses, which is not checked: callee func_80001020 (vertex pool)"
 
 [names]
+class_separator = "_"
+class_function = '^C[A-Z][A-Za-z0-9]*_[A-Z][A-Za-z0-9]*$'
 subsystem = '^[a-z][a-z0-9]{1,11}$'
 library = '^[a-z][a-z0-9]{1,11}$'
 module = '^{dir}_[a-z][a-z0-9_]{1,23}$'

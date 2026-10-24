@@ -338,7 +338,10 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
         folder = ctx.folder_of(ctx.canon(target)) if kind == "function" else ctx.folder(target)
         word = ctx.word(folder)
         external = kind == "function" and ctx.canon(target) not in ctx.members and ctx.symbol_kind(target) == kind
-        if not word and not style.free_folder(folder) and not external:
+        class_method = kind == "function" and re.fullmatch(
+            table("knowledge/style.toml")["names"]["class_function"], name
+        )
+        if not word and not style.free_folder(folder) and not external and not class_method:
             return "prefix", (
                 f"the subsystem folder {folder} has no name yet: name it first, with a subsystem row for {folder} in "
                 f"this same file (subsystem rows are judged first) or from `recipe name next --step N2`, which offers "
@@ -689,8 +692,14 @@ def next_(config: Config, params: Json) -> Json:
     """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack; T
     renames invented records to the debug catalog's original types."""
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
+    debt = api.naming_debt(config.project.root)
+    debt_path = _root(config) / "symbol-name-debt.json"
+    structure.write(debt_path, json.dumps(debt, indent=2) + "\n")
     if step == "T":
-        return _types(config, doc, params.get("target"))
+        return {
+            **_types(config, doc, params.get("target")),
+            "naming_debt": str(debt_path.relative_to(config.project.root)),
+        }
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
     for row in [*(_auto(ctx) if step == "N2" else []), *_sdk(ctx)]:
@@ -713,7 +722,7 @@ def next_(config: Config, params: Json) -> Json:
         k, rules = _number(config), table("knowledge/style.toml")
         path, answer = _root(config) / f"pack-{k}.json", f".unbake/recipe/name/names-{k}.jsonl"
         cards = [_card(ctx, kind, t, doc["names_from"]) for kind, t in pick]
-        pack = {"step": step, "k": k, "targets": cards, "answer": answer}
+        pack = {"step": step, "k": k, "targets": cards, "answer": answer, "naming_debt": debt}
         pack |= {x: rules[x] for x in ("names", "banned", "evidence_forms", "evidence_note")}
         structure.write(path, json.dumps(pack))
     built = _patch(config, doc, moves)
@@ -721,6 +730,7 @@ def next_(config: Config, params: Json) -> Json:
         "action": "next",
         "step": step,
         "read": len(graph),
+        "naming_debt": str(debt_path.relative_to(config.project.root)),
         "pack": str(path.relative_to(config.project.root)) if path else None,
         "targets": len(pick),
         **built,

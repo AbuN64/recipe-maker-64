@@ -84,7 +84,8 @@ def pattern(kind: str, word: str = "") -> str:
     names = _rules()["names"]
     bare = kind in ("function", "module") and not word
     key = f"unprefixed_{kind}" if bare or (kind == "function" and word in _rules()["unprefixed"]) else kind
-    return str(names[key]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
+    regular = str(names[key]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
+    return f"(?:{regular}|{names['class_function']})" if kind == "function" else regular
 
 
 def legal(kind: str, name: str, word: str = "") -> bool:

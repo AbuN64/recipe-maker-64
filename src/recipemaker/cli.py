@@ -64,7 +64,8 @@ def _render_name(result: Json) -> list[str]:
     if result["action"] == "next":
         pack = f"pack {result['pack']} holds {result['targets']} targets, " if result["pack"] else ""
         why = [f"  {n} {r}" for r, n in sorted(result.get("reasons", {}).items(), key=lambda x: -x[1])]
-        return [f"{result['step']}: {pack}{result['moves']} moves in patch {result['path'] or 'none'}", *why]
+        debt = [f"naming debt by file: {result['naming_debt']}"] if result.get("naming_debt") else []
+        return [f"{result['step']}: {pack}{result['moves']} moves in patch {result['path'] or 'none'}", *why, *debt]
     if result["action"] == "submit":
         rules = ", ".join(f"{k} {v}" for k, v in sorted(result["by_rule"].items()))
         return [

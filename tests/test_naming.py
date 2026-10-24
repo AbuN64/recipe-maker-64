@@ -2,6 +2,7 @@
 loads come from the extracted assembly."""
 
 import json
+import re
 import subprocess
 from types import SimpleNamespace
 
@@ -343,7 +344,7 @@ def test_a_subsystem_folder_word_is_its_name_folded_to_the_convention_case(folde
     from recipemaker import style
 
     assert style.subsystem_word(folder) == "sched"
-    assert style.pattern("function", style.subsystem_word(folder)).startswith("^Sched_")
+    assert re.fullmatch(style.pattern("function", style.subsystem_word(folder)), "Sched_CreateThread")
     assert style.legal("function", "Sched_ReadResourcePages", style.subsystem_word(folder))
     assert style.legal("module", "sched_pager", style.subsystem_word(folder))
 
@@ -824,3 +825,30 @@ def test_reserved_catalog_names_are_not_a_portability_exception(project):
     table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
     got = submit(project, [row("func_80700000", "__osDisableInt", [])])
     assert got["accepted"] == 0 and got["by_rule"] == {"portable": 1}
+
+
+def test_name_packs_publish_reviewed_per_file_debt(project):
+    root = project.project.root
+    debt = {"src/a.c": [{"reason": "reserved name", "lines": [7, 12]}]}
+    path = root / "config/symbol-name-baseline.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"schema": 1, "revision": "a" * 40, "files": debt}))
+    got = run(project, "next", step="N3")
+    pack = json.loads((root / got["pack"]).read_text())
+    assert pack["naming_debt"] == debt
+    assert json.loads((root / got["naming_debt"]).read_text()) == debt
+    assert pack["names"]["class_separator"] == "_"
+
+
+def test_class_methods_use_single_separator_with_evidence(project):
+    ctx = naming.Map(project, document(), GRAPH)
+    row = {
+        "kind": "function",
+        "target": "func_80004010",
+        "name": "CVector3_GetDirectionRotation2",
+        "doc": "Direction rotation from the caller",
+        "evidence": ["caller func_80003010"],
+    }
+    assert naming.judge(ctx, row) == ("", "")
+    for name in ("CVector3__GetDirectionRotation2", "__ClassMethod", "_ClassMethod", "__osPopThread"):
+        assert naming.judge(ctx, {**row, "name": name})[0] == "portable"

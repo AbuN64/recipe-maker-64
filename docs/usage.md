@@ -32,3 +32,20 @@ names as well as proposals and saved patches. Aliases use plain C names and
 `#define`; the compiler owns object-file prefixes and C ABI decoration. Explicit
 asm labels and target-specific symbol aliases are refused before a patch is
 emitted or applied. Case-only collisions are refused across the source set.
+
+## Portable class names and reviewed naming debt
+
+Class methods use one underscore, for example `CVector3_GetDirectionRotation2`.
+The `Class__Method` convention is retired. Name and style validation reject any
+`__`, leading underscore reserved namespace or compiler keyword before accepting
+evidence; debug and SDK identities do not grant permission to propose one.
+C-prefixed class methods retain their class prefix independently of subsystem
+folder names. Packs carry the single-underscore rule in `names.class_separator`.
+
+`recipe name next` includes `naming_debt` grouped by source file in each normal
+pack and publishes `.unbake/recipe/name/symbol-name-debt.json` for all steps. It
+reads Unbake's reviewed `config/symbol-name-baseline.json`; successful
+`unbake audit --against REV` runs remove fixed entries. New occurrences, paths
+or findings fail audit. Land the reduced config together with source fixes.
+SDK implementation namespace exemptions apply only to source checks and never
+to names this tool proposes. Aliases remain plain C names and `#define`.
