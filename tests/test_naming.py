@@ -589,14 +589,14 @@ def test_a_module_row_names_its_target_by_stem_or_path_and_a_neutral_upper_case_
 def test_an_sdk_function_takes_the_name_the_projects_libultra_table_gives_its_address(project):
     table = project.project.root / "versions/us/libultra_names.tsv"
     table.parent.mkdir(parents=True)
-    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\tosDisableInt\tEXACT\tsame words\n")
     rows = [
-        row("func_80700000", "__osDisableInt", ["caller func_80001010"]),
-        row("func_80700000", "__osRestoreInt", ["caller func_80001010"]),  # no table names it so
+        row("func_80700000", "osDisableInt", ["caller func_80001010"]),
+        row("func_80700000", "osRestoreInt", ["caller func_80001010"]),  # no table names it so
     ]
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
-    assert {"op": "symbol", "subject": "func_80700000", "target": "__osDisableInt"} in moves(project)
+    assert {"op": "symbol", "subject": "func_80700000", "target": "osDisableInt"} in moves(project)
 
 
 def test_n4_calls_a_datum_static_when_one_file_reads_it_whatever_the_folder_holds(project):
@@ -655,10 +655,10 @@ def test_an_sdk_function_asked_to_take_another_name_is_refused_as_the_catalog_na
 def test_an_sdk_function_takes_its_catalog_name_with_no_evidence_when_nothing_calls_it(project):
     table = project.project.root / "versions/us/libultra_names.tsv"
     table.parent.mkdir(parents=True)
-    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\tosDisableInt\tEXACT\tsame words\n")
     rows = [
-        row("func_80700000", "__osDisableInt", []),  # the table line is the evidence
-        row("func_80700000", "__osRestoreInt", []),  # not the catalog name: still refused
+        row("func_80700000", "osDisableInt", []),  # the table line is the evidence
+        row("func_80700000", "osRestoreInt", []),  # not the catalog name: still refused
     ]
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
@@ -816,3 +816,11 @@ def test_placed_external_name_can_gain_only_its_required_prefix(project, monkeyp
     got = submit(project, [row("ApplyControls", name, evidence)])
     assert got["accepted"] == accepted
     assert got["by_rule"] == ({rule: 1} if rule else {})
+
+
+def test_reserved_catalog_names_are_not_a_portability_exception(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    got = submit(project, [row("func_80700000", "__osDisableInt", [])])
+    assert got["accepted"] == 0 and got["by_rule"] == {"portable": 1}

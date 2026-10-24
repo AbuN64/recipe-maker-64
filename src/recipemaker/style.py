@@ -88,7 +88,9 @@ def pattern(kind: str, word: str = "") -> str:
 
 
 def legal(kind: str, name: str, word: str = "") -> bool:
-    return neutral(name) or name in _rules()["allow"] or bool(re.fullmatch(pattern(kind, word), name))
+    return not api.name_issues(name) and (
+        neutral(name) or name in _rules()["allow"] or bool(re.fullmatch(pattern(kind, word), name))
+    )
 
 
 def collision(stem: str) -> bool:

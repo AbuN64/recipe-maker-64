@@ -344,6 +344,16 @@ def propose(
             m["batch"] = folder
             if folder not in order:
                 order.append(folder)
+    proposed_paths: set[str] = set()
+    for m in modules:
+        if why := api.name_issues(m["name"], "file"):
+            raise state.stop("recipe.structure", why[0])
+        for path_key in ("source", "header"):
+            value = m.get(path_key, "")
+            if value:
+                if why := api.name_issues(value, "file", sorted(proposed_paths - {value})):
+                    raise state.stop("recipe.structure", why[0])
+                proposed_paths.add(value)
     refused = _data_guard(modules, existing, {a["name"]: a for a in every})
     is_c = {a["name"]: a["c"] for a in every}
     counted = [m for m in modules if any(is_c.get(n) for n in m["atoms"])]  # asm-only modules are no C units
@@ -689,6 +699,11 @@ def build(
 
     `note` hears a progress line at most every `BEAT` seconds."""
     files, applied, beat = Files(root), 0, time.monotonic()
+    for move in moves:
+        kind = "symbol" if move["op"] in ("symbol", "type", "field", "merge") else "file"
+        name = re.sub(r"^(?:struct|union|enum)\s+", "", move["target"]) if move["op"] == "merge" else move["target"]
+        if name_why := api.name_issues(name, kind):
+            raise state.stop("recipe.structure", name_why[0])
     member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move
     types: access.Types | None = None  # the records and the data they type, read at the first shared member move
     skipped: list[Json] = []  # the moves that changed nothing, with the reason
@@ -787,6 +802,15 @@ def build(
     _tidy(files, {m["target"] for m in moves if m["op"] == "symbol"})
     _rekey(files)
     _inherit(files, born)
+    changed = set(files.changed())
+    if changed:
+        before = {p: text for p in files.everything() if (text := files.orig.get(p)) is not None}
+        after = {p: text for p in files.everything() if (text := files.get(p)) is not None}
+        before.update({p: text for p, text in files.orig.items() if text is not None})
+        existing = {(f.path, f.reason) for f in api.naming_findings(before)}
+        added = [f for f in api.naming_findings(after) if (f.path, f.reason) not in existing]
+        if added:
+            raise state.stop("recipe.structure", added[0].reason, path=added[0].path)
     if note:
         note(f"structure > build diff of {len(files.changed())} files")
     return {"patch": files.diff(), "files": files.changed(), "moves": applied, "skipped": skipped}
@@ -1135,6 +1159,60 @@ def _made_paths(patch: str) -> list[str]:
     return list(dict.fromkeys(made))
 
 
+def _portable_patch(root: Path, patch: str) -> None:
+    """Read the result of a unified text patch before git mutates the project."""
+    files = Files(root)
+    before = {p: text for p in files.everything() if (text := files.get(p)) is not None}
+    after = dict(before)
+    blocks = (
+        re.split(r"(?=^diff --git )", patch, flags=re.M)
+        if "diff --git " in patch
+        else re.split(r"(?=^--- )", patch, flags=re.M)
+    )
+    for block in blocks:
+        if not block.strip():
+            continue
+        old = re.search(r"^--- (?:a/)?([^\n\t]+)", block, re.M)
+        new = re.search(r"^\+\+\+ (?:b/)?([^\n\t]+)", block, re.M)
+        rename = re.search(r"^rename from ([^\n]+)\nrename to ([^\n]+)", block, re.M)
+        if not (old and new) and not rename:
+            continue  # no source text changed (e.g. a mode-only patch)
+        src, dst = (old[1], new[1]) if old and new else (rename[1], rename[2]) if rename else ("", "")
+        for path in (src, dst):
+            if path != "/dev/null" and (why := api.name_issues(path, "file")):
+                raise state.stop("recipe.apply", why[0])
+        if not any(PurePosixPath(p).suffix.lower() in _TEXT for p in (src, dst)):
+            continue
+        original = before.get(src, "").splitlines(keepends=True)
+        result: list[str] = []
+        cursor = 0
+        hunks = list(re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@[^\n]*\n", block, re.M))
+        for index, hunk in enumerate(hunks):
+            start = int(hunk[1]) - (hunk[2] != "0")
+            result.extend(original[cursor:start])
+            cursor = start
+            end = hunks[index + 1].start() if index + 1 < len(hunks) else len(block)
+            for line in block[hunk.end() : end].splitlines(keepends=True):
+                if line.startswith((" ", "-")):
+                    if cursor >= len(original) or original[cursor].rstrip("\n") != line[1:].rstrip("\n"):
+                        raise state.stop(
+                            "recipe.apply", "patch context moved; regenerate the patch before naming admission"
+                        )
+                    cursor += 1
+                if line.startswith((" ", "+")):
+                    result.append(line[1:])
+                elif line.startswith("\\ No newline") and result:
+                    result[-1] = result[-1].removesuffix("\n")
+        result.extend(original[cursor:])
+        after.pop(src, None)
+        if dst != "/dev/null":
+            after[dst] = "".join(result)
+    held = {(f.path, f.reason) for f in api.naming_findings(before)}
+    added = [f for f in api.naming_findings(after) if (f.path, f.reason) not in held]
+    if added:
+        raise state.stop("recipe.apply", added[0].reason, path=added[0].path)
+
+
 def apply(config: Config, params: Json) -> Json:
     """`recipe apply`: `git apply` the newest saved patch that applies (or PATCH), its new files intent-to-add, then
     `unbake sync`; sync's result comes back.
@@ -1160,6 +1238,7 @@ def apply(config: Config, params: Json) -> Json:
     # the new files alone (10-20: ~6,420 entries lost per apply), so the index stays as it was and the files the patch
     # makes are then marked intent-to-add one by one
     text = patch.read_text(errors="replace")
+    _portable_patch(root, text)
     ran = recipe_host.run(["git", "-C", str(root), "apply", str(patch.resolve())], root, config)
     if ran.exit:
         tail = bytes(ran.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git apply failed"]

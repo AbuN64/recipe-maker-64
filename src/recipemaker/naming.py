@@ -375,6 +375,20 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "shape", "a row needs kind, target, name, evidence and doc"
     if reason := _exists(ctx, row):
         return "target", reason
+    name_kind = "file" if kind in ("module", "subsystem") else "symbol"
+    if why := api.name_issues(name, name_kind):
+        return "portable", why[0]
+    # Original/debug and SDK evidence never override target portability.
+    folded = [n for n in ctx.taken if n != target and n != name]
+    if why := api.name_issues(name, name_kind, taken=folded):
+        return "duplicate", why[0]
+    if kind == "subsystem":
+        carried = ctx.carried(target, name)
+        for new in carried.values():
+            if why := api.name_issues(new):
+                return "portable", why[0]
+            if why := api.name_issues(new, taken=sorted(ctx.taken - set(carried))):
+                return "duplicate", why[0]
     original = _original(ctx, row)
     if kind == "module":
         unnamed = style.neutral_module(PurePosixPath(ctx.modules[target]["source"]).stem)

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from unbake import api
 from unbake.contracts import Json
 
 Mod = dict[str, Any]
@@ -44,7 +45,10 @@ class Naming:
         stem = self.fill(self.stem, name=module["name"], vram=f"{address:08X}", label=module.get("label", ""))
         if self.stem_max and len(stem) > self.stem_max:
             raise ValueError(f"recipe naming: stem {stem!r} of {module['name']} is over stem_max {self.stem_max}")
-        return f"{folder}/{stem}{self.source_ext}"
+        path = posixpath.join(folder, f"{stem}{self.source_ext}")
+        if why := api.name_issues(path, "file"):
+            raise ValueError(f"recipe naming: {why[0]}")
+        return path
 
     def evidenced(self, source: str) -> tuple[str, str]:
         """(subsystem, source path) an evidence path names, spelled the way `evidence` says."""
@@ -126,9 +130,11 @@ def identity(base: str, taken: Collection[str], atoms: Sequence[Json], first: st
     address = vram(atoms[0], first)
     name, more = base, iter([_suffix(atoms, first), *(f"{vram(a, first):08X}" for a in atoms)])
     for extra in more:
-        if name not in taken:
+        if not api.name_issues(name, "file", taken=sorted(taken)):
             return name, address
         name, address = f"{base}_{extra}", int(extra, 16)
+    if why := api.name_issues(name, "file", taken=sorted(taken)):
+        raise ValueError(f"recipe naming: {why[0]}")
     return name, address
 
 

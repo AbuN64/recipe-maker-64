@@ -23,3 +23,12 @@ name; a member spelling that other records share is renamed only where the base 
 
 `recipe style [PATHS | --paths PATH...]` checks names and layout against the clean-code rules; a name the debug catalog
 spells so is the original and is not a finding. `recipe look NAME` shows a prototype, type, field or global.
+
+## Target-safe names
+
+Names and structure paths must pass unbake's shared `symbol-names.toml` table
+(elf-gcc, coff-mingw, macho-clang, android-clang, msvc). This applies to debug
+names as well as proposals and saved patches. Aliases use plain C names and
+`#define`; the compiler owns object-file prefixes and C ABI decoration. Explicit
+asm labels and target-specific symbol aliases are refused before a patch is
+emitted or applied. Case-only collisions are refused across the source set.
