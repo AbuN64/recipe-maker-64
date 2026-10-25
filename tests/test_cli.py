@@ -265,3 +265,44 @@ def test_a_ship_parked_notice_is_said_until_its_patch_is_gone(tmp_path):
     assert cli._parked(tmp_path) == [f"ship.parked: a.c no longer apply; git apply --3way {patch} then delete it"]
     patch.unlink()
     assert cli._parked(tmp_path) == []
+
+
+def test_the_slice_pack_and_auto_results_are_said_in_a_line_each():
+    slices = {
+        "action": "slices",
+        "summary": ["98 slices"],
+        "path": "/n/slices.json",
+        "lane_files": ["/n/slices/a.json"],
+    }
+    assert cli.render("name", {**slices, "next": "n"}).splitlines() == [
+        "98 slices",
+        "written /n/slices.json",
+        "lane file /n/slices/a.json",
+        "next: n",
+    ]
+    pack = {
+        "action": "next",
+        "step": "S",
+        "slice": ["S010"],
+        "pack": "/p/pack.json",
+        "answer": "/p/names.jsonl",
+        "functions": 20,
+        "slots": 70,
+        "data": 0,
+        "functions_left": 44,
+        "next": "recipe name submit --ledger L /p/names.jsonl",
+    }
+    said = cli.render("name", pack).splitlines()
+    assert said[0] == "S S010: pack /p/pack.json holds 20 functions (70 slots) and 0 data, 44 functions left"
+    auto = {
+        "action": "auto",
+        "rows": 3,
+        "by_kind": {"sdk": 1, "strings": 2},
+        "path": "/a.jsonl",
+        "refused": {"strings": {"duplicate": 2}},
+        "next": "n",
+    }
+    assert cli.render("name", auto).splitlines()[:2] == [
+        "3 rows (sdk 1, strings 2) in /a.jsonl",
+        "judged out: {'strings': 2}",
+    ]
