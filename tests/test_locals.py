@@ -176,3 +176,17 @@ def test_member_rename_patches_the_record_and_its_typed_accesses(tmp_path):
 )
 def test_member_rename_refuses_unchecked_evidence_and_bad_names(tmp_path, row, rule):
     assert field(tmp_path, **row)["by_rule"] == {rule: 1}
+
+
+def test_debug_catalog_names_are_evidence_for_the_function_they_belong_to(monkeypatch):
+    from recipemaker import debug
+
+    body = "{\n    int sp1C;\n    sp1C = 0;\n}\n"
+    assert locals_.suggestions(body, "sp1C", {}, ("pIntel", "TargetInfo")) == ["debug pIntel", "debug TargetInfo"]
+    assert locals_.verify(body, "sp1C", ["debug TargetInfo"], {}, ("TargetInfo",)) == ""
+    assert "not in the function" in locals_.verify(body, "sp1C", ["debug TargetInfo"], {}, ())
+    fn = debug.Function("Turret_TrackTarget", "us-rev1", 0x80203000, "T.CPP", 1, 40, ("pTurret",), locals=("pIntel",))
+    cat = debug.Catalog("c", (), (fn,), ())
+    monkeypatch.setattr(debug, "load", lambda config: cat)
+    monkeypatch.setattr(debug.api, "symbols", lambda config, v: {"Turret_Track": (0x80203000, 0, 4, "func")})
+    assert debug.variables(object()) == {"Turret_Track": ("pTurret", "pIntel")}

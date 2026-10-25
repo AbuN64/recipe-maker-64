@@ -5,6 +5,7 @@ its evidence is an existing identifier at an explicit source path and line.
 """
 
 import re
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
 from unbake import api
@@ -26,8 +27,10 @@ def local_span(text: str, function: str) -> tuple[int, int] | None:
 class Repairs:
     """One source inventory per submitted batch, with collision checks before patch creation."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, original: Callable[[], Mapping[str, Sequence[str]]] | None = None) -> None:
         self.root = root
+        self._original = original  # read on the first local row: function -> its debug catalog variable names
+        self.original: Mapping[str, Sequence[str]] | None = None
         self.text: dict[str, str] = {}
         self.taken: set[str] | None = None
         self.accepted: set[str] = set()
@@ -97,7 +100,12 @@ class Repairs:
             declared = [m for m in declaration.finditer(scope) if m[1] not in ("return", "goto", "case")]
             if not declared or re.search(r"\b(?:struct|union)\s+\w*\s*\{", scope):
                 return "scope", "local scope needs a declaration and no nested record definition", []
-            if slot and (bad := locals_.verify(scope, old, row.get("evidence"), self.protos.get(locals_.calls(scope)))):
+            if self.original is None:
+                self.original = self._original() if self._original else {}
+            known = self.original.get(str(function), ())
+            if slot and (
+                bad := locals_.verify(scope, old, row.get("evidence"), self.protos.get(locals_.calls(scope)), known)
+            ):
                 return "evidence", bad, []
             taken = set(WORD.findall(scope))
             move |= {"op": "local", "path": path, "function": str(function)}

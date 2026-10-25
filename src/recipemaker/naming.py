@@ -961,13 +961,17 @@ def _locals(config: Config, params: Json) -> Json:
         raise state.stop(
             "recipe.name", f"no source folder or function is named {target}", action="recipe name next --step L"
         )
-    cards, bare = _local_cards(root, target, files, locals_.Prototypes(root))
+    cards, bare = _local_cards(root, target, files, locals_.Prototypes(root), debug.variables(config))
     cards.sort(key=lambda c: (-len(c["slots"]), c["path"], c["line"]))
     return _local_pack(config, params, cards, bare)
 
 
-def _local_cards(root: Path, target: str, files: Sequence[Path], index: Any) -> tuple[list[Json], int]:
-    """(cards, slots without evidence) of step L for TARGET (a folder or one function) over FILES."""
+def _local_cards(
+    root: Path, target: str, files: Sequence[Path], index: Any, original: Mapping[str, Sequence[str]] | None = None
+) -> tuple[list[Json], int]:
+    """(cards, slots without evidence) of step L for TARGET (a folder or one function) over FILES; ORIGINAL maps a
+    function to the variable names the debug catalog gives it (each is `debug NAME` evidence for its slots)."""
+    original = original or {}
     single = not locals_.is_folder(root, target)
     cards: list[Json] = []
     bare = 0
@@ -981,7 +985,7 @@ def _local_cards(root: Path, target: str, files: Sequence[Path], index: Any) -> 
             body = masked[fn.start : fn.end]
             rows = []
             for slot in locals_.slots(text, fn):
-                found = locals_.suggestions(body, slot.name, index.get(locals_.calls(body)))
+                found = locals_.suggestions(body, slot.name, index.get(locals_.calls(body)), original.get(fn.name, ()))
                 if found:
                     rows.append(
                         {"name": slot.name, "kind": slot.kind, "type": slot.type, "line": slot.line, "evidence": found}
@@ -1006,7 +1010,7 @@ def _local_pack(config: Config, params: Json, cards: list[Json], bare: int) -> J
         "line": 0,
         "function": "FN",
         "doc": "what it holds",
-        "evidence": ["param CALLEE NAME", "member NAME", "role loop"],
+        "evidence": ["param CALLEE NAME", "member NAME", "role loop", "debug NAME"],
     }
     pack = {
         "step": "L",
@@ -1161,7 +1165,7 @@ def submit(config: Config, params: Json) -> Json:
         raise state.stop("recipe.name", f"{path} {why}", action="recipe name next")
     doc: Json = {}
     ctx: Map | None = None
-    repairs = repair.Repairs(config.project.root)
+    repairs = repair.Repairs(config.project.root, lambda: debug.variables(config))
     fields = members_.Fields(config.project.root, loose=not params.get("no_apply") and not params.get("no_settle"))
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -1303,10 +1307,10 @@ def count(config: Config, params: Json) -> Json:
     root = config.project.root
     out: dict[str, dict[str, Json]] = {t: {} for t in targets}
     if "L" in steps:
-        index = locals_.Prototypes(root)
+        index, original = locals_.Prototypes(root), debug.variables(config)
         for t in targets:
             files = locals_.folder_files(root, t)
-            cards, bare = _local_cards(root, t, files, index) if files else ([], 0)
+            cards, bare = _local_cards(root, t, files, index, original) if files else ([], 0)
             out[t]["L"] = {"namable": sum(len(c["slots"]) for c in cards), "no_evidence": bare}
     named = [x for x in steps if x != "L"]
     if named:

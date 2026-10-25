@@ -7,7 +7,7 @@ Three forms of evidence, each re-derived from the source when a rename is submit
   role loop|index|return   the value is a loop counter, indexes an array, or is the function's result"""
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -148,9 +148,10 @@ def slots(text: str, fn: Function) -> list[Slot]:
     return list(found.values())
 
 
-def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]]) -> list[str]:
-    """The evidence strings the text of one function (comments masked) gives for NAME, best first."""
-    out: list[str] = []
+def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]], debug: Sequence[str] = ()) -> list[str]:
+    """The evidence strings the text of one function (comments masked) gives for NAME, best first; DEBUG are the
+    original variable names the debug catalog records for the function (`debug NAME`, one of them is NAME's)."""
+    out: list[str] = [f"debug {n}" for n in debug]
     for call in _CALL.finditer(body):
         callee = call[1]
         if callee in _KEYWORDS or callee not in protos:
@@ -177,11 +178,13 @@ def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]]) -> 
     return list(dict.fromkeys(out))
 
 
-def verify(body: str, name: str, evidence: object, protos: Mapping[str, list[list[str]]]) -> str:
+def verify(
+    body: str, name: str, evidence: object, protos: Mapping[str, list[list[str]]], debug: Sequence[str] = ()
+) -> str:
     """ "" when every evidence item of a rename of NAME is one the source gives, else the reason it is refused."""
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
-        return f"{name} needs evidence: param CALLEE NAME, member NAME or role loop|index|return"
-    have = suggestions(body, name, protos)
+        return f"{name} needs evidence: param CALLEE NAME, member NAME, role loop|index|return or debug NAME"
+    have = suggestions(body, name, protos, debug)
     for item in evidence:
         form = re.sub(r"\s+\(.*$", "", item.strip())
         if form not in have:

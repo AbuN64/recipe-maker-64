@@ -68,6 +68,7 @@ class Function:
     frame: int
     params: tuple[str, ...]
     static: bool = False  # a global the record marks file-local
+    locals: tuple[str, ...] = ()  # the variables its blocks define (snsym functions `locals`)
 
 
 @dataclass(frozen=True)
@@ -219,8 +220,18 @@ def read(document: Json, source: str = "") -> Catalog:
             for row in stream.get("functions", ()):
                 vram = int(row["address"]) | KSEG0 if live else None
                 params = tuple(str(p.get("name", "")) for p in row.get("params", ()))
+                held = tuple(str(x.get("name", "")) for x in row.get("locals", ()))
                 functions.append(
-                    Function(row["name"], version, vram, row.get("file", ""), row.get("line", 0), row["frame"], params)
+                    Function(
+                        row["name"],
+                        version,
+                        vram,
+                        row.get("file", ""),
+                        row.get("line", 0),
+                        row["frame"],
+                        params,
+                        locals=held,
+                    )
                 )
             for row in stream.get("globals", ()):
                 if live and not str(row.get("type", "")).endswith("()"):  # a function's global row repeats it
@@ -230,6 +241,26 @@ def read(document: Json, source: str = "") -> Catalog:
                         )
                     )
     return Catalog(source, tuple(records), tuple(functions), tuple(globals_))
+
+
+def variables(config: Config) -> dict[str, tuple[str, ...]]:
+    """Project function name -> the original names of its parameters and locals, for every function the configured
+    catalog records at an address a version's symbol table names (step L `debug NAME` evidence); {} without one."""
+    catalog = load(config)
+    if catalog is None:
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    by_version: dict[str, dict[int, str]] = {}
+    for fn in catalog.functions:
+        if fn.vram is None or not (fn.params or fn.locals):
+            continue
+        if fn.version not in by_version:
+            table = api.symbols(config, fn.version)
+            by_version[fn.version] = {row[0] | KSEG0: name for name, row in table.items()}
+        name = by_version[fn.version].get(fn.vram)
+        if name:
+            out[name] = tuple(dict.fromkeys(n for n in (*fn.params, *fn.locals) if n))
+    return out
 
 
 # ---------------------------------------------------------------- records
