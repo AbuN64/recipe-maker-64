@@ -39,7 +39,7 @@ def test_local_submit_never_maps_and_limits_the_function(tmp_path, monkeypatch):
     }
     path = tmp_path / "names.jsonl"
     path.write_text(json.dumps(row) + "\n")
-    result = naming.submit(config, {"file": str(path), "host": None})
+    result = naming.submit(config, {"file": str(path), "host": None, "no_apply": True})
     assert result["accepted"] == 1 and result["refused"] == 0
     patch = result["patch"]
     assert "+int change(int entry) { /* template */ return entry + obj.template; }" in patch

@@ -60,6 +60,10 @@ def _render_structure(result: Json) -> list[str]:
     ]
 
 
+def _applied(result: Json) -> list[str]:
+    if result.get("applied"):
+        return [f"applied in place: {len(result.get('changed', []))} files changed, tree synced"]
+    return [f"not applied ({result['apply_refused']}); the patch stays saved"] if "apply_refused" in result else []
 def _render_name(result: Json) -> list[str]:
     if result["action"] == "next":
         pack = f"pack {result['pack']} holds {result['targets']} targets, " if result["pack"] else ""
@@ -72,6 +76,7 @@ def _render_name(result: Json) -> list[str]:
             f"{result['accepted']} of {result['rows']} names accepted as {result['moves']} moves"
             f" in {result['path'] or 'no patch'}",
             *([f"refused {result['refused']}: {rules}"] if result["refused"] else []),
+            *_applied(result),
         ]
     return [f"{len(result['files'])} banner candidates, {result['skipped']} skipped"]
 
@@ -125,6 +130,9 @@ def _parser() -> argparse.ArgumentParser:
         "--step",
         choices=("N1", "N2", "N3", "N4", "T"),
         help="the naming step (default: N3); T: original types from the debug catalog",
+    )
+    one.add_argument(
+        "--no-apply", action="store_true", help="next/submit leave the patch saved instead of applying it to the tree"
     )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")

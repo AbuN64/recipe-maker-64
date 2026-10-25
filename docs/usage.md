@@ -54,4 +54,4 @@ Source-only portability repairs use recipe name submit FILE with JSONL rows: kin
 target, name, path, line and doc are required. A local row also names function.
 The source path/line is checked evidence of the old nonportable identifier. New spellings must be portable
 and unused in scope. Original SDK names must be left out of repair submissions. These rows do not build a ROM map.
-Renames preserve comments and string bytes. Apply the saved patch with recipe apply PATH.
+Renames preserve comments and string bytes. `recipe name next` and `submit` apply the patch to the tree at once (only the renamed tokens change) and name one next link; `--no-apply` keeps it saved for `recipe apply PATH`.

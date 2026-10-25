@@ -1,6 +1,7 @@
 """recipe name: tag names need no model, a pack carries checkable evidence, submit refuses by rule, and the calls and
 loads come from the extracted assembly."""
 
+import contextlib
 import json
 import re
 import subprocess
@@ -103,7 +104,7 @@ def project(tmp_path, monkeypatch):
 
 
 def run(project, action, **more):
-    params = {"host": None, "action": action, "step": None, "count": 40, "file": None, **more}
+    params = {"host": None, "action": action, "step": None, "count": 40, "file": None, "no_apply": True, **more}
     return naming.run(project, params)
 
 
@@ -887,3 +888,29 @@ def test_a_tag_the_calls_do_not_carry_names_the_tags_they_do(project):
         json.loads(x) for x in (project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()
     ]
     assert got["by_rule"] == {"unverifiable": 1} and "the tags its calls carry:" in refused[0]["reason"]
+
+
+def test_submit_applies_the_patch_in_place_and_names_one_next_link(project, monkeypatch):
+    seen = []
+    monkeypatch.setattr(naming.structure, "apply", lambda config, p: seen.append(p) or {"changed": ["a.c"]})
+    monkeypatch.setattr(naming.api, "tree_lock", lambda *a, **k: contextlib.nullcontext())
+    built = {"moves": 2, "path": ".unbake/recipe/patches/patch-1.diff"}
+    got = naming._land(project, {"host": None}, built)
+    assert got["applied"] is True and got["changed"] == ["a.c"]
+    assert got["stream"] == "" and got["next"] == "recipe name next"
+    assert seen[0]["patch"].endswith(built["path"])
+    assert (
+        naming._land(project, {"no_apply": True}, built) == {}
+        and naming._land(project, {}, {"moves": 0, "path": ""}) == {}
+    )
+
+
+def test_apply_refusal_keeps_the_saved_patch_and_says_why(project, monkeypatch):
+    def refuse(config, p):
+        raise Refusal(Finding("recipe.apply", "patch context moved"))
+
+    monkeypatch.setattr(naming.structure, "apply", refuse)
+    monkeypatch.setattr(naming.api, "tree_lock", lambda *a, **k: contextlib.nullcontext())
+    got = naming._land(project, {}, {"moves": 1, "path": "p.diff"})
+    assert got["applied"] is False and "context moved" in got["apply_refused"] and got["next"] == "recipe apply"
+    assert "stream" not in got

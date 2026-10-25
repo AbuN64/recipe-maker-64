@@ -532,6 +532,21 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
     }
 
 
+def _land(config: Config, params: Json, built: Json) -> Json:
+    """Apply the saved patch to the tree now (`recipe apply`: only the renamed tokens change, then `unbake sync`) unless
+    the caller passed `--no-apply`; one `next` link comes back. A refusal keeps the saved patch and says why."""
+    if not built["moves"] or params.get("no_apply") or not built["path"]:
+        return {}
+    root = config.project.root
+    try:
+        with api.tree_lock(config, exclusive=True, who="name apply"):
+            done = structure.apply(config, {"patch": str(root / built["path"]), "host": params.get("host")})
+    except Refusal as refusal:
+        why = refusal.findings[0].reason if refusal.findings else "refused"
+        return {"applied": False, "apply_refused": why, "next": "recipe apply"}
+    return {"applied": True, "changed": done.get("changed") or built["files"], "stream": "", "next": "recipe name next"}
+
+
 def _number(config: Config) -> int:
     """The next pack or names number: one past every pack and names file there is."""
     found = [
@@ -725,10 +740,11 @@ def next_(config: Config, params: Json) -> Json:
     debt_path = _root(config) / "symbol-name-debt.json"
     structure.write(debt_path, json.dumps(debt, indent=2) + "\n")
     if step == "T":
-        return {
+        typed = {
             **_types(config, doc, params.get("target")),
             "naming_debt": str(debt_path.relative_to(config.project.root)),
         }
+        return {**typed, **_land(config, params, typed)}
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
     for row in [*(_auto(ctx) if step == "N2" else []), *_sdk(ctx)]:
@@ -769,6 +785,7 @@ def next_(config: Config, params: Json) -> Json:
         if pick
         else "recipe name next",
         "after": f"recipe name submit {answer}" if pick else "",
+        **_land(config, params, built),
     }
 
 
@@ -829,6 +846,7 @@ def submit(config: Config, params: Json) -> Json:
         **built,
         "banners": f".unbake/recipe/name/banners-{k}.json",
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
+        **_land(config, params, built),
     }
 
 
