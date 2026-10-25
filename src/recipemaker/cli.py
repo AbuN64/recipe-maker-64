@@ -62,7 +62,13 @@ def _render_structure(result: Json) -> list[str]:
 
 def _applied(result: Json) -> list[str]:
     if result.get("applied"):
-        return [f"applied in place: {len(result.get('changed', []))} files changed, tree synced"]
+        found = result.get("settle")
+        note = (
+            [f"settle: {found['compiled']} compiled, {found['fixed']} fixed, {len(found['unfixed'])} left"]
+            if found
+            else []
+        )
+        return [f"applied in place: {len(result.get('changed', []))} files changed, tree synced", *note]
     return [f"not applied ({result['apply_refused']}); the patch stays saved"] if "apply_refused" in result else []
 
 
@@ -150,6 +156,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     one.add_argument(
         "--no-apply", action="store_true", help="next/submit leave the patch saved instead of applying it to the tree"
+    )
+    one.add_argument(
+        "--no-settle", action="store_true", help="submit: skip the compile that fixes member uses the types missed"
     )
     one.add_argument("--apply", action="store_true", help="step T: apply the patch (default: preview, files listed)")
     one.add_argument(

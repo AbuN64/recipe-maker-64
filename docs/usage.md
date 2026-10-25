@@ -55,3 +55,5 @@ target, name, path, line and doc are required. A local row also names function.
 The source path/line is checked evidence of the old nonportable identifier. New spellings must be portable
 and unused in scope. Original SDK names must be left out of repair submissions. These rows do not build a ROM map.
 Renames preserve comments and string bytes. `recipe name next` and `submit` apply the patch to the tree at once (only the renamed tokens change) and name one next link; `--no-apply` keeps it saved for `recipe apply PATH`.
+
+Member renames (`field` rows, step M) of a name several records spell: the types rename the accesses they can place; the rest is settled by the compiler. After the apply, `submit` compiles the objects that read an access the types could not place, fixes each `structure has no member named M` from its source line, and reports a use no source line spells (a macro expansion) as a blocking finding. `--no-settle` (or `--no-apply`) keeps the old stop at an access of no known type.

@@ -11,7 +11,7 @@ import re
 import sys
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -25,6 +25,7 @@ from recipemaker import (
     host,
     locals_,
     repair,
+    settle,
     state,
     structure,
     style,
@@ -609,7 +610,17 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
     }
 
 
-def _land(config: Config, params: Json, built: Json) -> Json:
+def _make(config: Config, root: Path) -> Callable[[list[str]], tuple[str, str]]:
+    def run(argv: list[str]) -> tuple[str, str]:
+        ran = host.run(argv, root, config)
+        return ran.stdout.decode(errors="replace"), ran.stderr.decode(errors="replace")
+
+    return run
+
+
+def _land(
+    config: Config, params: Json, built: Json, renames: Mapping[str, str] | None = None, ours: Collection[str] = ()
+) -> Json:
     """Apply the saved patch to the tree now (`recipe apply`: only the renamed tokens change, then `unbake sync`) unless
     the caller passed `--no-apply`; one `next` link comes back. A refusal keeps the saved patch and says why."""
     if not built["moves"] or params.get("no_apply") or not built["path"]:
@@ -618,10 +629,21 @@ def _land(config: Config, params: Json, built: Json) -> Json:
     try:
         with api.tree_lock(config, exclusive=True, who="name apply"):
             done = structure.apply(config, {"patch": str(root / built["path"]), "host": params.get("host")})
+            settled = (
+                settle.settle(config, renames, ours, run=_make(config, root))
+                if renames and not params.get("no_settle")
+                else {}
+            )
     except Refusal as refusal:
         why = refusal.findings[0].reason if refusal.findings else "refused"
         return {"applied": False, "apply_refused": why, "next": "recipe apply"}
-    return {"applied": True, "changed": done.get("changed") or built["files"], "stream": "", "next": "recipe name next"}
+    return {
+        "applied": True,
+        "changed": done.get("changed") or built["files"],
+        "stream": "",
+        "next": "recipe name next",
+        **({"settle": settled} if settled else {}),
+    }
 
 
 def _number(config: Config) -> int:
@@ -1118,7 +1140,7 @@ def submit(config: Config, params: Json) -> Json:
     doc: Json = {}
     ctx: Map | None = None
     repairs = repair.Repairs(config.project.root)
-    fields = members_.Fields(config.project.root)
+    fields = members_.Fields(config.project.root, loose=not params.get("no_apply") and not params.get("no_settle"))
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -1165,6 +1187,20 @@ def submit(config: Config, params: Json) -> Json:
     structure.write(
         _root(config) / "refused.jsonl", old + "".join(json.dumps(r, sort_keys=True) + "\n" for r in refused)
     )
+    renames = {m["subject"]: m["target"] for _, group in accepted for m in group if m["op"] == "field"}
+    ours = {
+        key
+        for _, group in accepted
+        for m in group
+        if m["op"] == "field"
+        for key in (
+            m.get("alias"),
+            f"struct {m['tag']}" if m.get("tag") else "",
+            f"union {m['tag']}" if m.get("tag") else "",
+        )
+        if key
+    }
+    landed = _land(config, params, built, renames, ours)
     return {
         "action": "submit",
         "rows": len(rows),
@@ -1173,15 +1209,16 @@ def submit(config: Config, params: Json) -> Json:
         "by_rule": dict(Counter(r["rule"] for r in refused)),
         "refusals": refusal_lines(refused),
         "findings": [  # the decomp wrapper prints these when the exit code is 1
-            {"key": "recipe.name", "blocking": True, "message": line} for line in refusal_lines(refused)
+            {"key": "recipe.name", "blocking": True, "message": line}
+            for line in [*refusal_lines(refused), *settle.lines(landed.get("settle"))]
         ],
         "exit": 1
-        if refused
+        if refused or (landed.get("settle") or {}).get("unfixed")
         else 0,  # a refused row is a failure the caller's `&&` must see; accepted rows are still patched
         **built,
         "banners": f".unbake/recipe/name/banners-{k}.json",
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
-        **_land(config, params, built),
+        **landed,
     }
 
 

@@ -930,7 +930,9 @@ def _field(files: Files, move: Json, members: dict[str, int], types: access.Type
     """A member rename: its declarator in the one record body of the project that has a member of that spelling
     (the record `tag` or typedef `alias` in `path`), and every `.old` and `->old` of the project. Another body that
     spells the member too: each access must have a base expression typed as this record or another (`access`); one
-    that is not typed stops the move. Returns why nothing moved, empty when the member is renamed."""
+    that is not typed stops the move, unless the move says `loose`: the caller compiles afterwards and fixes the uses
+    left (`settle`), so only the typed accesses of this record are renamed. Returns why nothing moved, empty when the
+    member is renamed."""
     old, new, path = move["subject"], move["target"], move["path"]
     spot = _spot(files, path, move.get("tag", ""), move.get("alias", ""))
     if spot is None:
@@ -944,7 +946,7 @@ def _field(files: Files, move: Json, members: dict[str, int], types: access.Type
         if (key, old) in types.twice:
             return f"more than one definition of {key} spells {old}"
         found = types.sites({p: files.get(p) or "" for p in files.everything() if p.lower().endswith(_C)}, [old])
-        if loose := [s for s in found if not s.owner]:
+        if (loose := [s for s in found if not s.owner]) and not move.get("loose"):
             return (
                 f"{len(loose)} of {len(found)} accesses of {old} have a base of no known record type ({loose[0].path})"
             )

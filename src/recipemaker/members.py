@@ -127,8 +127,9 @@ def record(texts: Mapping[str, str], types: access.Types, name: str) -> tuple[st
 class Fields:
     """Judges `field` rows of one submitted batch: the records and the evidence are read once."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, loose: bool = False) -> None:
         self.root = root
+        self.loose = loose  # the caller compiles after the rename (`settle`), so an access of no known type is no stop
         self.texts: dict[str, str] | None = None
         self.types: access.Types | None = None
         self.index = locals_.Prototypes(root)
@@ -183,4 +184,11 @@ class Fields:
                     [],
                 )
         self.accepted.add((key, new))
-        return "", "", [{"op": "field", "subject": old, "target": new, "path": path, "tag": tag, "alias": alias}]
+        return (
+            "",
+            "",
+            [
+                {"op": "field", "subject": old, "target": new, "path": path, "tag": tag, "alias": alias}
+                | ({"loose": True} if self.loose else {})
+            ],
+        )

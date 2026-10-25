@@ -426,3 +426,12 @@ def test_a_merge_after_a_refused_member_rename_does_nothing(tmp_path):
         tmp_path, [rename, merge | {"into_path": "include/a.h", "into_tag": "A", "into_alias": ""}], lambda n: None, {}
     )
     assert built["moves"] == 0 and "original name" in built["skipped"][1]["why"]
+
+
+def test_a_loose_field_move_renames_the_typed_accesses_and_leaves_the_untyped_base_to_the_compiler(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/a.h").write_text(SHARED)
+    (tmp_path / "src/a.c").write_text("void f(struct A *a) { a->level = 1; get()->level = 2; }\n")
+    built = structure.build(tmp_path, [{**MOVE_A, "loose": True}], lambda name: None, {})
+    assert built["moves"] == 1 and "a->m_nLevel = 1; get()->level = 2;" in built["patch"]
