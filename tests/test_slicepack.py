@@ -17,7 +17,7 @@ void func_80004010(s32 arg0, Actor *arg1) {
     D_80005000 = var_s0;
 }
 
-void func_80004020(void) {
+void func_80004020(s32 amount) {
     return;
 }
 """
@@ -200,3 +200,14 @@ def test_auto_emits_judged_rows_for_sdk_names_and_one_string_data(names, tmp_pat
     assert got["next"].startswith("recipe name submit --ledger auto")
     with pytest.raises(Exception, match="auto takes kinds"):
         naming.run(names, {"host": None, "action": "auto", "step": None, "out": None, "kinds": "nope"})
+
+
+def test_auto_locals_name_a_slot_after_the_one_parameter_it_is_passed_as(names, tmp_path):
+    out = tmp_path / "locals.jsonl"
+    got = naming.run(names, {"host": None, "action": "auto", "step": None, "out": str(out), "kinds": "locals"})
+    rows = [json.loads(x) for x in out.read_text().splitlines()]
+    assert [(r["key"], r["name"], r["evidence"], r["confidence"]) for r in rows] == [
+        (slices.slot_key(slices.fn_key("us", 0x80001040), "arg0"), "amount", ["param func_80004020 amount"], "low")
+    ]
+    assert got["by_kind"]["locals"] == 1
+    assert autoname.GOOD.fullmatch("amount") and not autoname.GOOD.fullmatch("unused0")

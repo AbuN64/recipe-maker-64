@@ -1506,7 +1506,7 @@ def cut(config: Config, params: Json) -> Json:
 
 def auto(config: Config, params: Json) -> Json:
     """`recipe name auto --kinds sdk,catalog,strings --out FILE`: the mechanical names (T6) as ledger rows."""
-    kinds = [k for k in str(params.get("kinds") or ",".join(autoname.KINDS)).split(",") if k]
+    kinds = [k for k in str(params.get("kinds") or ",".join(autoname.DEFAULT)).split(",") if k]
     if bad := [k for k in kinds if k not in autoname.KINDS]:
         raise state.stop("recipe.name", f"auto takes kinds {', '.join(autoname.KINDS)}, not {', '.join(bad)}")
     doc = structure.evidence(config, params["host"])
