@@ -759,7 +759,11 @@ def build(
     files, applied, beat = Files(root), 0, time.monotonic()
     for move in moves:
         kind = "symbol" if move["op"] in ("symbol", "type", "field", "merge") else "file"
-        name = re.sub(r"^(?:struct|union|enum)\s+", "", move["target"]) if move["op"] == "merge" else move["target"]
+        name = (
+            re.sub(r"^(?:struct|union|enum)\s+", "", move["target"])
+            if move["op"] in ("merge", "type")
+            else move["target"]
+        )
         if name_why := api.name_issues(name, kind, implementation=True):  # the SDK's own reserved names pass
             raise state.stop("recipe.structure", name_why[0])
     member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move

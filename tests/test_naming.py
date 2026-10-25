@@ -995,3 +995,13 @@ def test_submit_exits_nonzero_and_names_rule_and_field_of_every_refused_row(proj
 def test_submit_findings_carry_each_refusal_for_the_wrapper(project):
     got = submit(project, [row("func_80004030", "Menu_Spawn", ["callee func_80004020"])])
     assert got["findings"][0]["key"] == "recipe.name" and "refused regex name" in got["findings"][0]["message"]
+
+
+def test_a_type_move_to_a_keyword_spelled_tag_is_judged_by_its_identifier(tmp_path):
+    from recipemaker import structure
+
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include/a.h").write_text("struct Old { int a; };\nextern struct Old g;\n")
+    moves = [{"op": "type", "subject": "struct Old", "target": "struct CItem_t"}]
+    built = structure.build(tmp_path, moves, lambda f: None, {})
+    assert "struct CItem_t" in built["patch"]
