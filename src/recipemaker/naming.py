@@ -11,7 +11,7 @@ import re
 import sys
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -24,13 +24,15 @@ from recipemaker import (
     debug,
     host,
     locals_,
-    members as members_,
     repair,
     state,
     structure,
     style,
     table,
     tree,
+)
+from recipemaker import (
+    members as members_,
 )
 
 # Compiler builtins: cc1 expands a call by one of these names inline (+11 words for sqrtf, func_802B72B0_de),
@@ -895,7 +897,8 @@ def _members(config: Config, params: Json) -> Json:
         "targets": cards,
         "answer": answer,
         "row": row,
-        "rule": "one row per member; every evidence item must be one listed for it; the name is a lower-case word the record does not already spell",
+        "rule": "one row per member; every evidence item must be one listed for it; the name is a lower-case word"
+        " that is spelled nowhere else in the tree (renameproof refuses a name already in use)",
     }
     if cards:
         structure.write(path_, json.dumps(pack))
