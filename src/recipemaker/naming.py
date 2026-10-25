@@ -613,9 +613,11 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
 
 
 def _make(config: Config, root: Path) -> Callable[[list[str]], tuple[str, str]]:
-    def run(argv: list[str]) -> tuple[str, str]:
-        ran = host.run(argv, root, config)
-        return ran.stdout.decode(errors="replace"), ran.stderr.decode(errors="replace")
+    """The settle compile: these object targets built by unbake's make (the host jobserver and compiler cache; the
+    settle ran its own `nice make -j4` before)."""
+
+    def run(targets: list[str]) -> tuple[str, str]:
+        return api.make(config, targets)
 
     return run
 

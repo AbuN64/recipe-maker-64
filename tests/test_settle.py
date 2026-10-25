@@ -43,7 +43,7 @@ def test_a_missed_access_is_fixed_from_its_line_and_a_macro_expansion_is_reporte
     assert found["fixed"] == 1 and found["settled"] is False
     assert found["unfixed"] == ["build/us/src/game/a.c.i:5 unk4"]
     assert settle.lines(found) and "macro" in settle.lines(found)[0]
-    assert calls[0][:3] == ["nice", "make", "-k"]
+    assert calls[0] == ["build/us/src/game/a.c.o"]  # targets only: unbake's make runs them under the host jobserver
 
 
 def test_a_new_name_a_typed_rename_put_on_another_record_goes_back(tmp_path):

@@ -59,7 +59,7 @@ def compile_check(
     chosen = [*sorted(own & set(objs)), *[o for o in objs if o not in own]][:limit]
     errors: list[str] = []
     for i in range(0, len(chosen), BATCH):
-        so, se = run(["nice", "make", "-k", "-j4", *chosen[i : i + BATCH]])
+        so, se = run(chosen[i : i + BATCH])
         errors += [m.group(0) for m in _ERROR.finditer(so + "\n" + se)]
     return {"compiled": len(chosen), "sampled": len(objs) > len(chosen), "errors": errors[:12]}
 
@@ -156,7 +156,7 @@ def settle(
     for _ in range(rounds):
         errors: list[tuple[str, str, str]] = []
         for i in range(0, len(objs), BATCH):
-            so, se = run(["nice", "make", "-k", "-j4", *objs[i : i + BATCH]])
+            so, se = run(objs[i : i + BATCH])
             errors += _NO_MEMBER.findall(so + "\n" + se)
         if not errors:
             out.update(settled=True, unfixed=[])
