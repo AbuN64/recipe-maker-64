@@ -974,11 +974,11 @@ def test_a_symbol_rename_also_renames_the_sweep_rule_prose_that_names_it(tmp_pat
         {
             "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\n",
             "src/a.c": "void g(void) { func_8000(); }\n",
-            "docs/sweep.toml": 'why = "A pointer typed with no parameters: func_8000 reads its argument; func_80001 too"\n',
+            "docs/sweep.toml": 'why = "A pointer with no parameters: func_8000 reads its argument; func_80001 too"\n',
         },
     )
     got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
     assert "docs/sweep.toml" in got["files"]
     _check(root, got["patch"])
-    want = 'why = "A pointer typed with no parameters: osYield reads its argument; func_80001 too"\n'
+    want = 'why = "A pointer with no parameters: osYield reads its argument; func_80001 too"\n'
     assert (root / "docs/sweep.toml").read_text() == want
