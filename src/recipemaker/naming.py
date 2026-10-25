@@ -1283,6 +1283,17 @@ def judge_rows(config: Config, params: Json, rows: list[Json], queued: Sequence[
             else:
                 out.refused.append({"row": row, "rule": why[0], "reason": why[1]})
             continue
+        if row.get("suggest"):  # a suggestion is checked for shape and key only (its owner judges the name)
+            if (
+                isinstance(row.get("name"), str)
+                and row["name"]
+                and isinstance(row.get("doc"), str)
+                and row["doc"].strip()
+            ):
+                out.accepted.append((row, []))
+            else:
+                out.refused.append({"row": row, "rule": "shape", "reason": "a suggestion needs a key, name and doc"})
+            continue
         if row.get("kind") == "param":  # a parameter is a local of its function (CLEAN-MENU2-3 wrote "param")
             row = {**row, "kind": "local"}
         if row.get("kind") in ("local", "repair"):

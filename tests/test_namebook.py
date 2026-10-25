@@ -195,3 +195,13 @@ def test_every_submit_leaves_a_count_line_for_watch(book):
         1,
         {"target": 1},
     )
+
+
+def test_a_suggest_row_is_checked_for_shape_and_key_only(book):
+    bad_name = fn("fn:us:80004030", "notALegalName", suggest=True)  # the owner judges the name when it applies it
+    got = submit(
+        book,
+        "L1",
+        [bad_name, fn("fn:us:80009999", "Actor_X", suggest=True), {"key": "fn:us:80004010", "suggest": True}],
+    )
+    assert (got["suggested"], got["refused"]) == (1, 2) and got["by_rule"] == {"target": 1, "shape": 1}
