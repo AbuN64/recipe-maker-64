@@ -722,6 +722,29 @@ def test_a_module_is_named_by_its_first_atom_in_names_from_not_by_another_versio
     assert set(got["atoms"][3:]) == {"func_80214DC0_eu", "D_auto_func_80214DE0_eu_padding_1"}
 
 
+def test_a_symbol_rename_carries_the_names_derived_from_a_neutral_function_name(tmp_path):
+    """The coordinator's case: Player_func_80209308_de and Brain_func_80209308_de stayed after func_80209308_de was named."""
+    root = _repo(
+        tmp_path,
+        {
+            "versions/us/symbol_addrs.txt": "func_80209308_de = 0x8000; // type:func\n",
+            "include/COMMON/CB.H": "typedef struct Player_func_80209308_de Player_func_80209308_de;\n"
+            "typedef struct Brain_func_80209308_de { int a; } Brain_func_80209308_de;\n"
+            "typedef struct func_80209308_de_S1 func_80209308_de_S1;\nvoid func_80209308_de(Player_func_80209308_de *);\n",
+            "src/a.c": "void g(void) { func_80209308_de(0); func_80209308_dex(0); Other_func_80209308 x; }\n",
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_80209308_de", "target": "Brain_Think"}], {}.get, {})
+    _check(root, got["patch"])
+    header = (root / "include/COMMON/CB.H").read_text()
+    assert "Player_Brain_Think" in header and "Brain_Brain_Think" in header and "Brain_Think_S1" in header
+    assert "func_80209308_de" not in header
+    assert (
+        "func_80209308_dex" in (root / "src/a.c").read_text()
+        and "Other_func_80209308 x" in (root / "src/a.c").read_text()
+    )
+
+
 def test_a_symbol_rename_moves_the_handwritten_asm_file_and_the_script_entries_keyed_on_it(tmp_path):
     """NAMES-2 __osDisableInt: src/sdk/.../func_802BCF30_de.s, RageWars.ld and text_sizes.mk named the old function."""
     root = _repo(

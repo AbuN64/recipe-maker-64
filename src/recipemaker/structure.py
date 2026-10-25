@@ -813,6 +813,7 @@ def build(
             hits += files.identifiers(subject, target, files.everything())
             if op == "symbol":
                 hits += _asm_file(files, subject, target)
+                hits += _derived(files, subject, target)
             applied += bool(hits)
             if subject in where:
                 where[target] = where.pop(subject)
@@ -1052,6 +1053,25 @@ def _member_words(files: Files) -> dict[str, int]:
 
 
 _FILE_ROW = re.compile(r"""(?m)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["'])([^"'\n]+)\2([ \t]*\])""")
+
+
+_NEUTRAL_FN = re.compile(r"func_[0-9A-F]{8}(?:_[a-z]+(?:_[a-z0-9]+)?)?\Z")
+
+
+def _derived(files: Files, subject: str, target: str) -> int:
+    """The names a tool derived from a neutral function name embed it whole: `Player_func_80209308_de` (a type the
+    function's record is named for) and `func_8020A028_S4` follow the function to its new name, so no type keeps the
+    address form after the function is named. Only a neutral address name has derived names; a word match of any other
+    name (`Foo` inside `Bar_Foo`) is another identifier."""
+    if not _NEUTRAL_FN.match(subject):
+        return 0
+    word, hits = re.escape(subject), 0
+    before = re.compile(rf"(?<![A-Za-z0-9_$])([A-Za-z][A-Za-z0-9]*)_{word}(?![A-Za-z0-9_$])")
+    after = re.compile(rf"(?<![A-Za-z0-9_$]){word}_([A-Z][A-Za-z0-9_]*)(?![A-Za-z0-9$])")
+    paths = files.everything()
+    hits += files.replace(before, lambda m: f"{m[1]}_{target}", paths)
+    hits += files.replace(after, lambda m: f"{target}_{m[1]}", paths)
+    return hits
 
 
 def _asm_file(files: Files, subject: str, target: str) -> int:
