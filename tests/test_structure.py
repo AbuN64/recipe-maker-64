@@ -722,6 +722,26 @@ def test_a_module_is_named_by_its_first_atom_in_names_from_not_by_another_versio
     assert set(got["atoms"][3:]) == {"func_80214DC0_eu", "D_auto_func_80214DE0_eu_padding_1"}
 
 
+def test_a_symbol_rename_moves_the_handwritten_asm_file_and_the_script_entries_keyed_on_it(tmp_path):
+    """NAMES-2 __osDisableInt: src/sdk/.../func_802BCF30_de.s, RageWars.ld and text_sizes.mk named the old function."""
+    root = _repo(
+        tmp_path,
+        {
+            "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\n",
+            "src/sdk/os/func_8000.s": "glabel func_8000\njr $ra\n",
+            "RageWars.ld": "        src/sdk/os/func_8000.s.o(.text);\n",
+            "versions/us/text_sizes.mk": "build/us/src/sdk/os/func_8000.s.o: TEXTSIZE := 0x20\n",
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "__osDisableInt"}], {}.get, {})
+    assert "src/sdk/os/__osDisableInt.s" in got["files"] and "RageWars.ld" in got["files"]
+    _check(root, got["patch"])
+    assert (root / "src/sdk/os/__osDisableInt.s").read_text() == "glabel __osDisableInt\njr $ra\n"
+    assert not (root / "src/sdk/os/func_8000.s").exists()
+    assert "src/sdk/os/__osDisableInt.s.o(.text)" in (root / "RageWars.ld").read_text()
+    assert "src/sdk/os/__osDisableInt.s.o" in (root / "versions/us/text_sizes.mk").read_text()
+
+
 def test_a_symbol_rename_moves_the_literals_name_in_symbol_addrs_and_sources_too(tmp_path):
     root = _repo(
         tmp_path,

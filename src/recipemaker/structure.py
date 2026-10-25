@@ -760,7 +760,7 @@ def build(
     for move in moves:
         kind = "symbol" if move["op"] in ("symbol", "type", "field", "merge") else "file"
         name = re.sub(r"^(?:struct|union|enum)\s+", "", move["target"]) if move["op"] == "merge" else move["target"]
-        if name_why := api.name_issues(name, kind):
+        if name_why := api.name_issues(name, kind, implementation=True):  # the SDK's own reserved names pass
             raise state.stop("recipe.structure", name_why[0])
     member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move
     types: access.Types | None = None  # the records and the data they type, read at the first shared member move
@@ -811,6 +811,8 @@ def build(
                     _word(LITERALS + subject), LITERALS + target, [*sorted(rows), *files.everything()]
                 )
             hits += files.identifiers(subject, target, files.everything())
+            if op == "symbol":
+                hits += _asm_file(files, subject, target)
             applied += bool(hits)
             if subject in where:
                 where[target] = where.pop(subject)
@@ -1036,6 +1038,8 @@ def _tidy(files: Files, names: Collection[str]) -> None:
         text = files.get(path) or ""
         if shim.search(text):
             files.put(path, undef.sub("", shim.sub("", text)))
+
+
 def _member_words(files: Files) -> dict[str, int]:
     """Per word, how many record bodies of the project spell it."""
     out: dict[str, int] = defaultdict(int)
@@ -1048,6 +1052,24 @@ def _member_words(files: Files) -> dict[str, int]:
 
 
 _FILE_ROW = re.compile(r"""(?m)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["'])([^"'\n]+)\2([ \t]*\])""")
+
+
+def _asm_file(files: Files, subject: str, target: str) -> int:
+    """A handwritten assembly file named for the function it holds (src/sdk/.../func_802BCF30_de.s) follows the
+    function's new name, with the entries that key on its path: the linker script and the text sizes name it."""
+    moved = [
+        p for p in files.everything() if PurePosixPath(p).suffix in (".s", ".S") and PurePosixPath(p).stem == subject
+    ]
+    for old in moved:
+        new = str(PurePosixPath(old).with_name(target + PurePosixPath(old).suffix))
+        files.rename(old, new)
+        keyed = [
+            p.relative_to(files.root).as_posix()
+            for pattern in ("*.ld", "versions/*/text_sizes.mk")
+            for p in files.root.glob(pattern)
+        ]
+        files.replace(re.compile(re.escape(old)), new, keyed)
+    return len(moved)
 
 
 def _rekey(files: Files) -> None:
