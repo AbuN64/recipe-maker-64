@@ -11,7 +11,6 @@ nothing applies: the owner reads it in its next pack (`suggestions_for`).
 Keys are the ledger's stable row keys (`rowkeys`), so a slice survives renames, moves and matches under it."""
 
 import json
-import os
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -20,7 +19,7 @@ from typing import Any
 
 from unbake.contracts import Json
 
-from recipemaker import access, cparse, host, locals_
+from recipemaker import access, cparse, host, locals_, namebook
 from recipemaker import members as members_
 
 FORMAT = 1
@@ -35,8 +34,8 @@ UNKNOWN = re.compile(r"(?:unk|pad)_?[0-9A-Fa-f]+")
 
 
 def names_dir() -> Path:
-    """Where the ledger, slices and suggestions live (RECIPE_NAMES_DIR, else ~/rig-state/names)."""
-    return Path(os.environ.get("RECIPE_NAMES_DIR") or "~/rig-state/names").expanduser()
+    """Where the ledger, slices and suggestions live: the name book's store (NAMES_STATE, else ~/rig-state/names)."""
+    return namebook.store()
 
 
 def fn_key(version: str, vram: int) -> str:
