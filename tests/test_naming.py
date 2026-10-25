@@ -149,6 +149,13 @@ def test_a_chosen_target_is_packed_alone_and_an_unknown_one_refused(project):
         run(project, "next", step="N3", target="nope")
 
 
+def test_a_folder_target_packs_the_steps_targets_inside_it_whether_named_or_spelled_as_a_path(project):
+    for spelled in ("actor", "src/game/main/actor", "game/main/actor/"):
+        got = run(project, "next", step="N3", target=spelled)
+        pack = json.loads((project.project.root / got["pack"]).read_text())
+        assert [t["target"] for t in pack["targets"]] == ["func_80004010"], spelled
+
+
 def row(target, name, evidence, kind="function", doc="Does a thing."):
     return {"target": target, "kind": kind, "name": name, "evidence": evidence, "doc": doc}
 

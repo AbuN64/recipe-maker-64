@@ -333,3 +333,12 @@ def test_class_separator_and_reserved_names_are_not_style_aliases():
     assert style.legal("function", "CVector3_GetDirectionRotation2", "actor")
     for name in ("CVector3__GetDirectionRotation2", "__ClassMethod", "_ClassMethod", "__osPopThread"):
         assert not style.legal("function", name, "actor")
+
+
+def test_an_extern_in_another_subsystems_source_keeps_the_owners_prefix(tmp_path):
+    files = {
+        "src/game/main/actor/actor_spawn.c": "extern void Fx_ClearInput(void *);\nvoid Actor_Spawn(void) { Fx_ClearInput(0); }\n"
+    }
+    assert ("function-name", "Fx_ClearInput") not in rules(run(project(tmp_path, files)))
+    header = {"src/game/main/actor/actor_spawn.h": "void Fx_ClearInput(void *);\n"}
+    assert ("function-name", "Fx_ClearInput") in rules(run(project(tmp_path / "h", header)))

@@ -261,9 +261,15 @@ def _words(path: str) -> list[str]:
     return list(dict.fromkeys(word for folder in found if (word := prefix_word(folder))))
 
 
-def _names(facts: Json, words: Sequence[str], context: Context) -> Iterator[tuple[str, str]]:
+def _names(facts: Json, words: Sequence[str], context: Context, source: bool = False) -> Iterator[tuple[str, str]]:
     for name, static, defined in facts["fns"]:
-        if words and not any(legal("function", name, w) for w in words) and not context.original(name):
+        # an extern in a source names a function another subsystem's file defines (and is judged there)
+        if (
+            words
+            and (defined or static or not source)
+            and not any(legal("function", name, w) for w in words)
+            and not context.original(name)
+        ):
             yield "function-name", name
         if (defined or static) and (word := banned(name)) and not neutral(name) and not context.original(name):
             yield "banned-word", f"{name} ({word})"
@@ -282,7 +288,7 @@ def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]
     if not kind(where) or any(path.startswith(x) for x in rules["paths"]["exempt"]):
         return []
     words = _words(path)
-    out += [(rule, path, detail) for rule, detail in _names(facts, words, context)]
+    out += [(rule, path, detail) for rule, detail in _names(facts, words, context, kind(where) == "c")]
     if kind(where) == "c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
         out.append(("file-name", path, where.stem))
     folder = where.parent.name

@@ -742,9 +742,18 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
     }
 
 
+def _leaf(ctx: Map, target: str) -> str:
+    """A folder spelled as a path (src/game/FX, game/FX/) is the folder FX; a name that is no path is unchanged."""
+    if "/" not in target or target in ctx.members:
+        return target
+    leaf = PurePosixPath(target.rstrip("/")).name
+    return leaf if leaf in {ctx.folder(m) for m in ctx.modules} else target
+
+
 def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
     """(kind, target) for `--target`: a folder is a subsystem, a function a function, a datum static or global as N4
     reads it (the step's own kind when it lists the target); a name the evidence lacks is refused."""
+    target = _leaf(ctx, target)
     found = next((t for t in _targets(ctx, step) if t[1] == target), None) if step in ("N2", "N4") else None
     if found:
         return found
@@ -782,7 +791,11 @@ def next_(config: Config, params: Json) -> Json:
     wanted = params.get("target")
     if wanted:  # the one thing the caller already chose: its card alone, never the step's best other target
         pick = [_chosen(ctx, step, wanted)]
-        if pick[0][1] not in ctx.members and pick[0][0] not in ("function", "global"):
+        if pick[0][0] == "subsystem" and step != "N2":  # a named folder: the step's best targets inside it
+            folder = pick[0][1]
+            pick = [t for t in _targets(ctx, step) if ctx.folder_of(t[1]) == folder and t[1] not in done]
+            pick = pick[: int(params["count"])]
+        elif pick[0][1] not in ctx.members and pick[0][0] not in ("function", "global"):
             raise state.stop(
                 "recipe.name",
                 f"{wanted} is a symbol no module owns; only step T takes it",
