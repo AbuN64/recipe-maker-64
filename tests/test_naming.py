@@ -469,6 +469,30 @@ def test_a_carried_name_that_is_taken_refuses_the_folder_name(project, monkeypat
     assert got["accepted"] == 1
 
 
+def test_a_subsystem_word_that_an_existing_folder_holds_resolves_to_that_folder(project, monkeypatch):
+    """NAMES-2: Math for lib_802BB630 was refused as colliding with the MATH folder; it is that subsystem, so the
+    unnamed folder's modules move in beside the ones MATH holds and Math_ names follow."""
+    doc = document()
+    doc["modules"][-1] = module("code_80700000", "MATH", ["func_80700000"])  # the folder spells it in capitals
+    doc["members"].append(member("func_80B00010", "code_80B00000", unit="src/e.c"))
+    doc["modules"].append(module("code_80B00000", "lib_80B00000", ["func_80B00010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80B00010", (["func_80700000"], []))
+    rows = [
+        row("lib_80B00000", "math", ["callee func_80700000"], kind="subsystem"),
+        row("func_80B00010", "Math_Sqrtf", ["callee func_80700000"]),
+    ]
+    got = submit(project, rows)
+    refused = (naming._root(project) / "refused.jsonl").read_text() if got["refused"] else ""
+    assert got["accepted"] == 2, refused
+    assert {"op": "source", "subject": "code_80B00000", "target": "src/game/main/MATH/code_80B00000.c"} in moves(
+        project
+    )
+    # a named folder never merges into another named folder
+    got = submit(project, [row("actor", "math", ["callee func_80700000"], kind="subsystem")])
+    assert got["accepted"] == 0
+
+
 def test_a_function_in_a_folder_that_takes_no_prefix_has_the_unprefixed_form(project, monkeypatch):
     doc = document()
     doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
@@ -502,13 +526,16 @@ def test_a_named_subsystem_folder_is_spelled_as_the_projects_folders_are(project
     )
 
 
-def test_a_subsystem_name_is_taken_when_a_folder_spells_it_in_another_case(project, monkeypatch):
+def test_a_subsystem_name_a_folder_spells_in_another_case_is_that_folder(project, monkeypatch):
     doc = document()
     doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
     doc["modules"].append(module("code_80006000", "COMBAT", ["func_80006010"]))
     monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
-    taken = submit(project, [row("sys_80003000", "combat", ["callee osContStartReadData"], kind="subsystem")])
-    assert taken["by_rule"] == {"duplicate": 1}
+    got = submit(project, [row("sys_80003000", "combat", ["callee osContStartReadData"], kind="subsystem")])
+    assert got["accepted"] == 1  # it was refused as a duplicate of COMBAT; the folder's modules move in beside it
+    assert {"op": "source", "subject": "code_80003000", "target": "src/game/main/COMBAT/code_80003000.c"} in moves(
+        project
+    )
 
 
 def test_submit_checks_reads_evidence_against_the_loads_and_names_an_item_of_no_form(project):
@@ -599,6 +626,16 @@ def test_an_sdk_function_takes_the_name_the_projects_libultra_table_gives_its_ad
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
     assert {"op": "symbol", "subject": "func_80700000", "target": "osDisableInt"} in moves(project)
+
+
+def test_an_sdk_reserved_name_in_the_table_passes_the_duplicate_check_too(project):
+    """NAMES-2: __osDisableInt was refused as a reserved identifier at the taken-names stage, table row or not."""
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
+    got = submit(project, [row("func_80700000", "__osDisableInt", ["caller func_80001010"])])
+    assert got["accepted"] == 1, got["by_rule"]
+    assert {"op": "symbol", "subject": "func_80700000", "target": "__osDisableInt"} in moves(project)
 
 
 def test_n4_calls_a_datum_static_when_one_file_reads_it_whatever_the_folder_holds(project):

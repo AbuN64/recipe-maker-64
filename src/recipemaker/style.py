@@ -85,6 +85,11 @@ def pattern(kind: str, word: str = "") -> str:
     bare = kind in ("function", "module") and not word
     key = f"unprefixed_{kind}" if bare or (kind == "function" and word in _rules()["unprefixed"]) else kind
     regular = str(names[key]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
+    if (
+        kind == "function" and word in _rules()["unprefixed"]
+    ):  # also the prefixed form: a builtin's wrapper is Math_Sqrtf
+        prefixed = str(names["function"]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
+        regular = f"(?:{regular}|{prefixed})"
     return f"(?:{regular}|{names['class_function']})" if kind == "function" else regular
 
 

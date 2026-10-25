@@ -154,6 +154,15 @@ class Map:
         """Whether a folder already holds the subsystem `word`, in whatever case it spells it (COMBAT holds combat)."""
         return any(self.folder(m).lower() == word.lower() for m in self.modules) or self.spell(word) in self.taken
 
+    def merge_folder(self, target: str, name: str) -> str:
+        """The folder, spelled as it is, that already holds the subsystem `name` (in whatever case) when a subsystem row
+        for another folder `target` names it, else "". The row then resolves to that subsystem: the folder's modules
+        move in beside the ones it holds, and the word is not a collision with itself (Math beside an existing MATH)."""
+        if style.folder_unnamed(target):
+            held = {self.folder(m) for m in self.modules} - {target, ""}
+            return next((f for f in sorted(held) if f.lower() == name.lower() and not style.folder_unnamed(f)), "")
+        return ""
+
     def folder(self, module: str) -> str:
         module = self.alias.get(module, module)
         return PurePosixPath(self.modules[module]["source"]).parent.name if module in self.modules else ""
@@ -407,15 +416,16 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     ):
         return "builtin", f"{name} is a compiler builtin: use a prefixed name, e.g. Math_{name.capitalize()}"
     # Original/debug and SDK evidence never override target portability.
-    folded = [n for n in ctx.taken if n != target and n != name]
-    if why := api.name_issues(name, name_kind, taken=folded):
+    merge = ctx.merge_folder(target, name) if kind == "subsystem" else ""
+    folded = [n for n in ctx.taken if n != target and n != name and n != merge]
+    if why := api.name_issues(name, name_kind, taken=folded, implementation=True):  # the same admission as above
         return "duplicate", why[0]
     if kind == "subsystem":
         carried = ctx.carried(target, name)
         for new in carried.values():
             if why := api.name_issues(new):
                 return "portable", why[0]
-            if why := api.name_issues(new, taken=sorted(ctx.taken - set(carried))):
+            if why := api.name_issues(new, taken=sorted(ctx.taken - set(carried) - {merge})):
                 return "duplicate", why[0]
     original = _original(ctx, row)
     if kind == "module":
@@ -439,7 +449,9 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     if rule:
         return rule, reason
     sdk = kind == "function" and ctx.sdk_name(ctx.canon(target)) == name  # another version may spell it already
-    if (name in ctx.taken and not sdk) or (kind == "subsystem" and ctx.folder_taken(name)):
+    if merge:
+        pass  # the folder that holds this subsystem takes the target's modules
+    elif (name in ctx.taken and not sdk) or (kind == "subsystem" and ctx.folder_taken(name)):
         return "duplicate", f"{name} is already a symbol, folder or file name"
     if kind == "subsystem" and (
         clash := [f"{a} -> {b}" for a, b in ctx.carried(target, name).items() if b in ctx.taken]
@@ -484,7 +496,9 @@ def _moves(ctx: Map, row: Json) -> list[dict[str, str]]:
             module[op] = str(path.with_name(name + path.suffix))
             out.append({"op": op, "subject": name, "target": module[op]})
         return out
-    folder = ctx.spell(name)  # the folder as the project spells its folders; the row's name stays the word
+    folder = ctx.merge_folder(target, name) or ctx.spell(
+        name
+    )  # as the project spells its folders; the row's name stays the word
     ctx.taken.add(folder)
     carried = ctx.carried(target, name)  # a placeholder's prefixed names follow the folder's new word
     ctx.taken |= set(carried.values())
