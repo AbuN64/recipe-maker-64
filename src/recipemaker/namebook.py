@@ -6,6 +6,8 @@ cannot apply comes back to its lane in `returned/LANE.jsonl`.
 Files under the names state directory (`$NAMES_STATE`, default ~/rig-state/names):
   ledger.jsonl      one accepted row per line {seq, ts, lane, key, name, doc, evidence, confidence, row}, append-only
   state.json        {applied_seq, next_batch}: rows with seq above applied_seq are queued
+  submits.jsonl     one line per submit {ts, lane, rows, accepted, refused, suggested, by_rule}: the WATCH counts
+  events.jsonl      what became of rows: made (batch K), landed, requeued, returned
   suggest.jsonl     rows a lane marked `suggest`: never applied by themselves
   returned/LANE.jsonl   rows the applier refused, with the rule and reason
   slices/LANE.json  what the lane owns (written by `recipe name slices`); no file, no ownership check"""
@@ -279,6 +281,13 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     written = append(lane, stored)
     suggest(lane, advice, lambda r: "")
     by_rule = Counter(r["rule"] for r in judged.refused)
+    with (
+        locked(),
+        open(store() / "submits.jsonl", "a", encoding="utf-8") as handle,
+    ):  # WATCH counts accepted/refused per lane
+        log = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lane": lane, "rows": len(rows), "accepted": len(stored)}
+        log |= {"refused": len(judged.refused), "suggested": len(advice), "by_rule": dict(by_rule)}
+        handle.write(json.dumps(log, sort_keys=True) + "\n")
     return {
         "action": "submit",
         "ledger": lane,

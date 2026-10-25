@@ -183,3 +183,15 @@ def test_events_move_rows_between_queued_inflight_landed_and_back(book):
         1: "landed",
         2: "queued",
     }
+
+
+def test_every_submit_leaves_a_count_line_for_watch(book):
+    submit(book, "L1", [fn("fn:us:80004010", "Actor_Spawn"), fn("fn:us:80009999", "Actor_Nope")])
+    line = json.loads((book.tmp / "names/submits.jsonl").read_text())
+    assert (line["lane"], line["rows"], line["accepted"], line["refused"], line["by_rule"]) == (
+        "L1",
+        2,
+        1,
+        1,
+        {"target": 1},
+    )
