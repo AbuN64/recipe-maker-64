@@ -411,7 +411,13 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     """The first rule the row breaks as (rule, reason), or ("", "")."""
     kind, target, name = row.get("kind"), row.get("target"), row.get("name")
     if kind not in _ORDER or not isinstance(target, str) or not isinstance(name, str) or not row.get("doc"):
-        return "shape", "a row needs kind, target, name, evidence and doc"
+        missing = [k for k in ("kind", "target", "name", "doc") if not row.get(k)]
+        wrong = [k for k in ("target", "name") if row.get(k) and not isinstance(row.get(k), str)]
+        if kind not in _ORDER and row.get("kind"):
+            return "shape", f"kind {kind!r} is not one of {', '.join(sorted(_ORDER))}"
+        return "shape", "a row needs kind, target, name, evidence and doc; " + (
+            f"missing: {', '.join(missing)}" if missing else f"not text: {', '.join(wrong)}"
+        )
     if reason := _exists(ctx, row):
         return "target", reason
     name_kind = "file" if kind in ("module", "subsystem") else "symbol"

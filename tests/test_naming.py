@@ -962,3 +962,9 @@ def test_a_refused_sdk_spelling_says_where_the_sdk_names_live(project, monkeypat
     got = submit(project, [row("func_80006010", "__osDisableInt", ["callee func_80700000"])])
     assert got["accepted"] == 0
     assert "libultra_names.tsv" in (naming._root(project) / "refused.jsonl").read_text()
+
+
+def test_a_row_without_doc_is_refused_naming_the_missing_field(project):
+    got = submit(project, [{"kind": "function", "target": "func_80006010", "name": "Game_Run", "evidence": []}])
+    assert got["accepted"] == 0
+    assert "missing: doc" in (naming._root(project) / "refused.jsonl").read_text()
