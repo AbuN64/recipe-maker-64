@@ -107,7 +107,11 @@ def reads(config: Config, doc: Json) -> Graph:
             held = graph.get(name, ([], []))
             graph[name] = (list(dict.fromkeys([*held[0], *calls])), list(dict.fromkeys([*held[1], *loads])))
     if not graph and by_segment:
-        raise state.stop("recipe.name", "no extracted assembly to read calls from", action="extract the base ROMs")
+        raise state.stop(
+            "recipe.name",
+            "no extracted assembly under this tree to read calls from (a fresh git worktree has none)",
+            action="run `unbake setup --no-make` in this tree (extracts the base ROMs), then submit again",
+        )
     return graph
 
 
