@@ -823,7 +823,7 @@ def test_reserved_catalog_names_are_not_a_portability_exception(project):
     table = project.project.root / "versions/us/libultra_names.tsv"
     table.parent.mkdir(parents=True)
     table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__osDisableInt\tEXACT\tsame words\n")
-    got = submit(project, [row("func_80700000", "__osDisableInt", [])])
+    got = submit(project, [row("func_80700000", "__secretHelper", [])])
     assert got["accepted"] == 0 and got["by_rule"] == {"portable": 1}
 
 

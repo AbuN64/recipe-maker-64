@@ -334,6 +334,8 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     word = ""
     if kind == "function" and ctx.sdk_name(ctx.canon(target)) == name:
         return "", ""  # the SDK's own name for the function at this address (the project's libultra_names table)
+    if kind == "function" and name in table("knowledge/style.toml").get("sdk", {}).get("libc", ()):
+        return "", ""  # a standard C library routine keeps its name whatever folder holds it (no subsystem prefix)
     if kind in ("function", "module"):
         folder = ctx.folder_of(ctx.canon(target)) if kind == "function" else ctx.folder(target)
         word = ctx.word(folder)
@@ -379,7 +381,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     if reason := _exists(ctx, row):
         return "target", reason
     name_kind = "file" if kind in ("module", "subsystem") else "symbol"
-    if why := api.name_issues(name, name_kind):
+    # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names, implementation)
+    if why := api.name_issues(name, name_kind, implementation=True):
         return "portable", why[0]
     # Original/debug and SDK evidence never override target portability.
     folded = [n for n in ctx.taken if n != target and n != name]

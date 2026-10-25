@@ -58,3 +58,9 @@ osPi = "dma"
 [gbi]
 use = '\bg[SD]P[A-Z]\w*\s*\('
 tag = "gfx"
+
+[sdk]
+# standard C library routines the original code links by name: no folder prefix applies to them
+libc = ["memcpy", "memmove", "memset", "memcmp", "strlen", "strcpy", "strncpy", "strcmp", "strncmp", "strcat", "strncat",
+        "strchr", "strrchr", "strstr", "sprintf", "vsprintf", "snprintf", "abs", "labs", "sqrtf", "sinf", "cosf", "tanf",
+        "atan2f", "fabsf", "floorf", "ceilf", "fmodf", "powf", "expf", "logf"]
