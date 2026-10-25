@@ -900,7 +900,8 @@ def test_class_methods_use_single_separator_with_evidence(project):
     assert naming.judge(ctx, row) == ("", "")
     for name in ("CVector3__GetDirectionRotation2", "__ClassMethod", "_ClassMethod"):
         assert naming.judge(ctx, {**row, "name": name})[0] == "portable"
-    # the SDK's own reserved names pass the portable rule, as in source admission (the name is then judged on its other rules)
+    # the SDK's own reserved names pass the portable rule, as in source admission (the name is then judged on its other
+    # rules)
     assert naming.judge(ctx, {**row, "name": "__osPopThread"})[0] != "portable"
 
 

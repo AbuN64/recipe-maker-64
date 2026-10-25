@@ -46,7 +46,8 @@ _BUILTIN_WORDS = (
 )
 BUILTINS = frozenset(w for line in _BUILTIN_WORDS for w in line.split())
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
-# style.toml evidence_forms; whatever follows the name (a parenthesized note, nested parentheses, `*`, `=`, a `: reason`)
+# style.toml evidence_forms; whatever follows the name (a parenthesized note, nested parentheses, `*`, `=`, a `:
+# reason`)
 # is the reader's, the name alone is checked
 _EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) ([^\s():;,]+)(?:[:;,]?(?:\s+.*)?)$")
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
@@ -470,7 +471,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     if reason := _exists(ctx, row):
         return "target", reason
     name_kind = "file" if kind in ("module", "subsystem") else "symbol"
-    # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names, implementation)
+    # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names,
+    # implementation)
     if why := api.name_issues(name, name_kind, implementation=True):
         return "portable", why[0]
     if (
@@ -802,9 +804,7 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
     layouts = cparse.load(api.snapshot(config))
     scope = _scope(config, doc, target) if target else None
     library = [str(x) for x in getattr(config.project, "libraries", ())]
-    found = debug.plan(
-        layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p), scope, library
-    )
+    found = debug.plan(layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p), scope, library)
     ctx, names, refused = Map(config, doc, {}), list[Json](), list[Json]()
     rows = [r for r in debug.rows(catalog, doc["members"]) if scope is None or r["target"] in scope]
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r["kind"]), 9)):

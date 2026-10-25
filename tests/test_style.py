@@ -337,7 +337,7 @@ def test_class_separator_and_reserved_names_are_not_style_aliases():
 
 def test_an_extern_in_another_subsystems_source_keeps_the_owners_prefix(tmp_path):
     files = {
-        "src/game/main/actor/actor_spawn.c": "extern void Fx_ClearInput(void *);\nvoid Actor_Spawn(void) { Fx_ClearInput(0); }\n"
+        "src/game/main/actor/actor_spawn.c": "extern void Fx_ClearInput(void *);\nvoid Actor_Spawn(void) { Fx_ClearInput(0); }\n"  # noqa: E501
     }
     assert not [d for r, d in rules(run(project(tmp_path, files))) if d.startswith("Fx_ClearInput")]
     header = {"src/game/main/actor/actor_spawn.h": "void Fx_ClearInput(void *);\n"}

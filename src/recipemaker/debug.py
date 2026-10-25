@@ -586,7 +586,9 @@ def _member_moves(match: Match, path: str, tag: str, alias: str, held: Iterable[
     return [
         {"op": "field", "subject": current, "target": original, "path": path, "tag": tag, "alias": alias}
         for current, original, _ in match.fields
-        if current != original and re.fullmatch(r"[A-Za-z_]\w*", original) and original not in have
+        if current != original
+        and re.fullmatch(r"[A-Za-z_]\w*", original)
+        and original not in have
         and current not in held
     ]
 

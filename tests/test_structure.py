@@ -735,14 +735,14 @@ def test_a_module_is_named_by_its_first_atom_in_names_from_not_by_another_versio
 
 
 def test_a_symbol_rename_carries_the_names_derived_from_a_neutral_function_name(tmp_path):
-    """The coordinator's case: Player_func_80209308_de and Brain_func_80209308_de stayed after func_80209308_de was named."""
+    """The coordinator's case: Player_func_80209308_de and Brain_func_80209308_de stayed after func_80209308_de was named."""  # noqa: E501
     root = _repo(
         tmp_path,
         {
             "versions/us/symbol_addrs.txt": "func_80209308_de = 0x8000; // type:func\n",
             "include/COMMON/CB.H": "typedef struct Player_func_80209308_de Player_func_80209308_de;\n"
             "typedef struct Brain_func_80209308_de { int a; } Brain_func_80209308_de;\n"
-            "typedef struct func_80209308_de_S1 func_80209308_de_S1;\nvoid func_80209308_de(Player_func_80209308_de *);\n",
+            "typedef struct func_80209308_de_S1 func_80209308_de_S1;\nvoid func_80209308_de(Player_func_80209308_de *);\n",  # noqa: E501
             "src/a.c": "void g(void) { func_80209308_de(0); func_80209308_dex(0); Other_func_80209308 x; }\n",
         },
     )
