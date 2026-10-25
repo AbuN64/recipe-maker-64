@@ -125,7 +125,7 @@ def test_name_rules_hit_each_kind_and_pass_neutral_names(tmp_path):
     files = {"src/game/main/actor/actor_spawn.c": BAD_SOURCE + "void func_80001000(void) {}\nint D_80001000;\n"}
     got = {r: d for r, d in rules(run(project(tmp_path, files)))}
     seen = [(r, d) for r, d in rules(run(project(tmp_path, files)))]
-    assert ("function-name", "spawn_actor") in seen
+    assert any(r == "function-name" and d.startswith("spawn_actor (must be Actor_CamelCase") for r, d in seen)
     assert ("global-name", "actorCount") in seen and ("static-name", "counter") in seen
     assert ("type-name", "actor_rec") in seen and ("macro-name", "bad_macro") in seen
     assert ("banned-word", "Actor_DoStuff (Do)") in seen
@@ -339,6 +339,6 @@ def test_an_extern_in_another_subsystems_source_keeps_the_owners_prefix(tmp_path
     files = {
         "src/game/main/actor/actor_spawn.c": "extern void Fx_ClearInput(void *);\nvoid Actor_Spawn(void) { Fx_ClearInput(0); }\n"
     }
-    assert ("function-name", "Fx_ClearInput") not in rules(run(project(tmp_path, files)))
+    assert not [d for r, d in rules(run(project(tmp_path, files))) if d.startswith("Fx_ClearInput")]
     header = {"src/game/main/actor/actor_spawn.h": "void Fx_ClearInput(void *);\n"}
-    assert ("function-name", "Fx_ClearInput") in rules(run(project(tmp_path / "h", header)))
+    assert [d for r, d in rules(run(project(tmp_path / "h", header))) if d.startswith("Fx_ClearInput")]

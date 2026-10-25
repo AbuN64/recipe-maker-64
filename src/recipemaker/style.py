@@ -261,6 +261,13 @@ def _words(path: str) -> list[str]:
     return list(dict.fromkeys(word for folder in found if (word := prefix_word(folder))))
 
 
+def _why(name: str, words: Sequence[str]) -> str:
+    """Why a function name is illegal in a file whose folder (or header) allows the prefixes `words`."""
+    if issues := api.name_issues(name):
+        return "; ".join(issues)
+    return "must be " + " or ".join(f"{pascal(w)}_CamelCase" for w in words) + " (a class method CName_Method also passes)"
+
+
 def _names(facts: Json, words: Sequence[str], context: Context, source: bool = False) -> Iterator[tuple[str, str]]:
     for name, static, defined in facts["fns"]:
         # an extern in a source names a function another subsystem's file defines (and is judged there)
@@ -270,7 +277,7 @@ def _names(facts: Json, words: Sequence[str], context: Context, source: bool = F
             and not any(legal("function", name, w) for w in words)
             and not context.original(name)
         ):
-            yield "function-name", name
+            yield "function-name", f"{name} ({_why(name, words)})"
         if (defined or static) and (word := banned(name)) and not neutral(name) and not context.original(name):
             yield "banned-word", f"{name} ({word})"
     for name, static, _ in facts["vars"]:
