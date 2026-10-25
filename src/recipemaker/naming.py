@@ -18,7 +18,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import cparse, debug, repair, state, structure, style, table, tree
+from recipemaker import cparse, debug, host, repair, state, structure, style, table, tree
 
 # Compiler builtins: cc1 expands a call by one of these names inline (+11 words for sqrtf, func_802B72B0_de),
 # so a game function carrying one no longer compiles to its own body. The SDK table line may still spell one.
@@ -36,6 +36,7 @@ _EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) ([^\s():;,]+)(?:[:;,]?
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
+_SOURCES = ("*.H", "*.h", "*.CPP", "*.cpp", "*.c")
 _CARD_LIMIT = 12
 _SHIP = "decomp ship --patch LANE={}:MESSAGE"  # a naming patch lands as any change to the shared tree does
 Graph = dict[str, tuple[list[str], list[str]]]
@@ -127,6 +128,7 @@ class Map:
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
+        self._externs: set[str] | None = None
         self._at: dict[str, set[tuple[str, int]]] | None = None  # a spelling to its (version, VRAM) in the tables
         self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
         self.calls = {
@@ -341,6 +343,20 @@ class Map:
         if kind == "reads":  # a member whose address the code loads: the card's `loads`
             return any(self.same(value, x) for n in names for x in self.loads.get(n, ()))
         return any(self.same(value, x) for n in names for x in self.calls.get(n, ()))
+
+    def externs(self) -> set[str]:
+        """The words of every `extern` declaration in the project's sources and headers: a datum declared extern in
+        any one of them (another version file, a header) is linked across files whatever one version reads, so its
+        name is a global's (`g_`), never a static's (`s_`: style global-name)."""
+        if self._externs is None:
+            done = host.run(
+                ["git", "-c", "core.fsmonitor=false", "grep", "-h", "-E", r"^[ \t]*extern[ \t][^(]*;", "--", *_SOURCES],
+                self.root,
+                self.config,
+            )
+            text = done.stdout.decode("utf-8", errors="replace") if done.exit in (0, 1) else ""
+            self._externs = set(re.findall(r"[A-Za-z_]\w*", text))
+        return self._externs
 
     def same(self, a: str, b: str) -> bool:
         """Whether two spellings are one symbol: equal, or two names some version's symbol table puts at one address
@@ -673,7 +689,12 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
     }
     data.update({n: ctx.callers.get(n, []) for n in external if ctx.symbol_kind(n) == "global"})
     held = [
-        (n, "global" if n not in ctx.members or len({ctx.module_at(c) for c in by}) >= 2 else "static")
+        (
+            n,
+            "global"
+            if n not in ctx.members or len({ctx.module_at(c) for c in by}) >= 2 or n in ctx.externs()
+            else "static",
+        )
         for n, by in data.items()
         if by
     ]
@@ -794,7 +815,7 @@ def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
         return ("function", member["name"])
     if member:
         readers = {ctx.module_at(c) for c in ctx.callers.get(member["name"], ())}
-        return ("global" if len(readers) >= 2 else "static", member["name"])
+        return ("global" if len(readers) >= 2 or member["name"] in ctx.externs() else "static", member["name"])
     if target in {ctx.folder(m) for m in ctx.modules}:
         return ("subsystem", target)
     if kind := ctx.symbol_kind(target):  # a symbol some version's table knows, owned by no module (a bss datum)

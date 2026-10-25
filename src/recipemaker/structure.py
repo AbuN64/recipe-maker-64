@@ -1037,7 +1037,9 @@ def _tidy(files: Files, names: Collection[str]) -> None:
     if not names:
         return
     alt = "|".join(map(re.escape, names))
-    shim = re.compile(rf"(?m)^[ \t]*#[ \t]*define[ \t]+(?:{alt})[ \t]+fz_\w+[ \t]*\n")
+    shim = re.compile(
+        rf"(?m)^[ \t]*#[ \t]*define[ \t]+(?:{alt})[ \t]+fz_?\w+[ \t]*\n"
+    )  # the alias a rename derived (fz_OLD) may already read fzNew
     undef = re.compile(rf"(?m)^[ \t]*#[ \t]*undef[ \t]+(?:{alt})[ \t]*\n")
     for path in (p for p in files.everything() if p.lower().endswith(_C)):
         text = files.get(path) or ""

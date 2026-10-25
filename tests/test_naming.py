@@ -300,7 +300,7 @@ def assembly(tmp_path, monkeypatch):
 
 def test_reads_takes_calls_and_loads_of_known_members_from_the_assembly_of_their_own_version(assembly):
     got = naming.reads(assembly, document())
-    # labels out, a recursive call kept (`Map.recursive`); a callee no member is named as stays for `Map.canon` (a renamed function's stale name)
+    # labels out, a recursive call kept (`Map.recursive`); a callee no member names stays for `Map.canon`
     assert got["func_80001010"] == (
         ["func_80001020", "osMissing", "func_80001010", "func_80700000"],
         ["D_80002000"],
@@ -1052,7 +1052,7 @@ def test_n5_packs_only_functions_nothing_outside_their_folder_calls():
         tags=lambda names: {},
     )
     got = naming._targets(ctx, "N5")
-    # func_8000000C has an outside caller (N3's), func_8000000D sits in a folder with no word; Menu_Named is not a placeholder
+    # C has an outside caller (N3's), D's folder has no word, Menu_Named is no placeholder
     assert [n for _, n in got] == ["func_8000000B", "func_8000000A", "func_8000000E"]
 
 
@@ -1067,3 +1067,12 @@ def test_a_recursive_call_and_a_shared_address_are_evidence(project):
     ctx._at = None
     ctx.tables = {"us": {"D_800D2988": (0x800D2988, 0, 4, "data"), "literals_a": (0x800D2988, 0, 4, "data")}}
     assert ctx.same("D_800D2988", "literals_a") and not ctx.same("D_800D2988", "literals_b")
+
+
+def test_n4_calls_a_datum_global_when_any_source_declares_it_extern(project, monkeypatch):
+    doc = document()
+    ctx = naming.Map(project, doc, GRAPH)
+    ctx._externs = {"D_80005000", "s32"}
+    kinds = {n: k for k, n in naming._targets(ctx, "N4")}
+    assert kinds["D_80005000"] == "global"  # one reader, but a header or another version declares it extern
+    assert naming._chosen(ctx, "N4", "D_80005000")[0] == "global"

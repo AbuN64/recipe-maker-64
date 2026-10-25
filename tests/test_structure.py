@@ -875,6 +875,18 @@ def test_a_rename_drops_the_fuzzy_define_with_its_undef_and_keeps_local_externs(
     assert "Mem_Alloc(1)" in patch
 
 
+def test_a_rename_drops_the_fuzzy_alias_of_a_neutral_function_whose_derived_name_lost_its_underscore(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.c").write_text(
+        "#ifdef NON_MATCHING\n#define func_8040EC30_de fz_func_8040EC30_de\n#endif\n"
+        "void f(void) { func_8040EC30_de(1); }\n"
+    )
+    move = {"op": "symbol", "subject": "func_8040EC30_de", "target": "Frontend_FindWidget"}
+    patch = structure.build(tmp_path, [move], {}.get, {})["patch"]
+    assert "-#define func_8040EC30_de fz_func_8040EC30_de" in patch and "+#define" not in patch
+    assert "Frontend_FindWidget(1)" in patch
+
+
 def test_apply_takes_the_newest_saved_patch_and_sets_aside_a_stale_one(tmp_path, monkeypatch):
     saved = tmp_path / ".unbake/recipe/patches"
     saved.mkdir(parents=True)
