@@ -133,7 +133,7 @@ def test_n2_names_a_folder_when_one_tag_holds_half_the_external_calls(project):
     pack = json.loads((project.project.root / got["pack"]).read_text())
     assert [t["target"] for t in pack["targets"]] == ["sys_80003000"]  # 1 of 3 is only 33%: it goes to the model
     assert pack["targets"][0]["callees"][0] == "osContStartReadData" and "answer" in pack and pack["banned"]
-    assert "string" not in " ".join(pack["evidence_forms"])
+    assert "callee NAME" in pack["evidence_forms"]
 
 
 def test_a_pack_carries_the_evidence_of_a_public_function(project):
@@ -202,10 +202,10 @@ def test_submit_refuses_a_duplicate_and_unverifiable_evidence(project):
         row("D_80005000", "g_actorList", ["caller func_80004010"], kind="global"),
         row("Actor_Update", "Actor_Tick", ["callee func_80004020"]),  # already has a name
         row("alSeqpPlay", "Audio_Play", ["tag audio"]),  # an SDK function keeps its name
-        row("func_80004030", "Actor_Spawn2", ["string 'Mix'"]),  # no string evidence exists
+        row("func_80004030", "Actor_Spawn2", ["string 'Mix'"]),  # no string it loads holds Mix
     ]
     got = submit(project, rows)
-    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 2, "evidence": 1, "named": 2}
+    assert got["by_rule"] == {"duplicate": 1, "unverifiable": 3, "named": 2}
     assert got["accepted"] == 2 and [m["op"] for m in moves(project)] == ["symbol", "symbol"]
 
 

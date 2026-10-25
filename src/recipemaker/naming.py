@@ -21,6 +21,7 @@ from unbake.contracts import Config, Json, Refusal
 
 from recipemaker import (
     access,
+    autoname,
     cparse,
     debug,
     host,
@@ -28,6 +29,8 @@ from recipemaker import (
     namebook,
     repair,
     settle,
+    slicepack,
+    slices,
     state,
     structure,
     style,
@@ -148,6 +151,10 @@ class Map:
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
         self._externs: set[str] | None = None
+        self._strings: slicepack.Strings | None = (
+            None  # the strings the data holds (`string` evidence), built at first use
+        )
+        self._source: slicepack.Source | None = None
         self._at: dict[str, set[tuple[str, int]]] | None = None  # a spelling to its (version, VRAM) in the tables
         self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
         self.calls = {
@@ -345,6 +352,11 @@ class Map:
         return list(self.modules.get(target, {}).get("members", ()))
 
     def verifies(self, item: str, names: Sequence[str]) -> bool:
+        if slicepack.extra_form(item):  # `body L<n>: ...` and `string TEXT`: the source and the data bytes show them
+            if self._strings is None:
+                self._strings, self._source = slicepack.Strings(self.config, self), slicepack.Source(self.root)
+            assert self._source is not None
+            return slicepack.verifies(self, item, names, self._strings, self._source)
         found = _EVIDENCE.match(item)
         if not found:
             return False
@@ -555,7 +567,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
         return "evidence", "a name needs at least one evidence item"
-    if unknown := [e for e in evidence if not _EVIDENCE.match(e)]:
+    if unknown := [e for e in evidence if not _EVIDENCE.match(e) and not slicepack.extra_form(e)]:
         forms = ", ".join(table("knowledge/style.toml")["evidence_forms"])
         note = table("knowledge/style.toml")["evidence_note"]
         return "evidence", f"evidence item {unknown[0]!r} has no form a reader can check; the forms are {forms}; {note}"
@@ -1097,6 +1109,9 @@ def next_(config: Config, params: Json) -> Json:
         return _locals(config, params)
     if params["step"] == "M":
         return _members(config, params)
+    if params["step"] == "S":  # a slice's functions with their slots, read-only (T4)
+        doc = structure.evidence(config, params["host"])
+        return slicepack.build(config, params, Map(config, doc, reads(config, doc)), doc)
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
     debt = api.naming_debt(config.project.root)
     debt_path = _root(config) / "symbol-name-debt.json"
@@ -1459,5 +1474,48 @@ def count(config: Config, params: Json) -> Json:
     return {"action": "count", "steps": steps, "folders": out, "next": "recipe name next --step STEP --target FOLDER"}
 
 
+def cut(config: Config, params: Json) -> Json:
+    """`recipe name slices --lanes N [--map MODULES.tsv] [--assign LANE=ID,ID] [--out DIR]`: the slice document (T3)."""
+    where = Path(params["out"]) if params.get("out") else None
+    held = slices.load(where)
+    lanes = int(params.get("lanes") or (held or {}).get("lanes") or 12)
+    if params.get("lanes") or held is None:
+        doc = structure.evidence(config, params["host"])
+        ctx = Map(config, doc, reads(config, doc))
+        functions, data, records = slices.collect(ctx, config.project.root)
+        mapping = slices.read_map(Path(params["map"])) if params.get("map") else None
+        result = dict(slices.compute(functions, data, records, lanes, held, mapping, doc["names_from"]))
+    else:
+        result = dict(held)
+    for pair in params.get("assign") or []:
+        lane, _, ids = pair.partition("=")
+        if not lane or not ids:
+            raise state.stop("recipe.name", f"--assign takes LANE=ID[,ID], not {pair!r}", action="recipe name slices")
+        slices.assign(result, lane, ids.split(","))
+    saved = slices.save(result, where)
+    lane_files = slices.write_lane_files(result, where)
+    return {
+        "action": "slices",
+        "path": str(saved),
+        "lane_files": [str(p) for p in lane_files],
+        "summary": slices.summary(result),
+        "slices": len(result["slices"]),
+        "next": "recipe name next --step S --target SLICE --count 20 --out DIR",
+    }
+
+
+def auto(config: Config, params: Json) -> Json:
+    """`recipe name auto --kinds sdk,catalog,strings --out FILE`: the mechanical names (T6) as ledger rows."""
+    kinds = [k for k in str(params.get("kinds") or ",".join(autoname.KINDS)).split(",") if k]
+    if bad := [k for k in kinds if k not in autoname.KINDS]:
+        raise state.stop("recipe.name", f"auto takes kinds {', '.join(autoname.KINDS)}, not {', '.join(bad)}")
+    doc = structure.evidence(config, params["host"])
+    ctx = Map(config, doc, reads(config, doc))
+    where = Path(params["out"]) if params.get("out") else _root(config) / "auto-rows.jsonl"
+    return autoname.run(config, ctx, kinds, where, judge, _moves)
+
+
 def run(config: Config, params: Json) -> Json:
-    return {"next": next_, "submit": submit, "banners": banners, "count": count}[params["action"]](config, params)
+    return {"next": next_, "submit": submit, "banners": banners, "count": count, "slices": cut, "auto": auto}[
+        params["action"]
+    ](config, params)

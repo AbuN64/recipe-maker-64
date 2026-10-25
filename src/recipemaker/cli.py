@@ -82,6 +82,21 @@ def _render_name(result: Json) -> list[str]:
             )
             for folder, got in result["folders"].items()
         ]
+    if result["action"] == "auto":
+        refused = {k: sum(v.values()) for k, v in result["refused"].items()}
+        kinds = ", ".join(f"{k} {n}" for k, n in result["by_kind"].items())
+        return [
+            f"{result['rows']} rows ({kinds}) in {result['path']}",
+            *([f"judged out: {refused}"] if refused else []),
+        ]
+    if result["action"] == "slices":
+        return [*result["summary"], f"written {result['path']}", *(f"lane file {p}" for p in result["lane_files"])]
+    if result["action"] == "next" and result["step"] == "S":
+        return [
+            f"S {'+'.join(result['slice'])}: pack {result['pack']} holds {result['functions']} functions"
+            f" ({result['slots']} slots) and {result['data']} data, {result['functions_left']} functions left",
+            f"answer rows to {result['answer']}",
+        ]
     if result["action"] == "next" and result["step"] in ("L", "M"):
         what = (
             f"pack {result['pack']} holds {result['slots']} slots in {result['targets']} functions"
@@ -165,14 +180,15 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--segment", help="only these segments (comma list)")
     one.add_argument("--paths", nargs="+", metavar="FILE", help="only the modules holding these files and linked moves")
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
-    one.add_argument("action", choices=("next", "submit", "banners", "count"))
+    one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto"))
     one.add_argument("file", nargs="?", help="the names file for submit")
     one.add_argument(
         "--step",
-        choices=("N1", "N2", "N3", "N4", "N5", "T", "L", "M"),
+        choices=("N1", "N2", "N3", "N4", "N5", "T", "L", "M", "S"),
         help="the naming step (default: N3); N5: functions only their own folder calls;"
         " T: original types from the debug catalog (a preview until --apply);"
-        " L: locals and parameters of --target; M: unkNN members of a record",
+        " L: locals and parameters of --target; M: unkNN members of a record;"
+        " S: a slice's functions with their slots, read-only (--target SLICE_OR_LANE --out DIR)",
     )
     one.add_argument(
         "--no-apply", action="store_true", help="next/submit leave the patch saved instead of applying it to the tree"
@@ -193,6 +209,13 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
     one.add_argument("--steps", help="count: the steps read, a comma list of L, N1, N3, N4, N5 (default L,N4,N5)")
     one.add_argument("--targets", nargs="+", metavar="FOLDER", help="count: the folders counted, in one evidence build")
+    one.add_argument("--lanes", type=int, help="slices: the lane count (GLOBALS and STRUCT slices scale with it)")
+    one.add_argument("--map", help="slices: a module map (unit<TAB>module lines, e.g. MODULES.tsv)")
+    one.add_argument("--assign", action="append", metavar="LANE=ID[,ID]", help="slices: LANE owns these slices")
+    one.add_argument(
+        "--out", help="slices: the names directory; step S: where the pack is written; auto: the rows file"
+    )
+    one.add_argument("--kinds", help="auto: a comma list of sdk, catalog, strings (default all)")
     one = verb("style", "style findings; exit 1 when one is an error")
     one.add_argument("paths", nargs="*", help="check only these paths")
     one.add_argument("--paths", nargs="+", dest="only", metavar="PATH", help="the same, as `structure` takes them")
