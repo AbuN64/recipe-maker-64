@@ -946,5 +946,3 @@ def test_a_signal_during_apply_puts_the_tree_back(tmp_path, monkeypatch):
         run(["git", "-C", str(tmp_path), "apply", str(patch)], tmp_path, config)
     assert stopped.value.code == 128 + signal.SIGTERM
     assert ["apply", "-R"] in runs
-        signal.getsignal(signal.SIGTERM)
-    )
