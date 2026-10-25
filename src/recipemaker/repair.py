@@ -34,6 +34,7 @@ class Repairs:
         self.text: dict[str, str] = {}
         self.taken: set[str] | None = None
         self.accepted: set[str] = set()
+        self.scoped: dict[str, set[str]] = {}  # per function, the local names rows already queued or accepted gave
         self.protos = locals_.Prototypes(root)
 
     def read(self, path: str) -> str:
@@ -113,11 +114,13 @@ class Repairs:
                 bad := locals_.verify(scope, old, row.get("evidence"), self.protos.get(locals_.calls(scope)), known)
             ):
                 return "evidence", bad, []
-            taken = set(WORD.findall(scope))
+            taken = set(WORD.findall(scope)) | self.scoped.get(str(function), set())
             move |= {"op": "local", "path": path, "function": str(function)}
         else:
             taken = self.names()
         if new in taken or api.name_issues(new, taken=sorted(taken - {old})):
             return "duplicate", f"{new} is already used in the rename scope", []
+        if row["kind"] == "local":
+            self.scoped.setdefault(str(function), set()).add(new)
         self.accepted.add(new)
         return "", "", [move]

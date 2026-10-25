@@ -12,7 +12,7 @@ from pathlib import Path
 from unbake import api
 from unbake.contracts import Json, Refusal
 
-from recipemaker import access, locals_, state, structure
+from recipemaker import access, keys, locals_, state, structure
 
 UNKNOWN = re.compile(r"unk_?[0-9A-Fa-f]+")
 _CHAIN = re.compile(
@@ -135,7 +135,30 @@ class Fields:
         self.index = locals_.Prototypes(root)
         self.gathered: dict[str, dict[str, list[str]]] = {}
         self.accepted: set[tuple[str, str]] = set()
+        self.queued: list[tuple[str, str]] = []  # (record as spelled, new name) of rows queued but not yet in the tree
         self.words: set[str] | None = None
+
+    def load(self) -> None:
+        """Read the project's records once, and count the queued rows' names as taken."""
+        if self.texts is None:
+            self.texts = texts_of(self.root)
+            self.types = access.Types(self.texts)
+            self.types.learn(self.texts)
+        assert self.types is not None
+        for struct, new in self.queued:
+            self.accepted.add((self.types.key.get(re.sub(r"^(?:struct|union)\s+", "", struct), ""), new))
+        self.queued = []
+
+    def unknown_at(self, tag: str, offset: int) -> tuple[str, str]:
+        """(member, "") of the unknown member of record TAG at byte OFFSET, or ("", why)."""
+        self.load()
+        assert self.types is not None
+        key = self.types.key.get(re.sub(r"^(?:struct|union)\s+", "", tag), "")
+        if not key:
+            return "", f"no record is named {tag}"
+        held = self.types.member.get(key, {})
+        old = keys.member_old(held, offset)
+        return (old, "") if old else ("", f"{key} has no unknown member at +{offset:#x}")
 
     def judge(self, row: Json) -> tuple[str, str, list[Json]]:
         given = [row.get(k) for k in ("target", "name", "struct")]
@@ -151,11 +174,8 @@ class Fields:
             or api.name_issues(new)
         ):
             return "name", f"{new} is no lower-case member name", []
-        if self.texts is None:
-            self.texts = texts_of(self.root)
-            self.types = access.Types(self.texts)
-            self.types.learn(self.texts)
-        assert self.types is not None
+        self.load()
+        assert self.types is not None and self.texts is not None
         try:
             key, path, tag, alias = record(self.texts, self.types, struct)
         except Refusal as refusal:

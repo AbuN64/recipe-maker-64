@@ -12,6 +12,7 @@ import sys
 from bisect import bisect_right
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -24,6 +25,7 @@ from recipemaker import (
     debug,
     host,
     locals_,
+    namebook,
     repair,
     settle,
     state,
@@ -1190,12 +1192,122 @@ def refusal_lines(refused: Sequence[Json], limit: int = 20) -> list[str]:
     for r in refused[:limit]:
         row = r["row"]
         field = _FIELD.get(r["rule"], "row")
-        out.append(f"refused {r['rule']} {field} {row.get('target', '?')} -> {row.get('name', '?')}: {r['reason']}")
+        where = row.get("key") or row.get("target", "?")
+        out.append(f"refused {r['rule']} {field} {where} -> {row.get('name', '?')}: {r['reason']}")
     return out + (
         [f"refused ... {len(refused) - limit} more in .unbake/recipe/name/refused.jsonl"]
         if len(refused) > limit
         else []
     )
+
+
+@dataclass
+class Judged:
+    """The rows of one file after the rules: accepted with their moves, refused with the rule, or held already."""
+
+    accepted: list[tuple[Json, Sequence[Json]]] = field(default_factory=list)
+    refused: list[Json] = field(default_factory=list)
+    already: list[Json] = field(default_factory=list)
+    doc: Json = field(default_factory=dict)
+    rows: list[Json] = field(default_factory=list)
+
+
+def read_rows(path: Path) -> list[Json]:
+    """The rows of a names file; a line that is no JSON object comes back as {"bad": line}."""
+    rows: list[Json] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line) if line.strip() else None
+        except ValueError:
+            row = {"bad": line}
+        rows += [row if isinstance(row, dict) else {"bad": line}] if row is not None else []
+    return rows
+
+
+def judge_rows(config: Config, params: Json, rows: list[Json], queued: Sequence[Json] = (), gate: Any = None) -> Judged:
+    """Every row of a names file against the rules and the evidence. `queued` = rows already accepted but not yet in the
+    tree (the ledger's), whose names and slots count as taken; `gate(row)` returns (rule, reason) to refuse a row before
+    any other rule (the ledger's ownership check)."""
+    out = Judged(rows=rows)
+    ctx: Map | None = None
+    repairs = repair.Repairs(config.project.root, lambda: debug.variables(config))
+    fields = members_.Fields(config.project.root, loose=not params.get("no_apply") and not params.get("no_settle"))
+    # new name -> the name the tree holds, for the symbol rows of this file (evidence may name either spelling)
+    renamed = {
+        str(r["name"]): str(r["target"])
+        for r in [*queued, *rows]
+        if r.get("kind") in ("function", "global", "static")
+        and isinstance(r.get("name"), str)
+        and isinstance(r.get("target"), str)
+    }
+    for q in queued:  # a name or a slot the queue holds is taken for this file
+        if q.get("kind") in ("local", "param") and isinstance(q.get("function"), str):
+            repairs.scoped.setdefault(q["function"], set()).add(str(q.get("name")))
+        elif q.get("kind") == "field":
+            fields.queued.append((str(q.get("struct")), str(q.get("name"))))
+        elif isinstance(q.get("name"), str):
+            repairs.accepted.add(q["name"])
+    keyed = any("key" in r for r in rows) or gate is not None
+    if keyed:
+        doc = structure.evidence(config, params["host"])
+        ctx = Map(config, doc, reads(config, doc))
+        out.doc = doc
+        ctx.taken |= {str(q["name"]) for q in queued if isinstance(q.get("name"), str)}
+    for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
+        if ctx is not None:
+            row, rule, reason = namebook.resolve(ctx, fields, repairs, row)
+            if rule == "applied":
+                out.already.append(row)
+                continue
+            if rule:
+                out.refused.append({"row": row, "rule": rule, "reason": reason})
+                continue
+        if gate is not None and (why := gate(row)):
+            if why[0] == "applied":
+                out.already.append(row)
+            else:
+                out.refused.append({"row": row, "rule": why[0], "reason": why[1]})
+            continue
+        if row.get("kind") == "param":  # a parameter is a local of its function (CLEAN-MENU2-3 wrote "param")
+            row = {**row, "kind": "local"}
+        if row.get("kind") in ("local", "repair"):
+            rule, reason, direct = repairs.judge(row)
+            if rule == "applied":
+                out.already.append(row)
+            elif rule:
+                out.refused.append({"row": row, "rule": rule, "reason": reason})
+            else:
+                out.accepted.append((row, direct))
+            continue
+        if row.get("kind") == "field":
+            rule, reason, direct = fields.judge(row)
+            if rule == "applied":
+                out.already.append(row)
+            elif rule:
+                out.refused.append({"row": row, "rule": rule, "reason": reason})
+            else:
+                out.accepted.append((row, direct))
+            continue
+        if row.get("kind") not in _ORDER:
+            kinds = ", ".join([*sorted(_ORDER), "field", "local", "param", "repair"])
+            why = f"unknown naming row kind {row.get('kind')!r}; the kinds are {kinds}"
+            out.refused.append({"row": row, "rule": "shape", "reason": why})
+            continue
+        if ctx is None:
+            out.doc = structure.evidence(config, params["host"])
+            ctx = Map(config, out.doc, reads(config, out.doc))
+            ctx.taken |= {str(q["name"]) for q in queued if isinstance(q.get("name"), str)}
+        if row.get("kind") == "module" and isinstance(row.get("target"), str):
+            row = {**row, "target": ctx.module_of(row["target"])}
+        if "bad" not in row and _applied(ctx, row):
+            out.already.append(row)
+            continue
+        rule, reason = judge(ctx, _as_before(row, renamed)) if "bad" not in row else ("shape", "not a JSON object")
+        if rule:
+            out.refused.append({"row": row, "rule": rule, "reason": reason})
+            continue
+        out.accepted.append((row, _moves(ctx, row)))
+    return out
 
 
 def submit(config: Config, params: Json) -> Json:
@@ -1204,68 +1316,12 @@ def submit(config: Config, params: Json) -> Json:
     if not path.is_file() or path.suffix != ".jsonl":  # a pack or types report is read, never submitted
         why = "does not exist" if not path.is_file() else "is no names file (one JSON row per line, .jsonl)"
         raise state.stop("recipe.name", f"{path} {why}", action="recipe name next")
-    doc: Json = {}
-    ctx: Map | None = None
-    repairs = repair.Repairs(config.project.root, lambda: debug.variables(config))
-    fields = members_.Fields(config.project.root, loose=not params.get("no_apply") and not params.get("no_settle"))
-    rows: list[Json] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line) if line.strip() else None
-        except ValueError:
-            row = {"bad": line}
-        rows += [row if isinstance(row, dict) else {"bad": line}] if row is not None else []
+    rows = read_rows(path)
+    if params.get("ledger"):
+        return namebook.submit(config, params, rows)
     k = m[1] if (m := re.search(r"names-(\d+)", path.name)) else str(_number(config))
-    accepted: list[tuple[Json, Sequence[Json]]] = []
-    refused: list[Json] = []
-    already: list[Json] = []  # rows the tree already holds: no-ops, neither applied again nor refused
-    # new name -> the name the tree holds, for the symbol rows of this file (evidence may name either spelling)
-    renamed = {
-        str(r["name"]): str(r["target"])
-        for r in rows
-        if r.get("kind") in ("function", "global", "static")
-        and isinstance(r.get("name"), str)
-        and isinstance(r.get("target"), str)
-    }
-    for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
-        if row.get("kind") == "param":  # a parameter is a local of its function (CLEAN-MENU2-3 wrote "param")
-            row = {**row, "kind": "local"}
-        if row.get("kind") in ("local", "repair"):
-            rule, reason, direct = repairs.judge(row)
-            if rule == "applied":
-                already.append(row)
-            elif rule:
-                refused.append({"row": row, "rule": rule, "reason": reason})
-            else:
-                accepted.append((row, direct))
-            continue
-        if row.get("kind") == "field":
-            rule, reason, direct = fields.judge(row)
-            if rule == "applied":
-                already.append(row)
-            elif rule:
-                refused.append({"row": row, "rule": rule, "reason": reason})
-            else:
-                accepted.append((row, direct))
-            continue
-        if row.get("kind") not in _ORDER:
-            kinds = ", ".join([*sorted(_ORDER), "field", "local", "param", "repair"])
-            why = f"unknown naming row kind {row.get('kind')!r}; the kinds are {kinds}"
-            refused.append({"row": row, "rule": "shape", "reason": why})
-            continue
-        if ctx is None:
-            doc = structure.evidence(config, params["host"])
-            ctx = Map(config, doc, reads(config, doc))
-        if row.get("kind") == "module" and isinstance(row.get("target"), str):
-            row = {**row, "target": ctx.module_of(row["target"])}
-        if "bad" not in row and _applied(ctx, row):
-            already.append(row)
-            continue
-        rule, reason = judge(ctx, _as_before(row, renamed)) if "bad" not in row else ("shape", "not a JSON object")
-        if rule:
-            refused.append({"row": row, "rule": rule, "reason": reason})
-            continue
-        accepted.append((row, _moves(ctx, row)))
+    judged = judge_rows(config, params, rows)
+    accepted, refused, already, doc = judged.accepted, judged.refused, judged.already, judged.doc
     moves = [m for _, group in accepted for m in group]
     built = _patch(config, doc, moves)
     banners = [{"name": r["name"], "kind": r["kind"], "doc": " ".join(r["doc"].split())} for r, _ in accepted]

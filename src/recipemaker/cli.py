@@ -16,7 +16,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Finding, Json, Refusal
 
-from recipemaker import errors, lifecycle, look, naming, structure, style, world
+from recipemaker import errors, lifecycle, look, namebook, naming, structure, style, world
 
 _VERBS: dict[str, Callable[[Config, Json], Json]] = {
     "look": lambda config, params: {**look.look(config, params["name"]), "next": "recipe name next"},
@@ -99,6 +99,17 @@ def _render_name(result: Json) -> list[str]:
         if "outside" in result:
             out += [f"preview: {len(result['files'])} files, {len(result['outside'])} outside: {result['outside'][:8]}"]
         return out
+    if result["action"] == "submit" and "ledger" in result:
+        rules = ", ".join(f"{k} {v}" for k, v in sorted(result["by_rule"].items()))
+        return [
+            *result["returned"],
+            f"{result['accepted']} of {result['rows']} names queued for {result['ledger']}"
+            f" ({result['queued']} waiting in the ledger)"
+            + (f", {result['suggested']} suggested" if result["suggested"] else "")
+            + (f", {result['already']} already held" if result["already"] else ""),
+            *([f"refused {result['refused']}: {rules}"] if result["refused"] else []),
+            *result["refusals"],
+        ]
     if result["action"] == "submit":
         rules = ", ".join(f"{k} {v}" for k, v in sorted(result["by_rule"].items()))
         return [
@@ -173,6 +184,11 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument(
         "--allow-outside", action="store_true", help="step T --apply: allow files outside the --target folders"
     )
+    one.add_argument(
+        "--ledger",
+        metavar="LANE",
+        help="submit: judge the rows against the tree and the queued rows, write no tree, queue the accepted ones",
+    )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
     one.add_argument("--steps", help="count: the steps read, a comma list of L, N1, N3, N4, N5 (default L,N4,N5)")
@@ -233,7 +249,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if host is None:
                 raise Refusal(Finding("config.missing", _NO_HOST))
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
-            loaded = api.load(args.project or Path.cwd(), host)
+            ledger_tree = namebook.default_tree() if args.verb == "name" and getattr(args, "ledger", None) else None
+            loaded = api.load(args.project or ledger_tree or Path.cwd(), host)
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb == "style":
                 given["paths"] = [*given["paths"], *(given.pop("only") or [])]
