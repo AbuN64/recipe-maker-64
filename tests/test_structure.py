@@ -839,3 +839,18 @@ def test_apply_takes_the_newest_saved_patch_and_sets_aside_a_stale_one(tmp_path,
     assert (saved / "patch-10.stale").exists() and (saved / "patch-9.applied").exists()
     result = structure.apply(config, {"host": None})
     assert result["patch"] == "patch-2.diff"
+
+
+def test_a_renamed_function_is_renamed_inside_inline_assembly_strings_too():
+    import re
+
+    text = (
+        'void f(void) {\n    old_fn(1);\n    __asm__ volatile("jal old_fn\\n nop" : : "r"(old_fn));\n'
+        '    const char *s = "old_fn is a string";\n}\n/* old_fn in a comment */\n'
+    )
+    token = re.compile(r"\bold_fn\b")
+    out, hits = structure.rename_in_asm(text, token, "New_Fn")
+    assert hits == 2  # the `jal` string and the operand: the plain string and the comment are not assembly
+    assert 'asm__ volatile("jal New_Fn\\n nop"' in out and '"r"(New_Fn)' in out
+    assert '"old_fn is a string"' in out and "/* old_fn in a comment */" in out
+    assert structure.rename_in_asm("int x;\n", token, "N") == ("int x;\n", 0)

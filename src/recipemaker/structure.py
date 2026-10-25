@@ -653,9 +653,12 @@ class Files:
             ]
             for hit in reversed(hits):
                 text = text[: hit.start()] + new + text[hit.end() :]
-            if hits:
+            asm = 0
+            if not local:  # a name in an inline-assembly string (`jal old`) is a use too: left alone it breaks the link
+                text, asm = rename_in_asm(text, token, new)
+            if hits or asm:
                 self.put(path, text)
-                count += len(hits)
+                count += len(hits) + asm
         return count
 
     def changed(self) -> list[str]:
@@ -670,6 +673,36 @@ class Files:
                 continue
             out.append(_file_diff(path, was, self.orig[was], new))
         return "".join(out)
+
+
+_ASM_STATEMENT = re.compile(r"\b(?:__asm__|__asm|asm)\b\s*(?:(?:volatile|__volatile__)\b\s*)?\(")
+
+
+def rename_in_asm(text: str, token: re.Pattern[str], new: str) -> tuple[str, int]:
+    """TEXT with TOKEN renamed inside every inline-assembly statement (its strings: `jal old`, `la $4, old`);
+    (new text, renames). The rest of the file was renamed as C tokens, which leave string bytes alone."""
+    out: list[str] = []
+    at = hits = 0
+    for found in _ASM_STATEMENT.finditer(text):
+        if found.start() < at:
+            continue
+        i, depth = found.end(), 1
+        while i < len(text) and depth:
+            c = text[i]
+            if c == '"':
+                i += 1
+                while i < len(text) and text[i] != '"':
+                    i += 2 if text[i] == "\\" else 1
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        body, n = token.subn(new, text[found.end() : i])
+        out += [text[at : found.end()], body]
+        at, hits = i, hits + n
+    out.append(text[at:])
+    return "".join(out), hits
 
 
 def _similarity(old: str, new: str) -> int:
