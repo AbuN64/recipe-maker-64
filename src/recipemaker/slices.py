@@ -381,12 +381,12 @@ def _size(member: Json, first: str) -> int:
     return pick["rom_end"] - pick["rom_start"] if pick else 0
 
 
-def collect(ctx: Any, root: Path) -> tuple[list[Json], list[Json], list[Json]]:
+def collect(ctx: Any, root: Path) -> tuple[list[Any], list[Any], list[Any]]:
     """(functions, data, records) for `compute`, read from the naming evidence map CTX and the sources under ROOT.
     Functions the SDK table names are left to the auto-namers; data is every unnamed datum with its readers."""
     first = ctx.doc["names_from"]
     functions: list[Json] = []
-    data: list[Json] = []
+    data: list[dict[str, Any]] = []
     for name, m in ctx.members.items():
         where = _first(m["placements"], first)
         if where is None:

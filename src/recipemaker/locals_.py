@@ -178,14 +178,36 @@ def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]], deb
     return list(dict.fromkeys(out))
 
 
+_BODY = re.compile(r"body L(\d+)\s*(?::\s*(.*))?$")
+
+
 def verify(
-    body: str, name: str, evidence: object, protos: Mapping[str, list[list[str]]], debug: Sequence[str] = ()
+    body: str,
+    name: str,
+    evidence: object,
+    protos: Mapping[str, list[list[str]]],
+    debug: Sequence[str] = (),
+    lines: tuple[int, int] | None = None,
+    source: Sequence[str] = (),
 ) -> str:
-    """ "" when every evidence item of a rename of NAME is one the source gives, else the reason it is refused."""
+    """ "" when every evidence item of a rename of NAME is one the source gives, else the reason it is refused.
+    `body L<n>: note` cites line n of the file: it must lie in the function (LINES, first and last file line) and a
+    quoted note must occur on it (SOURCE, the file's lines)."""
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
-        return f"{name} needs evidence: param CALLEE NAME, member NAME, role loop|index|return or debug NAME"
+        return (
+            f"{name} needs evidence: param CALLEE NAME, member NAME, role loop|index|return, debug NAME"
+            " or body L<n>: note"
+        )
     have = suggestions(body, name, protos, debug)
     for item in evidence:
+        if cited := _BODY.match(item.strip()):
+            at = int(cited[1])
+            if lines is None or not lines[0] <= at <= lines[1]:
+                return f"`{item}` cites a line outside the function {lines or ''}".rstrip()
+            quote = re.search(r'"([^"]+)"', cited[2] or "")
+            if quote and (at > len(source) or quote[1] not in source[at - 1]):
+                return f"`{item}`: line {at} does not hold {quote[1]!r}"
+            continue
         form = re.sub(r"\s+\(.*$", "", item.strip())
         if form not in have:
             return f"`{item}` is not in the function for {name}; it has: {', '.join(have) or 'no evidence'}"

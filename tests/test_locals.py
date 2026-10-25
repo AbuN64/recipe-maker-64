@@ -190,3 +190,18 @@ def test_debug_catalog_names_are_evidence_for_the_function_they_belong_to(monkey
     monkeypatch.setattr(debug, "load", lambda config: cat)
     monkeypatch.setattr(debug.api, "symbols", lambda config, v: {"Turret_Track": (0x80203000, 0, 4, "func")})
     assert debug.variables(object()) == {"Turret_Track": ("pTurret", "pIntel")}
+
+
+def test_a_body_line_is_evidence_for_a_slot_when_it_lies_in_the_function_and_holds_the_quote():
+    source = ["void f(void)", "{", "    int sp1C;", "    sp1C = g_count + 1;", "}"]
+    body = "\n".join(source[1:])
+    args = (body, "sp1C", None, {}, (), (1, 5), source)
+    ok = locals_.verify(body, "sp1C", ["body L4: counter plus one"], {}, (), (1, 5), source)
+    assert ok == ""
+    assert locals_.verify(body, "sp1C", ['body L4: "g_count + 1"'], {}, (), (1, 5), source) == ""
+    assert "outside the function" in locals_.verify(body, "sp1C", ["body L9: x"], {}, (), (1, 5), source)
+    assert "does not hold" in locals_.verify(body, "sp1C", ['body L3: "g_count"'], {}, (), (1, 5), source)
+    assert "outside the function" in locals_.verify(body, "sp1C", ["body L4: x"], {}, ())  # no line range given
+    assert "needs evidence" in locals_.verify(*args[:2], [], *args[3:5])
+    mixed = ["body L4: x", "param nothing here"]
+    assert "not in the function" in locals_.verify(body, "sp1C", mixed, {}, (), (1, 5), source)

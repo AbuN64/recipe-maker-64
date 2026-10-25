@@ -111,7 +111,15 @@ class Repairs:
                 self.original = self._original() if self._original else {}
             known = self.original.get(str(function), ())
             if slot and (
-                bad := locals_.verify(scope, old, row.get("evidence"), self.protos.get(locals_.calls(scope)), known)
+                bad := locals_.verify(
+                    scope,
+                    old,
+                    row.get("evidence"),
+                    self.protos.get(locals_.calls(scope)),
+                    known,
+                    (masked.count("\n", 0, a) + 1, masked.count("\n", 0, b) + 1),
+                    text.splitlines(),
+                )
             ):
                 return "evidence", bad, []
             taken = set(WORD.findall(scope)) | self.scoped.get(str(function), set())
