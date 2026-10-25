@@ -30,8 +30,9 @@ _BUILTIN_WORDS = (
 )
 BUILTINS = frozenset(w for line in _BUILTIN_WORDS for w in line.split())
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
-# style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
-_EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) (\S+)(?:\s+\([^()]*\))?$")
+# style.toml evidence_forms; whatever follows the name (a parenthesized note, nested parentheses, `*`, `=`, a `: reason`)
+# is the reader's, the name alone is checked
+_EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) ([^\s():;,]+)(?:[:;,]?(?:\s+.*)?)$")
 # `jal NAME` and a tail `j NAME`; a local label starts with a dot, a register with a dollar sign
 _CALL = re.compile(r"\*/\s+j(?:al)?\s+([A-Za-z_]\w*)")
 _LOAD = re.compile(r"%(?:hi|lo)\(([A-Za-z_]\w*)")
@@ -370,6 +371,12 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
     return "", ""
 
 
+def _head(item: str) -> str:
+    """`FORM NAME` of an evidence item, its note dropped."""
+    found = _EVIDENCE.match(item)
+    return f"{found[1]} {found[2]}" if found else item
+
+
 def _original(ctx: Map, row: Json) -> bool:
     """Whether the row gives a function or datum the name its original debug record gives it there (`debug NAME`
     evidence, verified): the original spelling is the style, and it replaces a name given here."""
@@ -377,7 +384,7 @@ def _original(ctx: Map, row: Json) -> bool:
     return (
         row.get("kind") in ("function", "global", "static")
         and isinstance(evidence, list)
-        and f"debug {row.get('name')}" in [e.split(" (")[0] for e in evidence if isinstance(e, str)]
+        and f"debug {row.get('name')}" in [_head(e) for e in evidence if isinstance(e, str)]
         and ctx.verifies(f"debug {row['name']}", ctx.users(str(row["target"]), str(row["kind"])))
     )
 
@@ -449,7 +456,11 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "evidence", f"evidence item {unknown[0]!r} has no form a reader can check; the forms are {forms}; {note}"
     users = ctx.users(target, kind)
     if missing := [e for e in evidence if not ctx.verifies(e, users)]:
-        return "unverifiable", f"the assembly does not show: {missing[0]}"
+        why = f"the assembly does not show: {missing[0]}"
+        if _head(missing[0]).startswith("tag "):
+            seen = sorted(w for w, n in ctx.tags(users).items() if n)
+            why += f" (the tags its calls carry: {', '.join(seen) or 'none'})"
+        return "unverifiable", why
     return "", ""
 
 

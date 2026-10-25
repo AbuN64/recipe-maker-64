@@ -8,7 +8,7 @@ banned = ["Do", "Stuff", "Thing", "Misc", "Helper", "Func", "Temp", "Unknown"]
 bare_verbs = ["Handle", "Process", "Run", "Manage"]
 allow = ["main"]
 evidence_forms = ["callee NAME", "caller NAME", "reads NAME", "tag WORD", "debug NAME"]
-evidence_note = "any form may end in a note in parentheses, which is not checked: callee func_80001020 (vertex pool)"
+evidence_note = "any form may end in a note, which is not checked (parentheses, `*`, `=` and `: reason` all fine): callee func_80001020 (vertex pool)"
 
 [names]
 class_separator = "_"

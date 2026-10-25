@@ -530,12 +530,12 @@ def test_submit_checks_reads_evidence_against_the_loads_and_names_an_item_of_no_
 def test_an_evidence_item_may_end_in_a_note_that_is_not_checked(project):
     rows = [
         row("func_80004010", "Actor_Spawn", ["callee func_80004020 (frees the slot)"]),
-        row("func_80004030", "Actor_Despawn", ["callee func_80004020 (frees (twice))"]),  # a note holds no parentheses
+        row("func_80004030", "Actor_Despawn", ["callee (frees the slot)"]),  # the note has no name before it
     ]
     got = submit(project, rows)
     assert got["accepted"] == 1 and got["by_rule"] == {"evidence": 1}
     refused = json.loads((project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()[-1])
-    assert "a note in parentheses" in refused["reason"]
+    assert "any form may end in a note" in refused["reason"]
 
 
 def _aliased(monkeypatch):
@@ -868,3 +868,22 @@ def test_a_compiler_builtin_name_is_refused_for_a_game_function(project):
     rule, why = naming.judge(ctx, row)
     assert rule == "builtin" and "sqrtf" in why
     assert naming.judge(ctx, {**row, "name": "Math_Sqrtf"})[0] != "builtin"
+
+
+def test_an_evidence_note_may_hold_any_text(project):
+    """Only the form and the name are checked; a note with `*`, `=`, nested parentheses or `: reason` is free text."""
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee func_80004020 (size = n * 4 (rounded))"]),
+        row("func_80004030", "Actor_Spawn2", ["callee func_80004020: stride * 2"]),
+        row("func_80004020", "Actor_Free", ["caller func_80004010 = the spawner"]),
+    ]
+    got = submit(project, rows)
+    assert "evidence" not in got["by_rule"] and got["accepted"] == 3
+
+
+def test_a_tag_the_calls_do_not_carry_names_the_tags_they_do(project):
+    got = submit(project, [row("func_80004010", "Actor_Spawn", ["tag nav"])])
+    refused = [
+        json.loads(x) for x in (project.project.root / ".unbake/recipe/name/refused.jsonl").read_text().splitlines()
+    ]
+    assert got["by_rule"] == {"unverifiable": 1} and "the tags its calls carry:" in refused[0]["reason"]
