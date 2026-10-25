@@ -66,10 +66,14 @@ def event(doc: Json) -> None:
         handle.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **doc}, sort_keys=True) + "\n")
 
 
+def events() -> list[Json]:
+    return _lines(store() / "events.jsonl")
+
+
 def status() -> dict[int, str]:
     """seq -> queued | inflight | landed | returned, by replaying the events over the ledger."""
     out = {r["seq"]: "queued" for r in ledger()}
-    for e in _lines(store() / "events.jsonl"):
+    for e in events():
         for seq in e.get("seqs", ()):
             if seq in out:
                 out[seq] = {"made": "inflight", "landed": "landed", "returned": "returned", "requeued": "queued"}.get(
