@@ -903,6 +903,9 @@ def submit(config: Config, params: Json) -> Json:
         "refused": len(refused),
         "by_rule": dict(Counter(r["rule"] for r in refused)),
         "refusals": refusal_lines(refused),
+        "findings": [  # the decomp wrapper prints these when the exit code is 1
+            {"key": "recipe.name", "blocking": True, "message": line} for line in refusal_lines(refused)
+        ],
         "exit": 1
         if refused
         else 0,  # a refused row is a failure the caller's `&&` must see; accepted rows are still patched

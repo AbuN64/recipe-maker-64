@@ -983,3 +983,8 @@ def test_submit_exits_nonzero_and_names_rule_and_field_of_every_refused_row(proj
         "refused regex name func_80004030 -> Menu_Spawn:"
     )
     assert submit(project, [row("func_80004010", "Actor_Spawn", ["callee func_80004020"])])["exit"] == 0
+
+
+def test_submit_findings_carry_each_refusal_for_the_wrapper(project):
+    got = submit(project, [row("func_80004030", "Menu_Spawn", ["callee func_80004020"])])
+    assert got["findings"][0]["key"] == "recipe.name" and "refused regex name" in got["findings"][0]["message"]
