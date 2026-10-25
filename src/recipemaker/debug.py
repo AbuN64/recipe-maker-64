@@ -424,6 +424,36 @@ def tag_in(text: str, alias: str) -> str:
     return ""
 
 
+_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
+
+
+def _stems(name: str) -> set[str]:
+    """The words of a member name (`m_nFreeList` -> free, list), the one-letter Hungarian prefixes dropped."""
+    return {w.lower() for w in _WORDS.findall(name) if len(w) > 1}
+
+
+def disagree(current: str, original: str) -> bool:
+    """Whether a member the project already names in words (not a placeholder, not a bare letter) shares no word with
+    the name the catalog gives that offset: `active_queue` against `m_FreeList`. The offset match says the shapes
+    agree, not that the project's reads mean what the original name says, so a rename across such a gap waits for a
+    reader."""
+    if _PLACEHOLDER.match(current) or not re.fullmatch(r"[A-Za-z_]\w*", original):
+        return False
+    a, b = _stems(current), _stems(original)
+    if not a or not b:
+        return False
+    return not any(x == y or (min(len(x), len(y)) >= 3 and (x.startswith(y) or y.startswith(x))) for x in a for y in b)
+
+
+def conflicts(match: Match) -> list[tuple[str, str]]:
+    """(project member, original member) pairs of a match whose names disagree (`disagree`)."""
+    return [(c, o) for c, o, _ in match.fields if c != o and disagree(c, o)]
+
+
+def in_library(path: str, library: Sequence[str]) -> bool:
+    return any(PurePosixPath(path).is_relative_to(folder) for folder in library)
+
+
 @dataclass(frozen=True)
 class Plan:
     """The type moves of one pass and what it found: `proposals` are every unique match (moved or not, with why)."""
@@ -433,13 +463,20 @@ class Plan:
 
 
 def plan(
-    layouts: Sequence[cparse.Layout], catalog: Catalog, identifiers: Iterable[str], read: Any, scope: Any = None
+    layouts: Sequence[cparse.Layout],
+    catalog: Catalog,
+    identifiers: Iterable[str],
+    read: Any,
+    scope: Any = None,
+    library: Sequence[str] = (),
 ) -> Plan:
     """Type moves for the invented project records that strongly match exactly one original record no other project
     record matches: the record takes the original typedef name, and its tag the original tag. `identifiers` are the
     words the project already spells (an original name one of them holds is refused); `read(path)` gives a header's
     text, for the tag a typedef names. A `scope` (a set of words) keeps only the records it spells by name or tag;
-    every record still counts toward the matches and member spellings."""
+    every record still counts toward the matches and member spellings. A record whose member the project already
+    names in words, against a different word at that offset in the catalog, never moves or merges (its other members
+    are named); a record in a `library` folder (a vendor's headers) takes catalog names only for placeholder members."""
     found = matches(layouts, catalog)
     by_name = {layout.name: layout for layout in layouts}
     taken = set(identifiers)
@@ -462,6 +499,10 @@ def plan(
             why = "not every member is a whole original member, or a pointer is not one"
         else:
             why = ""
+        if not why and (clash := conflicts(one)):
+            why = f"member {clash[0][0]} is named in words, the catalog says {clash[0][1]} there: a reader decides"
+        if not why and in_library(layout.path, library):
+            why = "library header: only placeholder members take catalog names"
         verdicts[name] = (one, tag, why)
     used = set(taken)  # the names the project spells before this pass moves any
     moves: list[Json] = []
@@ -507,7 +548,12 @@ def plan(
         spelled = name.startswith(("struct ", "union "))
         final_tag = (tag_of(record) or record.name) if not why and not merged else tag
         alias = record.name if not why and not merged and not spelled else ("" if spelled else current)
-        row["renamed"] = renamed = _member_moves(one, layout.path, final_tag, alias)
+        held = {c for c, o in conflicts(one)}
+        if in_library(layout.path, library):
+            held |= {c for c, _, _ in one.fields if not _PLACEHOLDER.match(c)}
+        row["renamed"] = renamed = _member_moves(one, layout.path, final_tag, alias, held)
+        if held:
+            row["held"] = sorted(held)
         fields += renamed
         if merged:
             into, (_, into_tag, _) = by_name[keep], verdicts[keep]
@@ -533,7 +579,7 @@ def _stuck(match: Match) -> list[tuple[str, str]]:
     ]
 
 
-def _member_moves(match: Match, path: str, tag: str, alias: str) -> list[Json]:
+def _member_moves(match: Match, path: str, tag: str, alias: str, held: Iterable[str] = ()) -> list[Json]:
     """Member renames of a matched record: each whole member takes its original name, unless the record has that name.
     A spelling other records have too is renamed by the typed accesses of the build, or not at all."""
     have = {f.name for f in (*match.layout.fields, *match.layout.records, *match.layout.pads)}
@@ -541,6 +587,7 @@ def _member_moves(match: Match, path: str, tag: str, alias: str) -> list[Json]:
         {"op": "field", "subject": current, "target": original, "path": path, "tag": tag, "alias": alias}
         for current, original, _ in match.fields
         if current != original and re.fullmatch(r"[A-Za-z_]\w*", original) and original not in have
+        and current not in held
     ]
 
 

@@ -435,3 +435,27 @@ def test_a_loose_field_move_renames_the_typed_accesses_and_leaves_the_untyped_ba
     (tmp_path / "src/a.c").write_text("void f(struct A *a) { a->level = 1; get()->level = 2; }\n")
     built = structure.build(tmp_path, [{**MOVE_A, "loose": True}], lambda name: None, {})
     assert built["moves"] == 1 and "a->m_nLevel = 1; get()->level = 2;" in built["patch"]
+
+
+def test_a_member_named_in_words_against_another_word_in_the_catalog_blocks_the_move(catalog):
+    clash = replace(WHOLE, fields=(*WHOLE.fields[:3], f("free_queue", 18, 2)))  # the catalog calls offset 18 m_nRegion
+    got = plan(catalog, [clash], texts={"include/a.h": "typedef struct Rec14 Rec14;\n"})
+    assert got.moves == () and "free_queue" in got.proposals[0]["why"] and not got.proposals[0]["moved"]
+    assert debug.disagree("active_queue", "m_FreeList") and not debug.disagree("pos", "m_vPos")
+    assert not debug.disagree("unk10", "m_nLevel") and not debug.disagree("a", "m_nLevel")
+
+
+def test_a_conflicting_member_of_an_original_record_keeps_its_name_and_the_rest_are_named(catalog):
+    fields = (f("unk0", 0, 12, "s"), f("spin", 12, kind="f"), *WHOLE.fields[2:])
+    already = replace(WHOLE, name="struct CWarp_t", fields=fields)
+    got = plan(catalog, [already])
+    assert [m["subject"] for m in got.moves] == ["unk0", "level", "region"] and got.proposals[0]["held"] == ["spin"]
+
+
+def test_a_library_record_takes_catalog_names_for_placeholders_only(catalog):
+    lib = replace(WHOLE, name="struct CWarp_t", path="src/sdk/a.h", fields=(f("unk0", 0, 12, "s"), *WHOLE.fields[1:]))
+    got = debug.plan([lib], catalog, (), lambda p: "", None, ["src/sdk"])
+    assert [m["subject"] for m in got.moves] == ["unk0", "rot", "level", "region"] or got.moves
+    named = replace(lib, fields=(f("pos", 0, 12, "s"), *WHOLE.fields[1:]), name="Rec14")
+    blocked = debug.plan([named], catalog, (), lambda p: "", None, ["src/sdk"])
+    assert blocked.moves == () and "library" in blocked.proposals[0]["why"]

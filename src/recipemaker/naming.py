@@ -801,7 +801,10 @@ def _types(config: Config, doc: Json, target: str | None) -> Json:
     root = config.project.root
     layouts = cparse.load(api.snapshot(config))
     scope = _scope(config, doc, target) if target else None
-    found = debug.plan(layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p), scope)
+    library = [str(x) for x in getattr(config.project, "libraries", ())]
+    found = debug.plan(
+        layouts, catalog, _identifiers(root), lambda p: structure.Files(root).get(p), scope, library
+    )
     ctx, names, refused = Map(config, doc, {}), list[Json](), list[Json]()
     rows = [r for r in debug.rows(catalog, doc["members"]) if scope is None or r["target"] in scope]
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r["kind"]), 9)):
@@ -858,7 +861,14 @@ def _preview(config: Config, params: Json, built: Json) -> Json:
     if outside and not params.get("allow_outside"):
         why = f"{len(outside)} files outside {', '.join(sorted(own))} would change; add --allow-outside to apply"
         return {**info, "apply_refused": why}
-    return _land(config, {**params, "no_apply": False}, built)
+    landed = _land(config, {**params, "no_apply": False}, built)
+    if landed.get("applied") and outside:  # edits beyond the target are judged by the compiler, not by the evidence
+        check = settle.compile_check(config, outside, run=_make(config, config.project.root))
+        landed["compile"] = check
+        if check["errors"]:
+            landed["settle"] = {"settled": False, "compiled": check["compiled"], "fixed": 0, "unfixed": check["errors"]}
+            landed["next"] = "fix the compile errors in `compile`, then rebuild the stamp"
+    return landed
 
 
 def _unread(ctx: Map, folder: str | None) -> Json:

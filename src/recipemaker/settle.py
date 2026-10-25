@@ -37,6 +37,33 @@ def objects_for(root: Path, files: Iterable[str], version: str) -> list[str]:
     return sorted(objs)
 
 
+_ERROR = re.compile(r"^(?:\S+:\d+:(?:\d+:)? )?(?:fatal )?error:? .*$", re.M)
+CHECK_LIMIT = 24  # objects one compile check builds: a header reaches thousands, a sample of its readers judges it
+
+
+def compile_check(
+    config: Config,
+    files: Iterable[str],
+    *,
+    run: Callable[[list[str]], tuple[str, str]],
+    version: str = "",
+    limit: int = CHECK_LIMIT,
+) -> Json:
+    """Compile what reads FILES (every source itself, at most LIMIT objects in all, sources first) and return
+    `{"compiled", "sampled", "errors"}`: the compiler's own error lines. An edit outside the target is judged by this,
+    not by the evidence that proposed it."""
+    root = config.project.root
+    version = version or (config.project.versions[0] if config.project.versions else "")
+    objs = objects_for(root, files, version) if version else []
+    own = {f"build/{version}/{f}.o" for f in files if _sources(f)}
+    chosen = [*sorted(own & set(objs)), *[o for o in objs if o not in own]][:limit]
+    errors: list[str] = []
+    for i in range(0, len(chosen), BATCH):
+        so, se = run(["nice", "make", "-k", "-j4", *chosen[i : i + BATCH]])
+        errors += [m.group(0) for m in _ERROR.finditer(so + "\n" + se)]
+    return {"compiled": len(chosen), "sampled": len(objs) > len(chosen), "errors": errors[:12]}
+
+
 def fix_errors(
     root: Path, errors: Iterable[tuple[str, str, str]], rename: Mapping[str, str], headers: Sequence[str]
 ) -> tuple[int, list[str]]:
