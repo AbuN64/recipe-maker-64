@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from unbake import api
 from unbake.contracts import Json
 
-from recipemaker import access, cparse
+from recipemaker import access, cparse, locals_
 
 WORD = re.compile(r"[A-Za-z_]\w*")
 
@@ -31,6 +31,7 @@ class Repairs:
         self.text: dict[str, str] = {}
         self.taken: set[str] | None = None
         self.accepted: set[str] = set()
+        self.protos = locals_.Prototypes(root)
 
     def read(self, path: str) -> str:
         if path not in self.text:
@@ -60,8 +61,11 @@ class Repairs:
             or not row["doc"].strip()
         ):
             return "shape", "a repair needs identifier target, name, source path, line and doc", []
-        if not api.name_issues(old):
+        slot = row.get("kind") == "local" and locals_.placeholder(old)  # a decompiler's name for a register or slot
+        if not slot and not api.name_issues(old):
             return "target", f"{old} is already portable", []
+        if slot and locals_.placeholder(new):
+            return "name", f"{new} is a decompiler slot name again", []
         if why := api.name_issues(new):
             return "portable", why[0], []
         if not isinstance(path, str) or not isinstance(row.get("line"), int) or row["line"] < 1:
@@ -93,6 +97,8 @@ class Repairs:
             declared = [m for m in declaration.finditer(scope) if m[1] not in ("return", "goto", "case")]
             if not declared or re.search(r"\b(?:struct|union)\s+\w*\s*\{", scope):
                 return "scope", "local scope needs a declaration and no nested record definition", []
+            if slot and (bad := locals_.verify(scope, old, row.get("evidence"), self.protos.get(locals_.calls(scope)))):
+                return "evidence", bad, []
             taken = set(WORD.findall(scope))
             move |= {"op": "local", "path": path, "function": str(function)}
         else:

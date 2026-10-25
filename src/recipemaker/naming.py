@@ -18,7 +18,7 @@ from typing import Any
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import cparse, debug, host, repair, state, structure, style, table, tree
+from recipemaker import access, cparse, debug, host, locals_, repair, state, structure, style, table, tree
 
 # Compiler builtins: cc1 expands a call by one of these names inline (+11 words for sqrtf, func_802B72B0_de),
 # so a game function carrying one no longer compiles to its own body. The SDK table line may still spell one.
@@ -803,6 +803,101 @@ def _leaf(ctx: Map, target: str) -> str:
     return leaf if leaf in {ctx.folder(m) for m in ctx.modules} else target
 
 
+def _preview(config: Config, params: Json, built: Json) -> Json:
+    """A patch that renames across the tree (T) is a preview until `--apply`: the files it touches are listed, the ones
+    outside the target's own folders as `outside`, and `--target` plus outside files refuses to apply without
+    `--allow-outside` (a record's members are used by every folder that reads it)."""
+    root, target = config.project.root, params.get("target")
+    own = {f.parent.relative_to(root).as_posix() for f in locals_.folder_files(root, target)} if target else set()
+    outside = [f for f in built.get("files", []) if own and not any(f.startswith(d + "/") for d in own)]
+    info: Json = {"outside": outside, "applied": False}
+    if not built.get("moves"):
+        return {}
+    if not params.get("apply"):
+        return {
+            **info,
+            "next": f"recipe name next --step {params['step']} --apply" + (f" --target {target}" if target else ""),
+        }
+    if outside and not params.get("allow_outside"):
+        why = f"{len(outside)} files outside {', '.join(sorted(own))} would change; add --allow-outside to apply"
+        return {**info, "apply_refused": why}
+    return _land(config, {**params, "no_apply": False}, built)
+
+
+def _locals(config: Config, params: Json) -> Json:
+    """`recipe name next --step L --target FOLDER|FN`: per function the decompiler-named locals and parameters with the
+    evidence the source gives each (callee parameter name, record member, loop/index/return role)."""
+    target, root = params.get("target"), config.project.root
+    if not target:
+        raise state.stop(
+            "recipe.name", "step L needs --target FOLDER or FN", action="recipe name next --step L --target FOLDER"
+        )
+    files = locals_.folder_files(root, target)
+    if not files:
+        raise state.stop(
+            "recipe.name", f"no source folder or function is named {target}", action="recipe name next --step L"
+        )
+    single = not locals_.is_folder(root, target)
+    index = locals_.Prototypes(root)
+    cards: list[Json] = []
+    bare = 0
+    for file in files:
+        text = file.read_text(encoding="utf-8", errors="replace")
+        masked = access.mask(text)
+        rel = file.relative_to(root).as_posix()
+        for fn in locals_.functions(text):
+            if single and fn.name != target:
+                continue
+            body = masked[fn.start : fn.end]
+            rows = []
+            for slot in locals_.slots(text, fn):
+                found = locals_.suggestions(body, slot.name, index.get(locals_.calls(body)))
+                if found:
+                    rows.append(
+                        {"name": slot.name, "kind": slot.kind, "type": slot.type, "line": slot.line, "evidence": found}
+                    )
+                else:
+                    bare += 1
+            if rows:
+                cards.append({"function": fn.name, "path": rel, "line": fn.line, "slots": rows})
+    cards.sort(key=lambda c: (-len(c["slots"]), c["path"], c["line"]))
+    pick = cards[: int(params["count"])]
+    k, rules = _number(config), table("knowledge/style.toml")
+    path, answer = _root(config) / f"pack-{k}.json", f".unbake/recipe/name/names-{k}.jsonl"
+    row = {
+        "kind": "local",
+        "target": "OLD",
+        "name": "NEW",
+        "path": "PATH",
+        "line": 0,
+        "function": "FN",
+        "doc": "what it holds",
+        "evidence": ["param CALLEE NAME", "member NAME", "role loop"],
+    }
+    pack = {
+        "step": "L",
+        "k": k,
+        "targets": pick,
+        "answer": answer,
+        "row": row,
+        "rule": "one row per local or parameter; every evidence item must be one listed for it; the new name is a "
+        "lower-case word (camelCase or snake_case as the folder spells) that is not a decompiler slot name",
+    }
+    pack |= {x: rules[x] for x in ("names", "banned")}
+    if pick:
+        structure.write(path, json.dumps(pack))
+    return {
+        "action": "next",
+        "step": "L",
+        "pack": str(path.relative_to(root)) if pick else None,
+        "targets": len(pick),
+        "slots": sum(len(c["slots"]) for c in pick),
+        "no_evidence": bare,
+        "functions_left": len(cards) - len(pick),
+        "next": f"recipe name submit {answer}" if pick else "recipe name next",
+    }
+
+
 def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
     """(kind, target) for `--target`: a folder is a subsystem, a function a function, a datum static or global as N4
     reads it (the step's own kind when it lists the target); a name the evidence lacks is refused."""
@@ -826,6 +921,8 @@ def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
 def next_(config: Config, params: Json) -> Json:
     """`recipe name next --step`: tag-named N2 becomes a batch of moves at once, every step an evidence pack; T
     renames invented records to the debug catalog's original types."""
+    if params["step"] == "L":  # source evidence only: no ROM map, no census
+        return _locals(config, params)
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
     debt = api.naming_debt(config.project.root)
     debt_path = _root(config) / "symbol-name-debt.json"
@@ -835,7 +932,7 @@ def next_(config: Config, params: Json) -> Json:
             **_types(config, doc, params.get("target")),
             "naming_debt": str(debt_path.relative_to(config.project.root)),
         }
-        return {**typed, **_land(config, params, typed)}
+        return {**typed, **_preview(config, params, typed)}
     graph = reads(config, doc)
     ctx, moves, done = Map(config, doc, graph), list[Json](), set[str]()
     for row in [*(_auto(ctx) if step == "N2" else []), *_sdk(ctx)]:
