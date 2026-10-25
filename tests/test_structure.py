@@ -980,6 +980,5 @@ def test_a_symbol_rename_also_renames_the_sweep_rule_prose_that_names_it(tmp_pat
     got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
     assert "docs/sweep.toml" in got["files"]
     _check(root, got["patch"])
-    assert (
-        root / "docs/sweep.toml"
-    ).read_text() == 'why = "A pointer typed with no parameters: osYield reads its argument; func_80001 too"\n'
+    want = 'why = "A pointer typed with no parameters: osYield reads its argument; func_80001 too"\n'
+    assert (root / "docs/sweep.toml").read_text() == want
