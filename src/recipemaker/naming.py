@@ -102,7 +102,7 @@ def reads(config: Config, doc: Json) -> Graph:
                 continue
             text = file.read_text(encoding="utf-8", errors="replace")
             # a callee no member is named as (stale assembly of a renamed function) is resolved by `Map.canon`
-            calls = [x for x in dict.fromkeys(_CALL.findall(text)) if x != name and not x.startswith(".")]
+            calls = [x for x in dict.fromkeys(_CALL.findall(text)) if not x.startswith(".")]  # a recursive call stays
             loads = [x for x in dict.fromkeys(_LOAD.findall(text)) if x != name]  # data no module holds is still read
             held = graph.get(name, ([], []))
             graph[name] = (list(dict.fromkeys([*held[0], *calls])), list(dict.fromkeys([*held[1], *loads])))
@@ -127,6 +127,7 @@ class Map:
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
+        self._at: dict[str, set[tuple[str, int]]] | None = None  # a spelling to its (version, VRAM) in the tables
         self._sdk: dict[tuple[str, int], str] | None = None  # (version, VRAM) to its SDK name (`sdk_name`)
         self.calls = {
             n: list(
@@ -137,6 +138,8 @@ class Map:
             for n, (c, _) in graph.items()
         }
         self.loads = {n: list(dict.fromkeys(map(self.canon, ld))) for n, (_, ld) in graph.items()}
+        # a function that calls itself: its own name is evidence (callee/caller) though no edge of the graph
+        self.recursive = {n for n, (c, _) in graph.items() if any(self.canon(x) == n for x in c)}
         self.callers: dict[str, list[str]] = {}
         for name in graph:
             for target in (*self.calls[name], *self.loads[name]):
@@ -331,11 +334,25 @@ class Map:
             )
         if kind == "tag":
             return self.tags(names)[value] > 0
+        if kind in ("caller", "callee") and value in names and value in self.recursive:
+            return True  # the function calls itself
         if kind == "caller":
             return any(value in self.callers.get(n, ()) for n in names)
         if kind == "reads":  # a member whose address the code loads: the card's `loads`
-            return any(value in self.loads.get(n, ()) for n in names)
-        return any(value in self.calls.get(n, ()) for n in names)
+            return any(self.same(value, x) for n in names for x in self.loads.get(n, ()))
+        return any(self.same(value, x) for n in names for x in self.calls.get(n, ()))
+
+    def same(self, a: str, b: str) -> bool:
+        """Whether two spellings are one symbol: equal, or two names some version's symbol table puts at one address
+        (D_800D2988 and the literal pool symbol the %lo pair names are both that address, owned by no member)."""
+        if a == b:
+            return True
+        if self._at is None:
+            self._at = {}
+            for v, t in self.tables.items():
+                for spelling, row in t.items():
+                    self._at.setdefault(spelling, set()).add((v, row[0]))
+        return bool(self._at.get(a, set()) & self._at.get(b, set()))
 
 
 def _exists(ctx: Map, row: Json) -> str:

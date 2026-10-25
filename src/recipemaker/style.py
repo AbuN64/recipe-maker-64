@@ -218,6 +218,7 @@ class Context:
         self.versions: set[str] = set(config.project.versions)
         self._tables: dict[str, Any] | None = None
         self._original: set[str] | None = None
+        self.homes: dict[str, list[str]] = {}  # a defined function to the subsystem words of the folders defining it
 
     def known(self) -> set[str]:
         return self.versions
@@ -265,16 +266,20 @@ def _why(name: str, words: Sequence[str]) -> str:
     """Why a function name is illegal in a file whose folder (or header) allows the prefixes `words`."""
     if issues := api.name_issues(name):
         return "; ".join(issues)
-    return "must be " + " or ".join(f"{pascal(w)}_CamelCase" for w in words) + " (a class method CName_Method also passes)"
+    return (
+        "must be " + " or ".join(f"{pascal(w)}_CamelCase" for w in words) + " (a class method CName_Method also passes)"
+    )
 
 
 def _names(facts: Json, words: Sequence[str], context: Context, source: bool = False) -> Iterator[tuple[str, str]]:
     for name, static, defined in facts["fns"]:
         # an extern in a source names a function another subsystem's file defines (and is judged there)
+        # a prototype in a shared header follows the folder of the file that defines the function, not the header stem
+        allowed = [*words, *context.homes.get(name, ())] if not (defined or static or source) else words
         if (
             words
             and (defined or static or not source)
-            and not any(legal("function", name, w) for w in words)
+            and not any(legal("function", name, w) for w in allowed)
             and not context.original(name)
         ):
             yield "function-name", f"{name} ({_why(name, words)})"
@@ -400,6 +405,11 @@ def findings(config: Config, paths: Sequence[str] = (), base: str = "") -> tuple
     listing = _listing(config, paths)
     facts, parsed = gather(config, listing)
     context = Context(config)
+    for path, found in facts.items():
+        if kind(path) == "c" and (word := prefix_word(PurePosixPath(path).parent.name)):
+            for name, static, defined in found["fns"]:
+                if defined and not static and word not in context.homes.setdefault(name, []):
+                    context.homes[name].append(word)
     mine = {path: check(path, found, context) for path, found in sorted(facts.items())}
     now = [f for found in mine.values() for f in found] + _across(listing)
     if not base:

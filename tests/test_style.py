@@ -342,3 +342,13 @@ def test_an_extern_in_another_subsystems_source_keeps_the_owners_prefix(tmp_path
     assert not [d for r, d in rules(run(project(tmp_path, files))) if d.startswith("Fx_ClearInput")]
     header = {"src/game/main/actor/actor_spawn.h": "void Fx_ClearInput(void *);\n"}
     assert [d for r, d in rules(run(project(tmp_path / "h", header))) if d.startswith("Fx_ClearInput")]
+
+
+def test_a_prototype_in_a_shared_header_follows_the_folder_that_defines_the_function():
+    ctx = style.Context(SimpleNamespace(project=SimpleNamespace(versions=[])))
+    facts = {"fns": [("Nav_Step", False, False), ("Other_Step", False, False)], "vars": [], "types": [], "macros": []}
+    got = [n for _, n in style._names(facts, ["types"], ctx)]
+    assert len(got) == 2  # no home known: both refused
+    ctx.homes = {"Nav_Step": ["nav"]}
+    got = [n for _, n in style._names(facts, ["types"], ctx)]
+    assert len(got) == 1 and got[0].startswith("Other_Step")
