@@ -966,3 +966,20 @@ def test_replace_and_identifiers_skip_files_without_the_literal(tmp_path):
     assert files.replace(re.compile(r"\bold\b"), "new", ["src/a.c", "src/b.c"], "old") == 1
     assert files.identifiers("Foo_old", "Foo_new", ["src/a.c", "src/b.c"]) == 1
     assert files.get("src/a.c") == "int Foo_new;\nint new;\n" and files.get("src/b.c") == "int other;\n"
+
+
+def test_a_symbol_rename_also_renames_the_sweep_rule_prose_that_names_it(tmp_path):
+    root = _repo(
+        tmp_path,
+        {
+            "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\n",
+            "src/a.c": "void g(void) { func_8000(); }\n",
+            "docs/sweep.toml": 'why = "A pointer typed with no parameters: func_8000 reads its argument; func_80001 too"\n',
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
+    assert "docs/sweep.toml" in got["files"]
+    _check(root, got["patch"])
+    assert (
+        root / "docs/sweep.toml"
+    ).read_text() == 'why = "A pointer typed with no parameters: osYield reads its argument; func_80001 too"\n'

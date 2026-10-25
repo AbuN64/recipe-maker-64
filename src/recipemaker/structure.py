@@ -30,6 +30,7 @@ from recipemaker import access, clash, cparse, debug, repair, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
+PROSE = ("docs/sweep.toml",)  # text outside src/ and include/ that names symbols in sentences: renamed with them
 LITERALS = "literals_"  # compiler-emitted read-only data a fact gives the file of its function: it moves with that file
 
 
@@ -845,6 +846,7 @@ def build(
                 )
             hits += files.identifiers(subject, target, files.everything(), comments=True)
             if op == "symbol":
+                hits += files.replace(_word(subject), target, PROSE, subject)  # a rule's prose names the function too
                 hits += _asm_file(files, subject, target)
                 hits += _derived(files, subject, target)
             applied += bool(hits)
