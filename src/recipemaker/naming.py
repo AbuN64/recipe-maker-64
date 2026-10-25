@@ -560,6 +560,13 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     users = ctx.users(target, kind)
     if missing := [e for e in evidence if not ctx.verifies(e, users)]:
         why = f"the assembly does not show: {missing[0]}"
+        named = _EVIDENCE.match(missing[0])
+        if named and named.group(1) in ("callee", "caller", "reads") and ctx.canon(named.group(2)) not in ctx.taken:
+            # R1 (REV1-ONE-72): a pool the change folded into the unit's literals is no symbol any more
+            why += (
+                f" ({named.group(2)} is no symbol of this tree: a pool or datum the change removed, e.g. folded into"
+                " the unit's literals, cannot be evidence; cite a caller, a callee or a global it still reads)"
+            )
         if _head(missing[0]).startswith("tag "):
             seen = sorted(w for w, n in ctx.tags(users).items() if n)
             why += f" (the tags its calls carry: {', '.join(seen) or 'none'})"

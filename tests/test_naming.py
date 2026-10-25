@@ -1110,3 +1110,11 @@ def test_evidence_may_name_a_symbol_by_the_new_name_another_row_of_the_file_give
     ]
     got = submit(project, rows)
     assert got["accepted"] == 2 and got["refused"] == 0, got["refusals"]
+
+
+def test_evidence_naming_a_symbol_the_tree_no_longer_has_says_so(project):
+    """R1 (REV1-ONE-72): a pool the change folded into the unit literals was refused only as "unverifiable"."""
+    got = submit(project, [row("func_80004020", "Actor_Kill", ["reads D_gone_pool"])])
+    text = json.dumps(got)
+    assert got["by_rule"] == {"unverifiable": 1}
+    assert "D_gone_pool is no symbol of this tree" in text
