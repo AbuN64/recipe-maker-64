@@ -172,8 +172,14 @@ def test_returned_rows_come_back_once_in_the_lanes_next_submit(book):
     assert submit(book, "L1", [])["returned"] == []
 
 
-def test_applied_seq_dequeues_rows(book):
-    submit(book, "L1", [fn("fn:us:80004010", "Actor_Spawn")])
-    assert len(namebook.queued()) == 1
-    namebook.write_state({"applied_seq": 1, "next_batch": 2})
-    assert namebook.queued() == []
+def test_events_move_rows_between_queued_inflight_landed_and_back(book):
+    submit(book, "L1", [fn("fn:us:80004010", "Actor_Spawn"), fn("fn:us:80004030", "Actor_Start")])
+    assert [r["seq"] for r in namebook.queued(inflight=False)] == [1, 2]
+    namebook.event({"event": "made", "batch": 1, "seqs": [1, 2]})
+    assert namebook.queued(inflight=False) == [] and len(namebook.queued()) == 2
+    namebook.event({"event": "requeued", "batch": 1, "seqs": [2]})
+    namebook.event({"event": "landed", "batch": 1, "seqs": [1]})
+    assert [r["seq"] for r in namebook.queued(inflight=False)] == [2] and namebook.status() == {
+        1: "landed",
+        2: "queued",
+    }

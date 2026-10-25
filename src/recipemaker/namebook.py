@@ -23,7 +23,7 @@ from typing import Any
 
 from unbake.contracts import Config, Json
 
-from recipemaker import host, keys, state
+from recipemaker import keys, state
 
 DEFAULT_TREE = "~/code/wt/POOL-SRC"  # the shared warm tree at main that a ledger submit reads (it writes nothing)
 
@@ -56,26 +56,33 @@ def _lines(path: Path) -> list[Json]:
     return out
 
 
-def read_state() -> Json:
-    path = store() / "state.json"
-    try:
-        return dict(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return {"applied_seq": 0, "next_batch": 1}
-
-
-def write_state(doc: Json) -> None:
-    host.write(store() / "state.json", json.dumps(doc).encode())
-
-
 def ledger() -> list[Json]:
     return _lines(store() / "ledger.jsonl")
 
 
-def queued() -> list[Json]:
-    """The accepted rows no batch has taken yet, oldest first."""
-    seq = int(read_state().get("applied_seq", 0))
-    return [r for r in ledger() if r["seq"] > seq]
+def event(doc: Json) -> None:
+    """Record what became of rows: made (in batch K), landed, dropped (back in the queue, or returned to its lane)."""
+    with locked(), open(store() / "events.jsonl", "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **doc}, sort_keys=True) + "\n")
+
+
+def status() -> dict[int, str]:
+    """seq -> queued | inflight | landed | returned, by replaying the events over the ledger."""
+    out = {r["seq"]: "queued" for r in ledger()}
+    for e in _lines(store() / "events.jsonl"):
+        for seq in e.get("seqs", ()):
+            if seq in out:
+                out[seq] = {"made": "inflight", "landed": "landed", "returned": "returned", "requeued": "queued"}.get(
+                    e["event"], out[seq]
+                )
+    return out
+
+
+def queued(inflight: bool = True) -> list[Json]:
+    """The accepted rows not in main yet, oldest first; with `inflight` False only those no batch holds."""
+    held = {"queued", "inflight"} if inflight else {"queued"}
+    now = status()
+    return [r for r in ledger() if now.get(r["seq"]) in held]
 
 
 def append(lane: str, rows: Sequence[Json]) -> list[Json]:
