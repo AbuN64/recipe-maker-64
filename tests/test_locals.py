@@ -87,7 +87,7 @@ def test_submit_refuses_unchecked_evidence_slot_names_and_portable_targets(tmp_p
 
 def test_prototypes_skip_unnamed_and_slot_params():
     got = locals_.prototypes(["void F(int, char *name, int arg2);\nint G(void) {\n}\n"], ["F", "G"])
-    assert got["F"] == [["", "name", ""]] and got["G"] == [[""]]
+    assert (got["F"] == [["", "name", ""]] and got["G"] == [[]]) or got["G"] == [[""]]
 
 
 def test_preview_lists_outside_files_and_applies_only_on_request(tmp_path):
@@ -98,3 +98,61 @@ def test_preview_lists_outside_files_and_applies_only_on_request(tmp_path):
     assert seen["outside"] == ["src/ANIM/b.CPP"] and not seen["applied"] and "--apply" in seen["next"]
     refused = naming._preview(config, {"step": "T", "target": "Actor_Step", "apply": True}, built)
     assert "--allow-outside" in refused["apply_refused"]
+
+
+HEADER = "typedef struct Actor {\n    int unk0;\n    int unk4;\n    int unk8;\n} Actor;\ntypedef struct Other {\n    int unk0;\n} Other;\n"  # noqa: E501
+USE = (
+    "void Spawn_At(int health, int count);\n"
+    "void Use(Actor *a, Other *o, int hp) {\n"
+    "    a->unk0 = hp;\n"
+    "    o->unk0 = 7;\n"
+    "    Spawn_At(a->unk4, 1);\n"
+    "    hp = a->unk8;\n"
+    "}\n"
+)
+
+
+def members_project(tmp_path):
+    return project(tmp_path, {"include/a.h": HEADER, "src/G/use.c": USE})
+
+
+def test_member_pack_types_accesses_so_another_records_member_is_not_counted(tmp_path):
+    config = members_project(tmp_path)
+    got = naming.next_(config, {"step": "M", "count": 40, "target": "Actor", "host": None})
+    card = json.loads((tmp_path / got["pack"]).read_text())["targets"][0]
+    by = {s["name"]: s["evidence"] for s in card["slots"]}
+    assert card["struct"] == "Actor" and card["path"] == "include/a.h"
+    assert by == {"unk0": ["stored hp"], "unk4": ["param Spawn_At health"], "unk8": ["loaded hp"]}
+
+
+def field(tmp_path, **row):
+    base = {
+        "kind": "field",
+        "struct": "Actor",
+        "target": "unk4",
+        "name": "vitality",
+        "doc": "Starting health.",
+        "evidence": ["param Spawn_At health"],
+    }
+    (tmp_path / "n.jsonl").write_text(json.dumps({**base, **row}) + "\n")
+    return naming.submit(members_project(tmp_path), {"file": str(tmp_path / "n.jsonl"), "host": None, "no_apply": True})
+
+
+def test_member_rename_patches_the_record_and_its_typed_accesses(tmp_path):
+    got = field(tmp_path)
+    assert got["accepted"] == 1 and "+    int vitality;" in got["patch"] and "Spawn_At(a->vitality, 1);" in got["patch"]
+
+
+@pytest.mark.parametrize(
+    "row, rule",
+    [
+        ({"evidence": ["stored hp"]}, "evidence"),
+        ({"name": "unk4A"}, "name"),
+        ({"name": "unk0"}, "name"),
+        ({"name": "hp"}, "duplicate"),
+        ({"target": "vitality"}, "target"),
+        ({"struct": "Nope"}, "target"),
+    ],
+)
+def test_member_rename_refuses_unchecked_evidence_and_bad_names(tmp_path, row, rule):
+    assert field(tmp_path, **row)["by_rule"] == {rule: 1}

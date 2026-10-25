@@ -67,22 +67,20 @@ def _applied(result: Json) -> list[str]:
 
 
 def _render_name(result: Json) -> list[str]:
-    if result["action"] == "next" and result["step"] == "L":
+    if result["action"] == "next" and result["step"] in ("L", "M"):
         what = (
             f"pack {result['pack']} holds {result['slots']} slots in {result['targets']} functions"
             if result["pack"]
             else "no slot with evidence"
         )
-        return [f"L: {what}, {result['no_evidence']} without evidence, {result['functions_left']} more functions"]
+        return [f"{result['step']}: {what}, {result['no_evidence']} without evidence, {result['functions_left']} more"]
     if result["action"] == "next":
         pack = f"pack {result['pack']} holds {result['targets']} targets, " if result["pack"] else ""
         why = [f"  {n} {r}" for r, n in sorted(result.get("reasons", {}).items(), key=lambda x: -x[1])]
         debt = [f"naming debt by file: {result['naming_debt']}"] if result.get("naming_debt") else []
         out = [f"{result['step']}: {pack}{result['moves']} moves in patch {result['path'] or 'none'}", *why, *debt]
         if "outside" in result:
-            out += [
-                f"preview: {len(result['files'])} files, {len(result['outside'])} outside the target: {result['outside'][:8]}"
-            ]
+            out += [f"preview: {len(result['files'])} files, {len(result['outside'])} outside: {result['outside'][:8]}"]
         return out
     if result["action"] == "submit":
         rules = ", ".join(f"{k} {v}" for k, v in sorted(result["by_rule"].items()))
@@ -143,9 +141,10 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("file", nargs="?", help="the names file for submit")
     one.add_argument(
         "--step",
-        choices=("N1", "N2", "N3", "N4", "N5", "T", "L"),
+        choices=("N1", "N2", "N3", "N4", "N5", "T", "L", "M"),
         help="the naming step (default: N3); N5: functions only their own folder calls;"
-        " T: original types from the debug catalog (a preview until --apply); L: locals and parameters of --target",
+        " T: original types from the debug catalog (a preview until --apply);"
+        " L: locals and parameters of --target; M: unkNN members of a record",
     )
     one.add_argument(
         "--no-apply", action="store_true", help="next/submit leave the patch saved instead of applying it to the tree"

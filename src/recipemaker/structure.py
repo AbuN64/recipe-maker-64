@@ -899,7 +899,7 @@ def build(
 _RECORD_HEAD = re.compile(r"\b(?:struct|union)\s*(\w+)?\s*\{")
 
 
-def _bodies(text: str) -> Iterator[tuple[int, int, str, str]]:
+def bodies(text: str) -> Iterator[tuple[int, int, str, str]]:
     """(start, end, tag, typedef alias) of the inside of every record body a text defines."""
     for head in _RECORD_HEAD.finditer(text):
         end = cparse.close(text, head.end() - 1) + 1  # just past the closing brace
@@ -920,7 +920,7 @@ def _spot(files: Files, path: str, tag: str, alias: str) -> tuple[int, int] | No
     text = files.get(path)
     wanted = [
         (a, b)
-        for a, b, t, x in (_bodies(text) if text is not None else ())
+        for a, b, t, x in (bodies(text) if text is not None else ())
         if (tag and t == tag) or (alias and x == alias)
     ]
     return wanted[0] if len(wanted) == 1 else None
@@ -1063,7 +1063,7 @@ def _member_words(files: Files) -> dict[str, int]:
     out: dict[str, int] = defaultdict(int)
     for path in files.everything():
         text = files.get(path) or ""
-        for a, b, _, _ in _bodies(text):
+        for a, b, _, _ in bodies(text):
             for word in set(re.findall(r"[A-Za-z_]\w*", text[a:b])):
                 out[word] += 1
     return out

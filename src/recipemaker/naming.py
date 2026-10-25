@@ -11,14 +11,27 @@ import re
 import sys
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import access, cparse, debug, host, locals_, repair, state, structure, style, table, tree
+from recipemaker import (
+    access,
+    cparse,
+    debug,
+    host,
+    locals_,
+    members as members_,
+    repair,
+    state,
+    structure,
+    style,
+    table,
+    tree,
+)
 
 # Compiler builtins: cc1 expands a call by one of these names inline (+11 words for sqrtf, func_802B72B0_de),
 # so a game function carrying one no longer compiles to its own body. The SDK table line may still spell one.
@@ -824,6 +837,63 @@ def _preview(config: Config, params: Json, built: Json) -> Json:
     return _land(config, {**params, "no_apply": False}, built)
 
 
+def _members(config: Config, params: Json) -> Json:
+    """`recipe name next --step M --target STRUCT|HEADER`: the unkNN members of a record (every record a header
+    defines) with the evidence every typed access in the project gives each."""
+    target, root = params.get("target"), config.project.root
+    if not target:
+        raise state.stop(
+            "recipe.name", "step M needs --target STRUCT or HEADER", action="recipe name next --step M --target STRUCT"
+        )
+    texts = members_.texts_of(root)
+    types = access.Types(texts)
+    types.learn(texts)
+    if target in texts or f"include/{target}" in texts:
+        path = target if target in texts else f"include/{target}"
+        keys = sorted({types.key[x] for _, _, t, a in structure.bodies(texts[path]) for x in (a, t) if x in types.key})
+    else:
+        keys = [members_.record(texts, types, target)[0]]
+    index, cards, bare = locals_.Prototypes(root), [], 0
+    for key in keys:
+        unknown = [m for m in types.member.get(key, {}) if members_.UNKNOWN.fullmatch(m)]
+        found = members_.gather(texts, types, key, unknown, index) if unknown else {}
+        slots = [{"name": m, "type": types.member[key][m], "evidence": found[m]} for m in unknown if found.get(m)]
+        bare += len(unknown) - len(slots)
+        if slots:
+            _, where, tag, alias = members_.record(texts, types, key)
+            cards.append({"struct": alias or tag, "path": where, "slots": slots})
+    k = _number(config)
+    path_, answer = _root(config) / f"pack-{k}.json", f".unbake/recipe/name/names-{k}.jsonl"
+    row = {
+        "kind": "field",
+        "struct": "STRUCT",
+        "target": "unk1C",
+        "name": "NEW",
+        "doc": "what it holds",
+        "evidence": ["param CALLEE NAME", "stored NAME", "loaded NAME"],
+    }
+    pack = {
+        "step": "M",
+        "k": k,
+        "targets": cards,
+        "answer": answer,
+        "row": row,
+        "rule": "one row per member; every evidence item must be one listed for it; the name is a lower-case word the record does not already spell",
+    }
+    if cards:
+        structure.write(path_, json.dumps(pack))
+    return {
+        "action": "next",
+        "step": "M",
+        "pack": str(path_.relative_to(root)) if cards else None,
+        "targets": len(cards),
+        "slots": sum(len(c["slots"]) for c in cards),
+        "no_evidence": bare,
+        "functions_left": 0,
+        "next": f"recipe name submit {answer}" if cards else "recipe name next",
+    }
+
+
 def _locals(config: Config, params: Json) -> Json:
     """`recipe name next --step L --target FOLDER|FN`: per function the decompiler-named locals and parameters with the
     evidence the source gives each (callee parameter name, record member, loop/index/return role)."""
@@ -923,6 +993,8 @@ def next_(config: Config, params: Json) -> Json:
     renames invented records to the debug catalog's original types."""
     if params["step"] == "L":  # source evidence only: no ROM map, no census
         return _locals(config, params)
+    if params["step"] == "M":
+        return _members(config, params)
     step, doc = params["step"] or "N3", structure.evidence(config, params["host"])
     debt = api.naming_debt(config.project.root)
     debt_path = _root(config) / "symbol-name-debt.json"
@@ -1020,6 +1092,7 @@ def submit(config: Config, params: Json) -> Json:
     doc: Json = {}
     ctx: Map | None = None
     repairs = repair.Repairs(config.project.root)
+    fields = members_.Fields(config.project.root)
     rows: list[Json] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
@@ -1033,6 +1106,13 @@ def submit(config: Config, params: Json) -> Json:
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
         if row.get("kind") in ("local", "repair"):
             rule, reason, direct = repairs.judge(row)
+            if rule:
+                refused.append({"row": row, "rule": rule, "reason": reason})
+            else:
+                accepted.append((row, direct))
+            continue
+        if row.get("kind") == "field":
+            rule, reason, direct = fields.judge(row)
             if rule:
                 refused.append({"row": row, "rule": rule, "reason": reason})
             else:

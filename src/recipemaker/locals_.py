@@ -80,7 +80,7 @@ def prototypes(texts: Iterable[str], wanted: Iterable[str]) -> dict[str, list[li
     for text in texts:
         for found in pattern.finditer(access.mask(text)):
             params = []
-            for part in _split(found[2]):
+            for part in split(found[2]):
                 words = WORD.findall(part)
                 last = words[-1] if len(words) >= 2 and not part.rstrip().endswith("*") else ""
                 params.append(last if named(last) else "")
@@ -88,7 +88,7 @@ def prototypes(texts: Iterable[str], wanted: Iterable[str]) -> dict[str, list[li
     return out
 
 
-def _split(text: str) -> list[str]:
+def split(text: str) -> list[str]:
     """TEXT cut at its top-level commas."""
     parts, depth, at = [], 0, 0
     for i, c in enumerate(text):
@@ -159,7 +159,7 @@ def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]]) -> 
         while i < len(body) and depth:
             depth += (body[i] == "(") - (body[i] == ")")
             i += 1
-        for at, arg in enumerate(_split(body[call.end() : i - 1])):
+        for at, arg in enumerate(split(body[call.end() : i - 1])):
             if arg.strip().lstrip("&") == name:
                 for params in protos[callee]:
                     if at < len(params) and params[at]:
