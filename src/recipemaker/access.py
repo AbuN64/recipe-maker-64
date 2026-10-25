@@ -10,7 +10,7 @@ from typing import NamedTuple
 from recipemaker import cparse
 
 _WORD = re.compile(r"[A-Za-z_]\w*")
-_SKIP = re.compile(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.S)
+SKIP = re.compile(r"/\*.*?\*/|//[^\n]*|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.S)
 _CAST = re.compile(r"\s*\(\s*(?:const\s+)?(?:struct\s+|union\s+)?(\w+)[\s*]*\)")
 _CHAIN = re.compile(r"[\s*&\w.\[\]>()-]*")
 _DECLARED = re.compile(r"\s*(\*+)?\s*([A-Za-z_]\w*)((?:\s*\[[^\]]*\])*)")
@@ -25,7 +25,7 @@ class Site(NamedTuple):
 
 def mask(text: str) -> str:
     """The text with comments, strings and characters blanked, offsets kept."""
-    return _SKIP.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), text)
+    return SKIP.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), text)
 
 
 def active(text: str) -> str:

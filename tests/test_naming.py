@@ -103,6 +103,14 @@ def project(tmp_path, monkeypatch):
     return config
 
 
+def _alone(root):
+    """git run in ROOT as no repository: a test tree under another checkout (a --basetemp inside the worktree) made
+    `git apply` patch relative to that checkout and skip every file silently."""
+    import os
+
+    return {**os.environ, "GIT_CEILING_DIRECTORIES": str(root.parent)}
+
+
 def run(project, action, **more):
     params = {"host": None, "action": action, "step": None, "count": 40, "file": None, "no_apply": True, **more}
     return naming.run(project, params)
@@ -764,7 +772,7 @@ def test_unowned_global_patch_updates_source_and_all_version_tables(project, mon
     assert got["accepted"] == 1 and got["moves"] == 1
     assert set(got["files"]) == {"src/c.c", "versions/us/symbol_addrs.txt", "versions/eu/symbol_addrs.txt"}
     patch = root / got["path"]
-    subprocess.run(["git", "apply", str(patch)], cwd=root, check=True)
+    subprocess.run(["git", "apply", str(patch)], cwd=root, check=True, env=_alone(root))
     assert target not in (root / "src/c.c").read_text()
     for version in ("us", "eu"):
         assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("g_actorCount =")
@@ -842,7 +850,7 @@ def test_unowned_function_rename_updates_callers_and_all_symbol_tables(project, 
     got = submit(project, [row(target, "NotifyActorChange", ["caller Actor_Update"])])
     assert got["accepted"] == 1 and got["moves"] == 1
     assert set(got["files"]) == {"src/c.c", "versions/us/symbol_addrs.txt", "versions/eu/symbol_addrs.txt"}
-    subprocess.run(["git", "apply", str(root / got["path"])], cwd=root, check=True)
+    subprocess.run(["git", "apply", str(root / got["path"])], cwd=root, check=True, env=_alone(root))
     assert target not in (root / "src/c.c").read_text()
     for version in ("us", "eu"):
         assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("NotifyActorChange =")

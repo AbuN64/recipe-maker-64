@@ -925,6 +925,15 @@ def test_a_renamed_function_is_renamed_inside_inline_assembly_strings_too():
     assert structure.rename_in_asm("int x;\n", token, "N") == ("int x;\n", 0)
 
 
+def test_a_renamed_symbol_is_renamed_in_comments_but_not_in_strings():
+    import re
+
+    text = '/* old_fn: the init */\nint x = old_fn(); // calls old_fn once\nconst char *s = "old_fn";\n'
+    out, hits = structure.rename_in_comments(text, re.compile(r"\bold_fn\b"), "Init")
+    assert hits == 2 and out.startswith("/* Init: the init */") and "// calls Init once" in out
+    assert "old_fn();" in out and '"old_fn"' in out  # code is the token rename's, strings stay
+
+
 def test_a_signal_during_apply_puts_the_tree_back(tmp_path, monkeypatch):
     import os
     import signal

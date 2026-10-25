@@ -643,8 +643,10 @@ class Files:
                     count += n
         return count
 
-    def identifiers(self, old: str, new: str, paths: Iterable[str], local: str = "") -> int:
-        """Rename C tokens, preserving comments, string bytes and unrelated local scopes."""
+    def identifiers(self, old: str, new: str, paths: Iterable[str], local: str = "", comments: bool = False) -> int:
+        """Rename C tokens, preserving string bytes and unrelated local scopes; with COMMENTS a whole-word mention in a
+        comment too (a symbol's old name left in a banner or note is a stale reference: 10-25 CLEAN-PAK-2 fixed 24 files
+        by hand). Comment mentions are not counted as uses."""
         count = 0
         token = re.compile(rf"\b{re.escape(old)}\b")
         for path in paths:
@@ -663,10 +665,12 @@ class Files:
             ]
             for hit in reversed(hits):
                 text = text[: hit.start()] + new + text[hit.end() :]
-            asm = 0
+            asm = noted = 0
             if not local:  # a name in an inline-assembly string (`jal old`) is a use too: left alone it breaks the link
                 text, asm = rename_in_asm(text, token, new)
-            if hits or asm:
+            if comments:
+                text, noted = rename_in_comments(text, token, new)
+            if hits or asm or noted:
                 self.put(path, text)
                 count += len(hits) + asm
         return count
@@ -683,6 +687,21 @@ class Files:
                 continue
             out.append(_file_diff(path, was, self.orig[was], new))
         return "".join(out)
+
+
+def rename_in_comments(text: str, token: re.Pattern[str], new: str) -> tuple[str, int]:
+    """TEXT with TOKEN renamed inside comments only (strings and code untouched); (new text, renames)."""
+    hits = 0
+
+    def one(m: re.Match[str]) -> str:
+        nonlocal hits
+        if not m[0].startswith(("/*", "//")):
+            return m[0]
+        body, n = token.subn(new, m[0])
+        hits += n
+        return body
+
+    return access.SKIP.sub(one, text), hits
 
 
 _ASM_STATEMENT = re.compile(r"\b(?:__asm__|__asm|asm)\b\s*(?:(?:volatile|__volatile__)\b\s*)?\(")
@@ -824,7 +843,7 @@ def build(
                 hits += files.replace(
                     _word(LITERALS + subject), LITERALS + target, [*sorted(rows), *files.everything()]
                 )
-            hits += files.identifiers(subject, target, files.everything())
+            hits += files.identifiers(subject, target, files.everything(), comments=True)
             if op == "symbol":
                 hits += _asm_file(files, subject, target)
                 hits += _derived(files, subject, target)
