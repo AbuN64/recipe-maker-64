@@ -951,3 +951,14 @@ def test_apply_refusal_keeps_the_saved_patch_and_says_why(project, monkeypatch):
     got = naming._land(project, {}, {"moves": 1, "path": "p.diff"})
     assert got["applied"] is False and "context moved" in got["apply_refused"] and got["next"] == "recipe apply"
     assert "stream" not in got
+
+
+def test_a_refused_sdk_spelling_says_where_the_sdk_names_live(project, monkeypatch):
+    doc = document()
+    doc["members"].append(member("func_80006010", "code_80006000", unit="src/d.c"))
+    doc["modules"].append(module("code_80006000", "GAME", ["func_80006010"]))
+    monkeypatch.setattr(structure, "evidence", lambda config, host=None: doc)
+    monkeypatch.setitem(GRAPH, "func_80006010", (["func_80700000"], []))
+    got = submit(project, [row("func_80006010", "__osDisableInt", ["callee func_80700000"])])
+    assert got["accepted"] == 0
+    assert "libultra_names.tsv" in (naming._root(project) / "refused.jsonl").read_text()

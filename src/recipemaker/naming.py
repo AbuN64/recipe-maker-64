@@ -376,6 +376,11 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
         free = kind in ("function", "module") and not word  # a folder that takes no prefix (GAME): say the form
         bare = re.sub(r"^[A-Za-z0-9]+_", "", name) if free and "_" in name else ""
         hint = f"; {folder} takes no prefix: the unprefixed form, such as {bare}" if bare else ""
+        if kind == "function" and re.match(r"_*[a-z]", name):  # an SDK routine's own spelling, not a project name
+            hint += (
+                "; if this is the SDK's own name for the routine, add its address and name to "
+                "versions/<v>/libultra_names.tsv in every version that has it, then submit again"
+            )
         return "regex", f"{name} does not match {style.pattern(kind, word)}{hint}"
     if kind == "module" and style.collision(name):
         return "regex", f"{name} ends in a collision counter"
