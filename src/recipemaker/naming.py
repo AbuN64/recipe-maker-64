@@ -837,6 +837,23 @@ def _preview(config: Config, params: Json, built: Json) -> Json:
     return _land(config, {**params, "no_apply": False}, built)
 
 
+def _unread(ctx: Map, folder: str | None) -> Json:
+    """N4 packs only data some extracted assembly reads. The rest has no evidence the pack can cite: counted by class so
+    lanes stop chasing it (`no_evidence`), per kind of datum in `skipped`."""
+    skipped: Counter[str] = Counter()
+    for name, member in ctx.members.items():
+        if member["kind"] == "function" or not style.neutral(name) or ctx.callers.get(name):
+            continue
+        if (
+            folder
+            and ctx.folder_of(name) != folder
+            and folder not in ctx.modules.get(member["module"], {}).get("source", "")
+        ):
+            continue
+        skipped["blob member" if re.match(r"D_(?:blob|auto)", name) else "no reader in the assembly"] += 1
+    return {"no_evidence": sum(skipped.values()), "skipped": dict(skipped)}
+
+
 def _members(config: Config, params: Json) -> Json:
     """`recipe name next --step M --target STRUCT|HEADER`: the unkNN members of a record (every record a header
     defines) with the evidence every typed access in the project gives each."""
@@ -1016,6 +1033,11 @@ def next_(config: Config, params: Json) -> Json:
         if pick[0][0] == "subsystem" and step != "N2":  # a named folder: the step's best targets inside it
             folder = pick[0][1]
             pick = [t for t in _targets(ctx, step) if ctx.folder_of(t[1]) == folder and t[1] not in done]
+            if step == "N4":  # data is named where it is read: a blob member sits in a data folder, an extern has none
+                used = {
+                    t: sum(ctx.folder_of(c) == folder for c in ctx.callers.get(t[1], ())) for t in _targets(ctx, step)
+                }
+                pick = sorted((t for t, u in used.items() if u and t[1] not in done), key=lambda t: (-used[t], t[1]))
             pick = pick[: int(params["count"])]
         elif pick[0][1] not in ctx.members and pick[0][0] not in ("function", "global"):
             raise state.stop(
@@ -1036,6 +1058,7 @@ def next_(config: Config, params: Json) -> Json:
         structure.write(path, json.dumps(pack))
     built = _patch(config, doc, moves)
     return {
+        **(_unread(ctx, wanted) if step == "N4" else {}),
         "action": "next",
         "step": step,
         "read": len(graph),

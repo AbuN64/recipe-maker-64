@@ -79,6 +79,8 @@ def _render_name(result: Json) -> list[str]:
         why = [f"  {n} {r}" for r, n in sorted(result.get("reasons", {}).items(), key=lambda x: -x[1])]
         debt = [f"naming debt by file: {result['naming_debt']}"] if result.get("naming_debt") else []
         out = [f"{result['step']}: {pack}{result['moves']} moves in patch {result['path'] or 'none'}", *why, *debt]
+        if "skipped" in result:
+            out += [f"no evidence (not packed): {result['no_evidence']} {result['skipped']}"]
         if "outside" in result:
             out += [f"preview: {len(result['files'])} files, {len(result['outside'])} outside: {result['outside'][:8]}"]
         return out
