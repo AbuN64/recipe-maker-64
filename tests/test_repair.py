@@ -136,3 +136,42 @@ def test_prototype_parameter_and_type_repair(tmp_path):
     built = structure.build(tmp_path, [m for _, _, moves in rules for m in moves], lambda _: None, {})
     assert "+extern void construct(int entry);" in built["patch"]
     assert "+typedef struct Shared_Entry Shared_Entry;" in built["patch"]
+
+
+def test_a_local_row_whose_line_already_spells_the_new_name_is_already_applied(tmp_path):
+    config = project(tmp_path, {"src/a.c": "int change(int entry) { return entry; }\n"})
+    row = {
+        "kind": "local",
+        "target": "template",
+        "name": "entry",
+        "path": "src/a.c",
+        "line": 1,
+        "function": "change",
+        "doc": "Entry to process.",
+    }
+    path = tmp_path / "names.jsonl"
+    path.write_text(json.dumps(row) + "\n")
+    result = naming.submit(config, {"file": str(path), "host": None, "no_apply": True})
+    assert result["accepted"] == 0 and result["refused"] == 0 and result["already"] == 1
+    assert result["already_rows"] == ["local in change template -> entry"] and result["exit"] == 0
+
+
+def test_a_param_row_is_a_local_row_and_an_unknown_kind_names_the_kinds(tmp_path):
+    config = project(tmp_path, {"src/a.c": "int change(int template) { return template; }\n"})
+    rows = [
+        {
+            "kind": "param",
+            "target": "template",
+            "name": "entry",
+            "path": "src/a.c",
+            "line": 1,
+            "function": "change",
+            "doc": "Entry to process.",
+        },
+        {"kind": "parameter", "target": "arg0", "name": "entry", "doc": "x"},
+    ]
+    path = tmp_path / "names.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    result = naming.submit(config, {"file": str(path), "host": None, "no_apply": True})
+    assert result["accepted"] == 1 and result["accepted_rows"] == ["local in change template -> entry"]
+    assert result["refused"] == 1 and "the kinds are" in result["refusals"][0] and "param" in result["refusals"][0]

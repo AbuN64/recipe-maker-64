@@ -83,6 +83,12 @@ class Repairs:
         masked = access.mask(text)
         lines = masked.splitlines()
         token = re.compile(rf"\b{re.escape(old)}\b")
+        if (
+            row["line"] <= len(lines)
+            and not token.search(lines[row["line"] - 1])
+            and re.search(rf"\b{re.escape(new)}\b", lines[row["line"] - 1])
+        ):
+            return "applied", f"{path}:{row['line']} already spells {new}", []
         if row["line"] > len(lines) or not token.search(lines[row["line"] - 1]):
             return "evidence", f"{path}:{row['line']} does not spell {old} as an identifier", []
         move: dict[str, str] = {"op": "symbol", "subject": old, "target": new}

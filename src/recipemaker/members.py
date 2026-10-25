@@ -161,6 +161,8 @@ class Fields:
         except Refusal as refusal:
             return "target", refusal.findings[0].reason, []
         held = self.types.member.get(key, {})
+        if old not in held and new in held:
+            return "applied", f"{key} already has {new} for {old}", []
         if old not in held:
             return "target", f"{key} has no member {old}", []
         if self.words is None:

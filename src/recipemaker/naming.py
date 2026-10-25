@@ -401,6 +401,15 @@ def _exists(ctx: Map, row: Json) -> str:
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
 
 
+def _applied(ctx: Map, row: Json) -> bool:
+    """Whether the row is already in the tree: its target is gone and its new name names the same kind of thing (a
+    resubmit after an apply, or after a timed-out run that applied before it exited)."""
+    target, name = row.get("target"), row.get("name")
+    if row.get("kind") not in _ORDER or not isinstance(target, str) or not isinstance(name, str) or target == name:
+        return False
+    return bool(_exists(ctx, row)) and not _exists(ctx, {**row, "target": name})
+
+
 def _form(ctx: Map, row: Json) -> tuple[str, str]:
     """Whether the new name has the shape its kind and subsystem ask for, and holds no banned word."""
     kind, target, name = row["kind"], row["target"], row["name"]
@@ -1143,6 +1152,15 @@ _FIELD = {
 }
 
 
+LISTED = 200  # rows listed by name in a submit result
+
+
+def _row_line(row: Json) -> str:
+    where = f" {row['struct']}" if row.get("kind") == "field" and row.get("struct") else ""
+    where += f" in {row['function']}" if row.get("kind") == "local" and row.get("function") else ""
+    return f"{row.get('kind', '?')}{where} {row.get('target', '?')} -> {row.get('name', '?')}"
+
+
 def refusal_lines(refused: Sequence[Json], limit: int = 20) -> list[str]:
     """One line per refused row naming the rule and the field it judged: `refused RULE FIELD TARGET -> NAME: reason`."""
     out = []
@@ -1177,29 +1195,41 @@ def submit(config: Config, params: Json) -> Json:
     k = m[1] if (m := re.search(r"names-(\d+)", path.name)) else str(_number(config))
     accepted: list[tuple[Json, Sequence[Json]]] = []
     refused: list[Json] = []
+    already: list[Json] = []  # rows the tree already holds: no-ops, neither applied again nor refused
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
+        if row.get("kind") == "param":  # a parameter is a local of its function (CLEAN-MENU2-3 wrote "param")
+            row = {**row, "kind": "local"}
         if row.get("kind") in ("local", "repair"):
             rule, reason, direct = repairs.judge(row)
-            if rule:
+            if rule == "applied":
+                already.append(row)
+            elif rule:
                 refused.append({"row": row, "rule": rule, "reason": reason})
             else:
                 accepted.append((row, direct))
             continue
         if row.get("kind") == "field":
             rule, reason, direct = fields.judge(row)
-            if rule:
+            if rule == "applied":
+                already.append(row)
+            elif rule:
                 refused.append({"row": row, "rule": rule, "reason": reason})
             else:
                 accepted.append((row, direct))
             continue
         if row.get("kind") not in _ORDER:
-            refused.append({"row": row, "rule": "shape", "reason": "unknown naming row kind"})
+            kinds = ", ".join([*sorted(_ORDER), "field", "local", "param", "repair"])
+            why = f"unknown naming row kind {row.get('kind')!r}; the kinds are {kinds}"
+            refused.append({"row": row, "rule": "shape", "reason": why})
             continue
         if ctx is None:
             doc = structure.evidence(config, params["host"])
             ctx = Map(config, doc, reads(config, doc))
         if row.get("kind") == "module" and isinstance(row.get("target"), str):
             row = {**row, "target": ctx.module_of(row["target"])}
+        if "bad" not in row and _applied(ctx, row):
+            already.append(row)
+            continue
         rule, reason = judge(ctx, row) if "bad" not in row else ("shape", "not a JSON object")
         if rule:
             refused.append({"row": row, "rule": rule, "reason": reason})
@@ -1232,6 +1262,10 @@ def submit(config: Config, params: Json) -> Json:
         "rows": len(rows),
         "accepted": len(accepted),
         "refused": len(refused),
+        "already": len(already),
+        # which rows this run applied (or, with --no-apply, would apply), and which the tree already held
+        "accepted_rows": [_row_line(r) for r, _ in accepted][:LISTED],
+        "already_rows": [_row_line(r) for r in already][:LISTED],
         "by_rule": dict(Counter(r["rule"] for r in refused)),
         "refusals": refusal_lines(refused),
         "findings": [  # the decomp wrapper prints these when the exit code is 1

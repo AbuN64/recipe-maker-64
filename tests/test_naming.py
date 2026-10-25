@@ -1085,3 +1085,18 @@ def test_n4_calls_a_datum_global_when_any_source_declares_it_extern(project, mon
     kinds = {n: k for k, n in naming._targets(ctx, "N4")}
     assert kinds["D_80005000"] == "global"  # one reader, but a header or another version declares it extern
     assert naming._chosen(ctx, "N4", "D_80005000")[0] == "global"
+
+
+def test_a_resubmitted_row_the_tree_already_holds_is_a_no_op_and_the_result_lists_the_rows(project):
+    """CLEAN-FRONTEND-2/3: a resubmit after an apply (or after a timed-out run that applied) said "duplicate name".
+    A row whose target is gone and whose name is already that kind of symbol is listed as already applied, not refused;
+    the result names the rows it accepted."""
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee func_80004020"]),
+        row("func_8000DEAD", "Actor_Update", ["callee func_80004020"]),  # renamed earlier: Actor_Update exists
+        row("func_8000BEEF", "Actor_Nowhere", ["callee func_80004020"]),  # no such target, no such name: refused
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["already"] == 1 and got["by_rule"] == {"target": 1}
+    assert got["accepted_rows"] == ["function func_80004010 -> Actor_Spawn"]
+    assert got["already_rows"] == ["function func_8000DEAD -> Actor_Update"]
