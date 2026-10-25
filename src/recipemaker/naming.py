@@ -633,6 +633,21 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         ]
         rows += [(len(ctx.callers.get(n, ())), n) for n in external]
         return [("function", n) for fan, n in sorted(rows, key=lambda r: (-r[0], r[1])) if fan]
+    if step == "N5":  # internal-only: no caller outside its own folder, so N3 never packs it; the evidence is local
+        # (callers and callees inside the folder, the tags its calls carry)
+        rows = []
+        for n, m in neutral.items():
+            if m["kind"] != "function" or not ctx.word(ctx.folder_of(n)):
+                continue
+            home = ctx.folder_of(n)
+            callers = ctx.callers.get(n, ())
+            if any(ctx.folder_of(c) != home for c in callers):
+                continue
+            if n not in ctx.calls or not (callers or ctx.calls[n] or ctx.tags([n])):
+                continue  # nothing a reader could check
+            placed = _bytes(m, ctx.doc["names_from"]) > 0  # the version the names are read from first
+            rows.append((placed, len(callers) + len(ctx.calls[n]), n))
+        return [("function", n) for _, _, n in sorted(rows, key=lambda r: (not r[0], -r[1], r[2]))]
     # N4: a datum is static when one file reads it (C's file scope: the data may sit in a data file of its own, the
     # code file it came from is the one that reads it), global when two files do; a folder is no scope of C
     data = {n: ctx.callers.get(n, []) for n, m in neutral.items() if m["kind"] != "function"}

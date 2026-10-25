@@ -1005,3 +1005,49 @@ def test_a_type_move_to_a_keyword_spelled_tag_is_judged_by_its_identifier(tmp_pa
     moves = [{"op": "type", "subject": "struct Old", "target": "struct CItem_t"}]
     built = structure.build(tmp_path, moves, lambda f: None, {})
     assert "struct CItem_t" in built["patch"]
+
+
+def test_n5_packs_only_functions_nothing_outside_their_folder_calls():
+    """N5 packs the internal-only placeholders N3 never reaches."""
+    place = [{"version": "us", "rom_start": 0, "rom_end": 8, "vram": 0}]
+
+    def fn(n, placements=place):
+        return {"kind": "function", "name": n, "placements": placements}
+
+    members = {
+        n: fn(n) for n in ("func_8000000A", "func_8000000B", "func_8000000C", "func_8000000D", "func_8000000E")
+    } | {"Menu_Named": fn("Menu_Named")}
+    members["func_8000000E"] = fn("func_8000000E", [])  # another version's function: after the placed ones
+    folders = {
+        "func_8000000A": "M",
+        "func_8000000B": "M",
+        "func_8000000C": "M",
+        "func_8000000D": "O",
+        "func_8000000E": "M",
+        "Menu_Named": "M",
+        "x": "O",
+    }
+    ctx = SimpleNamespace(
+        members=members,
+        doc={"names_from": "us"},
+        word=lambda f: "Menu" if f == "M" else "",
+        folder_of=lambda n: folders[n],
+        callers={
+            "func_8000000A": ["func_8000000B"],
+            "func_8000000B": ["Menu_Named", "func_8000000C"],
+            "func_8000000C": ["x"],
+            "func_8000000E": ["func_8000000B"],
+        },
+        calls={
+            "func_8000000A": [],
+            "func_8000000B": ["func_8000000A"],
+            "func_8000000C": [],
+            "func_8000000D": [],
+            "func_8000000E": [],
+            "Menu_Named": [],
+        },
+        tags=lambda names: {},
+    )
+    got = naming._targets(ctx, "N5")
+    # func_8000000C has an outside caller (N3's), func_8000000D sits in a folder with no word; Menu_Named is not a placeholder
+    assert [n for _, n in got] == ["func_8000000B", "func_8000000A", "func_8000000E"]

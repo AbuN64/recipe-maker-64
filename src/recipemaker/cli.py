@@ -131,8 +131,9 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("file", nargs="?", help="the names file for submit")
     one.add_argument(
         "--step",
-        choices=("N1", "N2", "N3", "N4", "T"),
-        help="the naming step (default: N3); T: original types from the debug catalog",
+        choices=("N1", "N2", "N3", "N4", "N5", "T"),
+        help="the naming step (default: N3); N5: functions only their own folder calls;"
+        " T: original types from the debug catalog",
     )
     one.add_argument(
         "--no-apply", action="store_true", help="next/submit leave the patch saved instead of applying it to the tree"
