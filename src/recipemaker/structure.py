@@ -624,11 +624,19 @@ class Files:
         gone = {p for p, t in self.text.items() if t is None}
         return sorted((self._disk | {p for p, t in self.text.items() if t is not None}) - gone)
 
-    def replace(self, pattern: re.Pattern[str], new: str | Callable[[re.Match[str]], str], paths: Iterable[str]) -> int:
+    def replace(
+        self,
+        pattern: re.Pattern[str],
+        new: str | Callable[[re.Match[str]], str],
+        paths: Iterable[str],
+        needle: str = "",
+    ) -> int:
+        """Substitute the pattern in each file; needle is a literal every match contains: a file without it is skipped
+        by one substring search, not read through the regex (a rename over the whole tree was 12 s of regex time)."""
         count = 0
         for path in paths:
             text = self.get(path)
-            if text is not None:
+            if text is not None and needle in text:
                 changed, n = pattern.subn(new, text)
                 if n:
                     self.put(path, changed)
@@ -641,7 +649,7 @@ class Files:
         token = re.compile(rf"\b{re.escape(old)}\b")
         for path in paths:
             text = self.get(path)
-            if text is None:
+            if text is None or old not in text:  # no occurrence at all: neither a token nor an asm string
                 continue
             span = repair.local_span(text, local) if local else (0, len(text))
             if span is None:
@@ -878,8 +886,9 @@ def build(
         before = {p: text for p in files.everything() if (text := files.orig.get(p)) is not None}
         after = {p: text for p in files.everything() if (text := files.get(p)) is not None}
         before.update({p: text for p, text in files.orig.items() if text is not None})
-        existing = {(f.path, f.reason) for f in api.naming_findings(before)}
-        added = [f for f in api.naming_findings(after) if (f.path, f.reason) not in existing]
+        census = root / ".unbake" / "recipe" / "naming-census.pkl"  # each file's census, kept between runs
+        existing = {(f.path, f.reason) for f in api.naming_findings(before, census)}
+        added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in existing]
         if added:
             raise state.stop("recipe.structure", added[0].reason, path=added[0].path)
     if note:
@@ -955,7 +964,7 @@ def _field(files: Files, move: Json, members: dict[str, int], types: access.Type
     members[old], members[new] = members[old] - shared, members.get(new, 0) + 1
     if not shared:
         access_ = re.compile(rf"(\.|->)(\s*){re.escape(old)}(?![\w])")
-        files.replace(access_, lambda m: f"{m[1]}{m[2]}{new}", files.everything())
+        files.replace(access_, lambda m: f"{m[1]}{m[2]}{new}", files.everything(), old)
         members[old] = 0
     return ""
 
@@ -1004,9 +1013,9 @@ def _merge(files: Files, move: Json, types: access.Types | None, refused: Collec
         forward = rf"(?m)^[ \t]*(?:struct|union)[ \t]+{one}[ \t]*;\s*\n"
         files.replace(re.compile(forward), "", files.everything())
         files.replace(typedef, "", files.everything())
-        files.replace(re.compile(rf"\b(?:struct|union)\s+{one}\b"), move["target"], files.everything())
+        files.replace(re.compile(rf"\b(?:struct|union)\s+{one}\b"), move["target"], files.everything(), word)
     for word in bare - {move["target"]}:
-        files.replace(_word(word), move["target"], files.everything())
+        files.replace(_word(word), move["target"], files.everything(), word)
     if types is not None:
         types.key.update({w: types.key.get(move["target"].removeprefix("struct "), "") for w in (tag, alias) if w})
     return ""
@@ -1080,8 +1089,8 @@ def _derived(files: Files, subject: str, target: str) -> int:
     joined = target.replace(
         "_", ""
     )  # a type name has no underscore (style type-name): Player_Brain_Think -> PlayerBrainThink
-    hits += files.replace(before, lambda m: f"{m[1]}{joined}", paths)
-    hits += files.replace(after, lambda m: f"{joined}{m[1].replace('_', '')}", paths)
+    hits += files.replace(before, lambda m: f"{m[1]}{joined}", paths, subject)
+    hits += files.replace(after, lambda m: f"{joined}{m[1].replace('_', '')}", paths, subject)
     return hits
 
 
@@ -1099,7 +1108,7 @@ def _asm_file(files: Files, subject: str, target: str) -> int:
             for pattern in ("*.ld", "versions/*/text_sizes.mk")
             for p in files.root.glob(pattern)
         ]
-        files.replace(re.compile(re.escape(old)), new, keyed)
+        files.replace(re.compile(re.escape(old)), new, keyed, old)
     return len(moved)
 
 
@@ -1334,8 +1343,9 @@ def _portable_patch(root: Path, patch: str) -> None:
         after.pop(src, None)
         if dst != "/dev/null":
             after[dst] = "".join(result)
-    held = {(f.path, f.reason) for f in api.naming_findings(before)}
-    added = [f for f in api.naming_findings(after) if (f.path, f.reason) not in held]
+    census = root / ".unbake" / "recipe" / "naming-census.pkl"
+    held = {(f.path, f.reason) for f in api.naming_findings(before, census)}
+    added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in held]
     if added:
         raise state.stop("recipe.apply", added[0].reason, path=added[0].path)
 

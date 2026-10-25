@@ -3,6 +3,7 @@ patch built from its moves. The fixture is the evidence of 48 real RageWars modu
 80444EC0*, WEAPONS 80213ED4*) as `structure.evidence` read it from the RW tree at 9e6f90430."""
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -946,3 +947,13 @@ def test_a_signal_during_apply_puts_the_tree_back(tmp_path, monkeypatch):
         run(["git", "-C", str(tmp_path), "apply", str(patch)], tmp_path, config)
     assert stopped.value.code == 128 + signal.SIGTERM
     assert ["apply", "-R"] in runs
+
+
+def test_replace_and_identifiers_skip_files_without_the_literal(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.c").write_text("int Foo_old;\nint old;\n")
+    (tmp_path / "src/b.c").write_text("int other;\n")
+    files = structure.Files(tmp_path)
+    assert files.replace(re.compile(r"\bold\b"), "new", ["src/a.c", "src/b.c"], "old") == 1
+    assert files.identifiers("Foo_old", "Foo_new", ["src/a.c", "src/b.c"]) == 1
+    assert files.get("src/a.c") == "int Foo_new;\nint new;\n" and files.get("src/b.c") == "int other;\n"
