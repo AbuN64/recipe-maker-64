@@ -748,7 +748,7 @@ def test_a_symbol_rename_carries_the_names_derived_from_a_neutral_function_name(
     got = structure.build(root, [{"op": "symbol", "subject": "func_80209308_de", "target": "Brain_Think"}], {}.get, {})
     _check(root, got["patch"])
     header = (root / "include/COMMON/CB.H").read_text()
-    assert "Player_Brain_Think" in header and "Brain_Brain_Think" in header and "Brain_Think_S1" in header
+    assert "PlayerBrainThink" in header and "BrainBrainThink" in header and "BrainThinkS1" in header
     assert "func_80209308_de" not in header
     assert (
         "func_80209308_dex" in (root / "src/a.c").read_text()

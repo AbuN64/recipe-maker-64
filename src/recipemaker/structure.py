@@ -1073,8 +1073,11 @@ def _derived(files: Files, subject: str, target: str) -> int:
     before = re.compile(rf"(?<![A-Za-z0-9_$])([A-Za-z][A-Za-z0-9]*)_{word}(?![A-Za-z0-9_$])")
     after = re.compile(rf"(?<![A-Za-z0-9_$]){word}_([A-Z][A-Za-z0-9_]*)(?![A-Za-z0-9$])")
     paths = files.everything()
-    hits += files.replace(before, lambda m: f"{m[1]}_{target}", paths)
-    hits += files.replace(after, lambda m: f"{target}_{m[1]}", paths)
+    joined = target.replace(
+        "_", ""
+    )  # a type name has no underscore (style type-name): Player_Brain_Think -> PlayerBrainThink
+    hits += files.replace(before, lambda m: f"{m[1]}{joined}", paths)
+    hits += files.replace(after, lambda m: f"{joined}{m[1].replace('_', '')}", paths)
     return hits
 
 
