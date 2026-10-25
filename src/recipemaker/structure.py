@@ -1003,9 +1003,6 @@ def _merge(files: Files, move: Json, types: access.Types | None, refused: Collec
     return ""
 
 
-_PROTOTYPE = re.compile(r"(?m)^[ \t]*extern[ \t]+([^;{}()]*?)\b(\w+)[ \t]*\([^;{}]*\)[ \t]*;[ \t]*\n?")
-
-
 def _top_includes_end(text: str) -> int:
     """Where a new `#include` goes: after the last include of the file's opening block (blank lines, comments and
     preprocessor lines before the first line of code), so it sits above every use. Never after an include found
@@ -1026,40 +1023,19 @@ def _top_includes_end(text: str) -> int:
 
 
 def _tidy(files: Files, names: Collection[str]) -> None:
-    """After a rename: the `#define NAME fz_OLD` shims a fuzzy file kept go (the name is real now), and a local `extern`
-    of a renamed function that a header declares with the same return type goes, the header included instead."""
+    """After a rename: the `#define NAME fz_OLD` shims a fuzzy file kept go (the name is real now), together with the
+    `#undef NAME` lines of the same file, so a NON_MATCHING block and its twin are treated alike (MENU_2 80408CB0_28:
+    the define went, the renamed #undef stayed). A rename never changes how a unit declares a symbol: local `extern`s
+    stay (swapping them for header includes broke 27 units, 10-24 REV1-ONE-27); typing them is the data gate's job."""
     if not names:
         return
-    shim = re.compile(rf"(?m)^[ \t]*#[ \t]*define[ \t]+(?:{'|'.join(map(re.escape, names))})[ \t]+fz_\w+[ \t]*\n")
-    paths = [p for p in files.everything() if p.lower().endswith(_C)]
-    files.replace(shim, "", paths)
-    header: dict[str, tuple[str, str]] = {}
-    for path in (p for p in paths if p.lower().endswith((".h", ".hpp"))):
-        for found in _PROTOTYPE.finditer(files.get(path) or ""):
-            if found[2] in names:
-                header.setdefault(found[2], (path, " ".join(found[1].split())))
-    for path in paths:
-        used: set[str] = set()
-
-        def drop(m: re.Match[str], path: str = path, used: set[str] = used) -> str:
-            held = header.get(m[2])
-            if held and held[0] != path and held[1] == " ".join(m[1].split()):
-                used.add(held[0])
-                return ""
-            return m[0]
-
+    alt = "|".join(map(re.escape, names))
+    shim = re.compile(rf"(?m)^[ \t]*#[ \t]*define[ \t]+(?:{alt})[ \t]+fz_\w+[ \t]*\n")
+    undef = re.compile(rf"(?m)^[ \t]*#[ \t]*undef[ \t]+(?:{alt})[ \t]*\n")
+    for path in (p for p in files.everything() if p.lower().endswith(_C)):
         text = files.get(path) or ""
-        if not path.lower().endswith((".h", ".hpp")) and "extern" in text:
-            changed = _PROTOTYPE.sub(drop, text)
-            for need in sorted(used):
-                spelled = need.removeprefix("include/")
-                if not re.search(rf'#[ \t]*include[ \t]*"{re.escape(spelled)}"', changed):
-                    at = _top_includes_end(changed)
-                    changed = changed[:at] + f'#include "{spelled}"\n' + changed[at:]
-            if changed != text:
-                files.put(path, changed)
-
-
+        if shim.search(text):
+            files.put(path, undef.sub("", shim.sub("", text)))
 def _member_words(files: Files) -> dict[str, int]:
     """Per word, how many record bodies of the project spell it."""
     out: dict[str, int] = defaultdict(int)

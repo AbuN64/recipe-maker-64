@@ -804,38 +804,21 @@ def test_the_evidence_is_built_once_per_tree_state(tmp_path, monkeypatch):
     assert [structure.evidence(config)["digest"] for _ in range(4)] == [1, 1, 2, 3]  # a, a (held), b, "" (no state)
 
 
-def test_a_rename_drops_the_fuzzy_define_and_the_local_extern_a_header_declares_the_same_way(tmp_path):
+def test_a_rename_drops_the_fuzzy_define_with_its_undef_and_keeps_local_externs(tmp_path):
     (tmp_path / "include").mkdir()
     (tmp_path / "src").mkdir()
     (tmp_path / "include/m.h").write_text("extern void *func_8000(s32 x);\n")
     (tmp_path / "src/a.c").write_text(
         '#include "TYPES.H"\n#ifdef NON_MATCHING\n#define func_8000 fz_func_8000\n#endif\n'
         "extern void *func_8000(); extern void other(s32);\nvoid f(void) { func_8000(1); }\n"
+        "#ifdef NON_MATCHING\n#undef func_8000\n#endif\n"
     )
     built = structure.build(tmp_path, [{"op": "symbol", "subject": "func_8000", "target": "Mem_Alloc"}], {}.get, {})
     patch = built["patch"]
     assert "-#define func_8000 fz_func_8000" in patch and "+#define" not in patch
-    assert '+#include "m.h"' in patch and "extern void *Mem_Alloc();" not in patch.replace("-extern", "")
-    assert "+extern void other(s32);" in patch and "Mem_Alloc(1)" in patch
-
-
-def test_a_header_include_added_by_a_rename_goes_above_the_callers_not_after_a_mid_file_include(tmp_path):
-    (tmp_path / "include").mkdir()
-    (tmp_path / "src").mkdir()
-    (tmp_path / "include/m.h").write_text("extern f32 func_8000(f32 x);\n")
-    (tmp_path / "src/a.c").write_text(
-        '/* unit */\n#include "TYPES.H"\n\nextern f32 func_8000(f32);\nf32 g(void) { return func_8000(1.0f); }\n'
-        '#include "late.h"\nf32 h(void) { return func_8000(2.0f); }\n'
-    )
-    built = structure.build(tmp_path, [{"op": "symbol", "subject": "func_8000", "target": "Math_Sqrtf"}], {}.get, {})
-    out = "".join(
-        x[1:] for x in built["patch"].splitlines(keepends=True) if x.startswith("+") and not x.startswith("+++")
-    )
-    assert out.index('#include "m.h"') < out.index("Math_Sqrtf(1.0f)")
-    assert structure._top_includes_end('#include "a.h"\n// c\n#include "b.h"\nint x;\n#include "c.h"\n') == len(
-        '#include "a.h"\n// c\n#include "b.h"\n'
-    )
-    assert structure._top_includes_end("int x;\n") == 0
+    assert "-#undef func_8000" in patch and "+#undef" not in patch  # the twin goes with it
+    assert '+#include "m.h"' not in patch and "+extern void *Mem_Alloc();" in patch  # declared the way the unit had it
+    assert "Mem_Alloc(1)" in patch
 
 
 def test_apply_takes_the_newest_saved_patch_and_sets_aside_a_stale_one(tmp_path, monkeypatch):
