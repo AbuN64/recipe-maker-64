@@ -20,6 +20,15 @@ from unbake.contracts import Config, Json, Refusal
 
 from recipemaker import cparse, debug, repair, state, structure, style, table, tree
 
+# Compiler builtins: cc1 expands a call by one of these names inline (+11 words for sqrtf, func_802B72B0_de),
+# so a game function carrying one no longer compiles to its own body. The SDK table line may still spell one.
+_BUILTIN_WORDS = (
+    "abs labs llabs fabs fabsf fabsl sqrt sqrtf sqrtl sin sinf sinl cos cosf cosl tan tanf atan atanf atan2 atan2f",
+    "asin asinf acos acosf exp expf log logf log10 pow powf floor floorf ceil ceilf fmod fmodf memcpy memmove",
+    "memset memcmp memchr strcpy strncpy strcat strncat strcmp strncmp strlen strchr strrchr strstr strpbrk strspn",
+    "strcspn bcopy bzero bcmp alloca ffs index rindex malloc calloc free printf sprintf puts putchar",
+)
+BUILTINS = frozenset(w for line in _BUILTIN_WORDS for w in line.split())
 _ORDER = {"subsystem": 0, "module": 1, "function": 2, "global": 2, "static": 2}
 # style.toml evidence_forms; a note in parentheses after the name is the reader's, the name alone is checked
 _EVIDENCE = re.compile(r"^(callee|caller|reads|tag|debug) (\S+)(?:\s+\([^()]*\))?$")
@@ -384,6 +393,12 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names, implementation)
     if why := api.name_issues(name, name_kind, implementation=True):
         return "portable", why[0]
+    if (
+        kind in ("function", "global", "static")
+        and name in BUILTINS
+        and not (kind == "function" and ctx.sdk_name(ctx.canon(target)) == name)
+    ):
+        return "builtin", f"{name} is a compiler builtin: use a prefixed name, e.g. Math_{name.capitalize()}"
     # Original/debug and SDK evidence never override target portability.
     folded = [n for n in ctx.taken if n != target and n != name]
     if why := api.name_issues(name, name_kind, taken=folded):

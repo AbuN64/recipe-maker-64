@@ -982,7 +982,10 @@ def _merge(files: Files, move: Json, types: access.Types | None, refused: Collec
         if path == into or re.search(rf'#[ \t]*include[ \t]*"{re.escape(spelled)}"', text)
         else f'#include "{spelled}"\n'
     )
-    text = text[:lo] + note + text[hi:]
+    text = text[:lo] + text[hi:]
+    if note:  # above every use, in the opening include block (the definition's old place can sit below a caller)
+        at = _top_includes_end(text)
+        text = text[:at] + note + text[at:]
     files.put(path, text)
     bare = {alias} - {""}
     for word in filter(None, (tag, alias)):
@@ -1001,6 +1004,25 @@ def _merge(files: Files, move: Json, types: access.Types | None, refused: Collec
 
 
 _PROTOTYPE = re.compile(r"(?m)^[ \t]*extern[ \t]+([^;{}()]*?)\b(\w+)[ \t]*\([^;{}]*\)[ \t]*;[ \t]*\n?")
+
+
+def _top_includes_end(text: str) -> int:
+    """Where a new `#include` goes: after the last include of the file's opening block (blank lines, comments and
+    preprocessor lines before the first line of code), so it sits above every use. Never after an include found
+    mid-file, below the functions that need what it declares (10-24 GOBJINST_5: the callers lost their prototype and
+    took a float argument as a double). 0 when the block holds no include."""
+    at = end = 0
+    comment = False
+    for line in text.splitlines(keepends=True):
+        s = line.strip()
+        if comment or s.startswith("/*"):
+            comment = "*/" not in s
+        elif s and not s.startswith(("//", "#")):
+            break
+        elif s.startswith("#") and re.match(r"#[ \t]*include\b", s):
+            end = at + len(line)
+        at += len(line)
+    return end
 
 
 def _tidy(files: Files, names: Collection[str]) -> None:
@@ -1032,8 +1054,7 @@ def _tidy(files: Files, names: Collection[str]) -> None:
             for need in sorted(used):
                 spelled = need.removeprefix("include/")
                 if not re.search(rf'#[ \t]*include[ \t]*"{re.escape(spelled)}"', changed):
-                    last = list(re.finditer(r"(?m)^[ \t]*#[ \t]*include[^\n]*\n", changed))
-                    at = last[-1].end() if last else 0
+                    at = _top_includes_end(changed)
                     changed = changed[:at] + f'#include "{spelled}"\n' + changed[at:]
             if changed != text:
                 files.put(path, changed)

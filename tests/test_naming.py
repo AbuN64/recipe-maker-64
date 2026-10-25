@@ -854,3 +854,17 @@ def test_class_methods_use_single_separator_with_evidence(project):
         assert naming.judge(ctx, {**row, "name": name})[0] == "portable"
     # the SDK's own reserved names pass the portable rule, as in source admission (the name is then judged on its other rules)
     assert naming.judge(ctx, {**row, "name": "__osPopThread"})[0] != "portable"
+
+
+def test_a_compiler_builtin_name_is_refused_for_a_game_function(project):
+    ctx = naming.Map(project, document(), GRAPH)
+    row = {
+        "kind": "function",
+        "target": "func_80004010",
+        "name": "sqrtf",
+        "doc": "Square root",
+        "evidence": ["caller func_80003010"],
+    }
+    rule, why = naming.judge(ctx, row)
+    assert rule == "builtin" and "sqrtf" in why
+    assert naming.judge(ctx, {**row, "name": "Math_Sqrtf"})[0] != "builtin"

@@ -819,6 +819,25 @@ def test_a_rename_drops_the_fuzzy_define_and_the_local_extern_a_header_declares_
     assert "+extern void other(s32);" in patch and "Mem_Alloc(1)" in patch
 
 
+def test_a_header_include_added_by_a_rename_goes_above_the_callers_not_after_a_mid_file_include(tmp_path):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include/m.h").write_text("extern f32 func_8000(f32 x);\n")
+    (tmp_path / "src/a.c").write_text(
+        '/* unit */\n#include "TYPES.H"\n\nextern f32 func_8000(f32);\nf32 g(void) { return func_8000(1.0f); }\n'
+        '#include "late.h"\nf32 h(void) { return func_8000(2.0f); }\n'
+    )
+    built = structure.build(tmp_path, [{"op": "symbol", "subject": "func_8000", "target": "Math_Sqrtf"}], {}.get, {})
+    out = "".join(
+        x[1:] for x in built["patch"].splitlines(keepends=True) if x.startswith("+") and not x.startswith("+++")
+    )
+    assert out.index('#include "m.h"') < out.index("Math_Sqrtf(1.0f)")
+    assert structure._top_includes_end('#include "a.h"\n// c\n#include "b.h"\nint x;\n#include "c.h"\n') == len(
+        '#include "a.h"\n// c\n#include "b.h"\n'
+    )
+    assert structure._top_includes_end("int x;\n") == 0
+
+
 def test_apply_takes_the_newest_saved_patch_and_sets_aside_a_stale_one(tmp_path, monkeypatch):
     saved = tmp_path / ".unbake/recipe/patches"
     saved.mkdir(parents=True)
