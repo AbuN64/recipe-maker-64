@@ -968,3 +968,18 @@ def test_a_row_without_doc_is_refused_naming_the_missing_field(project):
     got = submit(project, [{"kind": "function", "target": "func_80006010", "name": "Game_Run", "evidence": []}])
     assert got["accepted"] == 0
     assert "missing: doc" in (naming._root(project) / "refused.jsonl").read_text()
+
+
+def test_submit_exits_nonzero_and_names_rule_and_field_of_every_refused_row(project):
+    got = submit(
+        project,
+        [
+            row("func_80004010", "Actor_Spawn", ["callee func_80004020"]),
+            row("func_80004030", "Menu_Spawn", ["callee func_80004020"]),
+        ],
+    )
+    assert got["exit"] == 1 and got["accepted"] == 1
+    assert len(got["refusals"]) == 1 and got["refusals"][0].startswith(
+        "refused regex name func_80004030 -> Menu_Spawn:"
+    )
+    assert submit(project, [row("func_80004010", "Actor_Spawn", ["callee func_80004020"])])["exit"] == 0

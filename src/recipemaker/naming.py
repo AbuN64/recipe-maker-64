@@ -818,6 +818,36 @@ def next_(config: Config, params: Json) -> Json:
     }
 
 
+_FIELD = {
+    "target": "target",
+    "named": "target",
+    "catalog": "target",
+    "evidence": "evidence",
+    "unverifiable": "evidence",
+    "shape": "row",
+    "portable": "name",
+    "prefix": "name",
+    "regex": "name",
+    "banned": "name",
+    "duplicate": "name",
+    "builtin": "name",
+}
+
+
+def refusal_lines(refused: Sequence[Json], limit: int = 20) -> list[str]:
+    """One line per refused row naming the rule and the field it judged: `refused RULE FIELD TARGET -> NAME: reason`."""
+    out = []
+    for r in refused[:limit]:
+        row = r["row"]
+        field = _FIELD.get(r["rule"], "row")
+        out.append(f"refused {r['rule']} {field} {row.get('target', '?')} -> {row.get('name', '?')}: {r['reason']}")
+    return out + (
+        [f"refused ... {len(refused) - limit} more in .unbake/recipe/name/refused.jsonl"]
+        if len(refused) > limit
+        else []
+    )
+
+
 def submit(config: Config, params: Json) -> Json:
     """`recipe name submit FILE`: validate every row, append the accepted ones as moves and write their banners."""
     path = Path(params["file"])
@@ -872,6 +902,10 @@ def submit(config: Config, params: Json) -> Json:
         "accepted": len(accepted),
         "refused": len(refused),
         "by_rule": dict(Counter(r["rule"] for r in refused)),
+        "refusals": refusal_lines(refused),
+        "exit": 1
+        if refused
+        else 0,  # a refused row is a failure the caller's `&&` must see; accepted rows are still patched
         **built,
         "banners": f".unbake/recipe/name/banners-{k}.json",
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",

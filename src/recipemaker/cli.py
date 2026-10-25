@@ -64,6 +64,8 @@ def _applied(result: Json) -> list[str]:
     if result.get("applied"):
         return [f"applied in place: {len(result.get('changed', []))} files changed, tree synced"]
     return [f"not applied ({result['apply_refused']}); the patch stays saved"] if "apply_refused" in result else []
+
+
 def _render_name(result: Json) -> list[str]:
     if result["action"] == "next":
         pack = f"pack {result['pack']} holds {result['targets']} targets, " if result["pack"] else ""
@@ -76,6 +78,7 @@ def _render_name(result: Json) -> list[str]:
             f"{result['accepted']} of {result['rows']} names accepted as {result['moves']} moves"
             f" in {result['path'] or 'no patch'}",
             *([f"refused {result['refused']}: {rules}"] if result["refused"] else []),
+            *result.get("refusals", []),
             *_applied(result),
         ]
     return [f"{len(result['files'])} banner candidates, {result['skipped']} skipped"]
@@ -219,7 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.stdout.write(stream)
             sys.stderr.write(render(args.verb, result) + "\n")
         else:
-            _emit(render(args.verb, result), {"ok": True, **result}, args.json)
+            _emit(render(args.verb, result), {"ok": code == 0, **result}, args.json)
     else:
         lines = [line for f in findings for line in _finding(f)]
         if lines[-1] == f"next: recipe {args.verb}" and findings[-1].key not in _RETRY:
