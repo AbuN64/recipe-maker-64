@@ -446,6 +446,17 @@ def test_a_renamed_source_takes_its_config_toml_file_rule_along(tmp_path):
     assert '[file."src/b.c"]' in text  # a file that stays keeps its rule
 
 
+def test_a_folder_rule_follows_the_folder_all_of_whose_files_moved(tmp_path):
+    config = '[project]\nname = "x"\n\n[library."src/old/"]\norigin = "lib"\n\n[dir."src/stay/"]\nflags = []\n'
+    root = _repo(tmp_path, {"src/old/a.c": "int a;\n", "src/stay/b.c": "int b;\n", "config.toml": config})
+    modules = {"m": {"source": "src/old/a.c", "header": "include/m.h"}}
+    moves = [{"op": "source", "subject": "m", "target": "src/new/a.c"}]
+    got = structure.build(root, modules=modules, moves=moves, owner={}.get)
+    _check(root, got["patch"])
+    text = (root / "config.toml").read_text()
+    assert '[library."src/new/"]' in text and '[library."src/old/"]' not in text and '[dir."src/stay/"]' in text
+
+
 def test_a_header_move_edits_the_include_lines(tmp_path):
     root = _repo(tmp_path, {"src/a.c": '#include "old.h"\n#include "other.h"\n', "include/old.h": "int a;\n"})
     got = structure.build(root, [{"op": "file", "subject": "include/old.h", "target": "include/types.h"}], {}.get, {})

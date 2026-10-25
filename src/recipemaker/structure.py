@@ -1092,12 +1092,27 @@ def _asm_file(files: Files, subject: str, target: str) -> int:
     return len(moved)
 
 
+_FOLDER_ROW = re.compile(r"""(?m)^([ \t]*\[[ \t]*(?:dir|library)[ \t]*\.[ \t]*)(["'])([^"'\n]+/)\2([ \t]*\])""")
+
+
+def _folders(files: Files, moved: Mapping[str, str]) -> dict[str, str]:
+    """Folder -> new folder (both with a trailing slash) for each folder whose files all moved to one other folder."""
+    target: dict[str, set[str]] = {}
+    for was, now in moved.items():
+        target.setdefault(str(PurePosixPath(was).parent) + "/", set()).add(str(PurePosixPath(now).parent) + "/")
+    kept = {str(PurePosixPath(p).parent) + "/" for p in files.everything() if p not in moved.values()}
+    return {old: next(iter(new)) for old, new in target.items() if len(new) == 1 and old not in kept}
+
+
 def _rekey(files: Files) -> None:
     """The per-file rules of config.toml (`[file."src/a.c"]`: toolchain, flags) follow the files the moves rename: a
     rule left on the old path matches nothing, and the file silently builds with the project's defaults."""
     moved = {was: now for now, was in files.origin.items() if files.text.get(now) is not None and was != now}
     if moved:
         files.replace(_FILE_ROW, lambda m: f"{m[1]}{m[2]}{moved.get(m[3], m[3])}{m[2]}{m[4]}", ["config.toml"])
+        folders = _folders(files, moved)
+        if folders:  # the [dir."src/x/"] and [library."src/x/"] rows follow a folder every file of which moved together
+            files.replace(_FOLDER_ROW, lambda m: f"{m[1]}{m[2]}{folders.get(m[3], m[3])}{m[2]}{m[4]}", ["config.toml"])
 
 
 def _inherit(files: Files, born: Mapping[str, str]) -> None:
