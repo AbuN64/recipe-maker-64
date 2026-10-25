@@ -1100,3 +1100,13 @@ def test_a_resubmitted_row_the_tree_already_holds_is_a_no_op_and_the_result_list
     assert got["accepted"] == 1 and got["already"] == 1 and got["by_rule"] == {"target": 1}
     assert got["accepted_rows"] == ["function func_80004010 -> Actor_Spawn"]
     assert got["already_rows"] == ["function func_8000DEAD -> Actor_Update"]
+
+
+def test_evidence_may_name_a_symbol_by_the_new_name_another_row_of_the_file_gives_it(project):
+    """CLEAN-FRONTEND-4: `caller X` failed when X is renamed in the same submit; either spelling reads now."""
+    rows = [
+        row("func_80004010", "Actor_Spawn", ["callee func_80004020"]),
+        row("func_80004020", "Actor_Release", ["caller Actor_Spawn"]),
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 2 and got["refused"] == 0, got["refusals"]

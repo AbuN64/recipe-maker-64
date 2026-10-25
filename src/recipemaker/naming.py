@@ -401,6 +401,22 @@ def _exists(ctx: Map, row: Json) -> str:
     return "" if found and (found["kind"] == "function") == (want == "function") else f"no {want} has this name"
 
 
+def _as_before(row: Json, renamed: Mapping[str, str]) -> Json:
+    """ROW with each evidence item that names a symbol another row of the same submit renames spelled with the name
+    the tree still holds (the assembly is read before the renames apply): `caller Menu_Open` for a caller this file
+    names Menu_Open reads as `caller func_8040...` (CLEAN-FRONTEND-4)."""
+    evidence = row.get("evidence")
+    if not renamed or not isinstance(evidence, list):
+        return row
+    out = []
+    for item in evidence:
+        found = _EVIDENCE.match(item) if isinstance(item, str) else None
+        if found and found[2] in renamed and found[1] != "debug":
+            item = item[: found.start(2)] + renamed[found[2]] + item[found.end(2) :]
+        out.append(item)
+    return {**row, "evidence": out}
+
+
 def _applied(ctx: Map, row: Json) -> bool:
     """Whether the row is already in the tree: its target is gone and its new name names the same kind of thing (a
     resubmit after an apply, or after a timed-out run that applied before it exited)."""
@@ -1196,6 +1212,14 @@ def submit(config: Config, params: Json) -> Json:
     accepted: list[tuple[Json, Sequence[Json]]] = []
     refused: list[Json] = []
     already: list[Json] = []  # rows the tree already holds: no-ops, neither applied again nor refused
+    # new name -> the name the tree holds, for the symbol rows of this file (evidence may name either spelling)
+    renamed = {
+        str(r["name"]): str(r["target"])
+        for r in rows
+        if r.get("kind") in ("function", "global", "static")
+        and isinstance(r.get("name"), str)
+        and isinstance(r.get("target"), str)
+    }
     for row in sorted(rows, key=lambda r: _ORDER.get(str(r.get("kind")), 9)):
         if row.get("kind") == "param":  # a parameter is a local of its function (CLEAN-MENU2-3 wrote "param")
             row = {**row, "kind": "local"}
@@ -1230,7 +1254,7 @@ def submit(config: Config, params: Json) -> Json:
         if "bad" not in row and _applied(ctx, row):
             already.append(row)
             continue
-        rule, reason = judge(ctx, row) if "bad" not in row else ("shape", "not a JSON object")
+        rule, reason = judge(ctx, _as_before(row, renamed)) if "bad" not in row else ("shape", "not a JSON object")
         if rule:
             refused.append({"row": row, "rule": rule, "reason": reason})
             continue
