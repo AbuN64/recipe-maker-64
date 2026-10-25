@@ -6,11 +6,13 @@ the captured tree's symbol tables. It carries no call, load or object-edge facts
 proposes from them: a module is cut only where an evidence row or the size cap says, keeps its origin's folder, and no
 header is merged or deleted."""
 
+import contextlib
 import difflib
 import json
 import os
 import posixpath
 import re
+import signal
 import sys
 import time
 from collections import defaultdict
@@ -1364,7 +1366,61 @@ def apply(config: Config, params: Json) -> Json:
     # makes are then marked intent-to-add one by one
     text = patch.read_text(errors="replace")
     _portable_patch(root, text)
+    with _atomic(config, root, patch, params["host"]) as mark:
+        return _apply_patch(config, params, root, patch, text, saved, mark)
+
+
+class _Stopped(BaseException):
+    """A termination signal that arrived while a patch was half applied (raised in the main thread by `_atomic`)."""
+
+
+@contextmanager
+def _atomic(config: Config, root: Path, patch: Path, host: Any) -> Iterator[Callable[[], None]]:
+    """The patch and the `unbake sync` after it land together or not at all: a SIGTERM/SIGINT/SIGHUP between the
+    first edit and the end of the sync (a lane's `timeout`) puts the work tree back (`git apply -R`, the patch file
+    restored, one more sync) and exits 143, instead of leaving renamed sources beside stale generated rows
+    (10-25: CLEAN-CAMERA-1 got source renames without the docs/map rows, and renameproof refused the pack)."""
+    state_: dict[str, bool] = {"edited": False}
+
+    def stop(signum: int, frame: Any) -> None:
+        raise _Stopped(signum)
+
+    old: dict[int, Any] = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            old[sig] = signal.signal(sig, stop)
+    except ValueError:  # not the main thread: no handler, the apply is as it was
+        old = {}
+    try:
+        yield lambda: state_.__setitem__("edited", True)
+    except _Stopped as stopped:
+        for sig in old:
+            signal.signal(sig, signal.SIG_IGN)  # the rollback finishes whatever else arrives
+        if state_["edited"]:
+            sys.stderr.write("recipe apply: interrupted, putting the tree back (git apply -R, sync)\n")
+            with contextlib.suppress(Exception):
+                recipe_host.run(["git", "-C", str(root), "apply", "-R", str(_restored(patch).resolve())], root, config)
+                with contextlib.suppress(OSError):
+                    if patch.with_suffix(".applied").exists():
+                        patch.with_suffix(".applied").rename(patch)
+                _unbake(config, host, "sync")
+        raise SystemExit(128 + int(stopped.args[0])) from None
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+
+
+def _restored(patch: Path) -> Path:
+    """The patch file wherever the interrupted apply left it (renamed to .applied once edits landed)."""
+    return patch if patch.exists() else patch.with_suffix(".applied")
+
+
+def _apply_patch(
+    config: Config, params: Json, root: Path, patch: Path, text: str, saved: list[Path], mark: Callable[[], None]
+) -> Json:
+    sys.stderr.write(f"recipe apply: {patch.name}, then unbake sync (~30 s; stop it and the tree is put back)\n")
     ran = recipe_host.run(["git", "-C", str(root), "apply", str(patch.resolve())], root, config)
+    mark()
     if ran.exit:
         tail = bytes(ran.stderr).decode(errors="replace").strip().splitlines()[-1:] or ["git apply failed"]
         raise state.stop("recipe.apply", f"git apply refused {patch.name}: {tail[0]}", action="recipe structure")

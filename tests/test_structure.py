@@ -922,3 +922,29 @@ def test_a_renamed_function_is_renamed_inside_inline_assembly_strings_too():
     assert 'asm__ volatile("jal New_Fn\\n nop"' in out and '"r"(New_Fn)' in out
     assert '"old_fn is a string"' in out and "/* old_fn in a comment */" in out
     assert structure.rename_in_asm("int x;\n", token, "N") == ("int x;\n", 0)
+
+
+def test_a_signal_during_apply_puts_the_tree_back(tmp_path, monkeypatch):
+    import os
+    import signal
+
+    monkeypatch.setattr(structure, "_unbake", lambda *a, **k: ({"ok": True, "result": {}}, 0))
+    runs = []
+
+    def run(cmd, cwd, config):
+        runs.append(cmd[3:5])
+        if cmd[3] == "apply" and "-R" not in cmd:
+            os.kill(os.getpid(), signal.SIGTERM)  # the lane's timeout arrives while the patch is landing
+        return SimpleNamespace(exit=0, stderr=b"")
+
+    monkeypatch.setattr(structure.recipe_host, "run", run)
+    patch = tmp_path / "p.diff"
+    patch.write_text("")
+    config = SimpleNamespace(project=SimpleNamespace(root=tmp_path))
+    with pytest.raises(SystemExit) as stopped, structure._atomic(config, tmp_path, patch, None) as mark:
+        mark()
+        run(["git", "-C", str(tmp_path), "apply", str(patch)], tmp_path, config)
+    assert stopped.value.code == 128 + signal.SIGTERM
+    assert ["apply", "-R"] in runs
+        signal.getsignal(signal.SIGTERM)
+    )
