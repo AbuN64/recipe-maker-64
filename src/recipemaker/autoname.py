@@ -92,7 +92,7 @@ GOOD = re.compile(r"[a-z][A-Za-z]{3,}")  # no digit: `unused0`, `arg2` say nothi
 
 def local_rows(ctx: Any, config: Any) -> list[tuple[str, Json | None, Json]]:
     """A slot whose every `param CALLEE NAME` hint is the same NAME takes it, unless NAME is generic, a word the
-    function already spells, or taken by another slot of it. The ledger judges the row (scope, declaration, duplicates)."""
+    function already spells, or taken by another slot of it. The ledger judges the row (scope, declaration, names)."""
     root = ctx.root
     index, source = slicepack.prototypes(config, root), slicepack.Source(root)
     out: list[tuple[str, Json | None, Json]] = []
@@ -175,7 +175,7 @@ def run(config: Any, ctx: Any, kinds: Sequence[str], out: Path | None, judge: An
     examples: dict[str, list[str]] = {}
     for kind, legacy, row in candidates(ctx, config, strings, kinds):
         rule, reason = judge(ctx, legacy) if legacy else ("", "")
-        if rule:
+        if rule and legacy:
             refused.setdefault(kind, {}).setdefault(rule, 0)
             refused[kind][rule] += 1
             examples.setdefault(f"{kind} {rule}", []).append(f"{legacy['target']} -> {legacy['name']}: {reason}"[:160])
