@@ -833,7 +833,7 @@ def build(
                     p for pattern in ("*/symbol_addrs.txt", "*/aliases.txt") for p in (root / "versions").glob(pattern)
                 )
                 line = re.compile(rf"(?m)^([ \t]*){re.escape(subject)}(?![\w])")
-                hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found])
+                hits += files.replace(line, r"\g<1>" + target, [p.relative_to(root).as_posix() for p in found], subject)
                 # the literals name of a function follows its name wherever it is (its symbol_addrs.txt row,
                 # aliases.txt, the splat.yaml piece, a source that declares it); a word match of the function skips it
                 rows = [
@@ -842,8 +842,11 @@ def build(
                     for p in (root / "versions").glob(f"*/{v}")
                 ]
                 hits += files.replace(
-                    _word(LITERALS + subject), LITERALS + target, [*sorted(rows), *files.everything()]
-                )
+                    _word(LITERALS + subject),
+                    LITERALS + target,
+                    [*sorted(rows), *files.everything()],
+                    LITERALS + subject,
+                )  # the needle keeps a rename from running the regex over every file of the tree
             hits += files.identifiers(subject, target, files.everything(), comments=True)
             if op == "symbol":
                 hits += files.replace(_word(subject), target, PROSE, subject)  # a rule's prose names the function too
