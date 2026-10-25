@@ -37,23 +37,19 @@ def named(member: str) -> bool:
 
 
 class Prototypes:
-    """The parameter names the project's C files give the functions asked about, found only where a name is spelled
-    (one scan of the tree per batch of new names, the file texts kept)."""
+    """The parameter names the project's C files give every function, read in one pass over the tree the first time a
+    name is asked (a scan per batch of new names re-ran one big regex over every file that spelled one: 156 scans,
+    21 s for three folders of `recipe name count`)."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.found: dict[str, list[list[str]]] = {}
-        self.asked: set[str] = set()
-        self.texts: list[str] | None = None
+        self.found: dict[str, list[list[str]]] | None = None
 
     def get(self, names: Iterable[str]) -> dict[str, list[list[str]]]:
-        new = {n for n in names if n not in self.asked and n not in _KEYWORDS}
-        if new:
-            if self.texts is None:
-                paths = [p for d in ("src", "include") for p in (self.root / d).rglob("*") if p.suffix.lower() in _EXT]
-                self.texts = [p.read_text(encoding="utf-8", errors="replace") for p in paths if p.is_file()]
-            self.asked |= new
-            self.found |= prototypes([t for t in self.texts if any(n in t for n in new)], new)
+        if self.found is None:
+            paths = [p for d in ("src", "include") for p in (self.root / d).rglob("*") if p.suffix.lower() in _EXT]
+            texts = [p.read_text(encoding="utf-8", errors="replace") for p in paths if p.is_file()]
+            self.found = prototypes(texts, None)
         return self.found
 
 
@@ -65,20 +61,24 @@ def calls(body: str) -> set[str]:
     return {m[1] for m in _CALL.finditer(body)} - _KEYWORDS
 
 
-def prototypes(texts: Iterable[str], wanted: Iterable[str]) -> dict[str, list[list[str]]]:
-    """Per WANTED function name the parameter-name lists the TEXTS declare or define for it (an unnamed parameter or a
-    decompiler slot is an empty string)."""
-    names = sorted(set(wanted), key=len, reverse=True)
-    if not names:
-        return {}
+def prototypes(texts: Iterable[str], wanted: Iterable[str] | None) -> dict[str, list[list[str]]]:
+    """Per WANTED function name (None: every name) the parameter-name lists the TEXTS declare or define for it (an
+    unnamed parameter or a decompiler slot is an empty string)."""
+    if wanted is None:
+        head = r"[A-Za-z_]\w*"
+    else:
+        names = sorted(set(wanted), key=len, reverse=True)
+        if not names:
+            return {}
+        head = "|".join(map(re.escape, names))
     pattern = re.compile(
-        r"(?m)^[ \t]*[\w \t*]+?\b("
-        + "|".join(map(re.escape, names))
-        + r")[ \t]*\(([^;{}()]*(?:\([^()]*\)[^;{}()]*)*)\)[ \t\n]*[;{]"
+        r"(?m)^[ \t]*[\w \t*]+?\b(" + head + r")[ \t]*\(([^;{}()]*(?:\([^()]*\)[^;{}()]*)*)\)[ \t\n]*[;{]"
     )
     out: dict[str, list[list[str]]] = {}
     for text in texts:
         for found in pattern.finditer(access.mask(text)):
+            if found[1] in _KEYWORDS:
+                continue
             params = []
             for part in split(found[2]):
                 words = WORD.findall(part)

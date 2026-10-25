@@ -42,6 +42,26 @@ def test_pack_lists_each_slot_with_its_evidence_and_counts_the_bare_ones(tmp_pat
     assert got["no_evidence"] == 1 and got["slots"] == 3  # sp1C is never used
 
 
+def test_count_reads_every_folder_in_one_pass_and_writes_no_pack(tmp_path):
+    """`recipe name count` gives `next`'s numbers per folder (cleanup asked `next` per folder: 231 s)."""
+    config = project(tmp_path, {"src/AI/NAV/a.CPP": SRC, "src/AI/HUD/b.CPP": SRC.replace("Actor_Step", "Hud_Step")})
+    got = naming.count(config, {"steps": "L", "targets": ["NAV", "HUD", "NOPE"], "host": None})
+    assert got["folders"] == {
+        "NAV": {"L": {"namable": 3, "no_evidence": 1}},
+        "HUD": {"L": {"namable": 3, "no_evidence": 1}},
+        "NOPE": {"L": {"namable": 0, "no_evidence": 0}},
+    }
+    assert not (tmp_path / ".unbake").exists()  # read-only: no pack
+    with pytest.raises(Exception, match="count takes steps"):
+        naming.count(config, {"steps": "T", "targets": ["NAV"], "host": None})
+
+
+def test_prototypes_index_every_name_once():
+    texts = ["void F(int, char *name, int arg2);\nint G(void) {\n    if (x) {\n    }\n}\n"]
+    every = locals_.prototypes(texts, None)
+    assert every["F"] == locals_.prototypes(texts, ["F"])["F"] and "if" not in every
+
+
 def test_one_function_target_packs_that_function_only(tmp_path):
     config = project(tmp_path, {"src/AI/a.CPP": SRC + SRC.replace("Actor_Step", "Other_Step")})
     got = pack(config, target="Other_Step")

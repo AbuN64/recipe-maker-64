@@ -73,6 +73,15 @@ def _applied(result: Json) -> list[str]:
 
 
 def _render_name(result: Json) -> list[str]:
+    if result["action"] == "count":
+        return [
+            f"{folder}: "
+            + " ".join(
+                f"{step}={v['namable']}/{v['no_evidence']}" if "error" not in v else f"{step}=({v['error']})"
+                for step, v in got.items()
+            )
+            for folder, got in result["folders"].items()
+        ]
     if result["action"] == "next" and result["step"] in ("L", "M"):
         what = (
             f"pack {result['pack']} holds {result['slots']} slots in {result['targets']} functions"
@@ -145,7 +154,7 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument("--segment", help="only these segments (comma list)")
     one.add_argument("--paths", nargs="+", metavar="FILE", help="only the modules holding these files and linked moves")
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
-    one.add_argument("action", choices=("next", "submit", "banners"))
+    one.add_argument("action", choices=("next", "submit", "banners", "count"))
     one.add_argument("file", nargs="?", help="the names file for submit")
     one.add_argument(
         "--step",
@@ -166,6 +175,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
+    one.add_argument("--steps", help="count: the steps read, a comma list of L, N1, N3, N4, N5 (default L,N4,N5)")
+    one.add_argument("--targets", nargs="+", metavar="FOLDER", help="count: the folders counted, in one evidence build")
     one = verb("style", "style findings; exit 1 when one is an error")
     one.add_argument("paths", nargs="*", help="check only these paths")
     one.add_argument("--paths", nargs="+", dest="only", metavar="PATH", help="the same, as `structure` takes them")

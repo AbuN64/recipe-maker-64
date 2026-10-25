@@ -959,8 +959,14 @@ def _locals(config: Config, params: Json) -> Json:
         raise state.stop(
             "recipe.name", f"no source folder or function is named {target}", action="recipe name next --step L"
         )
+    cards, bare = _local_cards(root, target, files, locals_.Prototypes(root))
+    cards.sort(key=lambda c: (-len(c["slots"]), c["path"], c["line"]))
+    return _local_pack(config, params, cards, bare)
+
+
+def _local_cards(root: Path, target: str, files: Sequence[Path], index: Any) -> tuple[list[Json], int]:
+    """(cards, slots without evidence) of step L for TARGET (a folder or one function) over FILES."""
     single = not locals_.is_folder(root, target)
-    index = locals_.Prototypes(root)
     cards: list[Json] = []
     bare = 0
     for file in files:
@@ -982,7 +988,11 @@ def _locals(config: Config, params: Json) -> Json:
                     bare += 1
             if rows:
                 cards.append({"function": fn.name, "path": rel, "line": fn.line, "slots": rows})
-    cards.sort(key=lambda c: (-len(c["slots"]), c["path"], c["line"]))
+    return cards, bare
+
+
+def _local_pack(config: Config, params: Json, cards: list[Json], bare: int) -> Json:
+    root = config.project.root
     pick = cards[: int(params["count"])]
     k, rules = _number(config), table("knowledge/style.toml")
     path, answer = _root(config) / f"pack-{k}.json", f".unbake/recipe/name/names-{k}.jsonl"
@@ -1274,5 +1284,53 @@ def banners(config: Config, params: Json) -> Json:
     }
 
 
+COUNTED = ("L", "N1", "N3", "N4", "N5")  # the steps `count` reads: a pack of targets with evidence per folder
+
+
+def count(config: Config, params: Json) -> Json:
+    """`recipe name count --steps L,N4,N5 --targets FOLDER...`: per folder and step, how many slots or targets a pack
+    would carry with evidence (`namable`) and how many have none (`no_evidence`), read-only (no pack, no patch). One
+    evidence build serves every folder and step: `decomp cleanup count --evidence` asked `next --no-apply` once per
+    folder and step (45 runs of the same whole-project build, 231 s, WATCH-0823)."""
+    steps = [x for x in str(params.get("steps") or "L,N4,N5").split(",") if x]
+    if bad := [x for x in steps if x not in COUNTED]:
+        raise state.stop("recipe.name", f"count takes steps {', '.join(COUNTED)}, not {', '.join(bad)}")
+    targets = list(params.get("targets") or [])
+    if not targets:
+        raise state.stop("recipe.name", "count needs --targets FOLDER...", action="recipe name count --targets src/X")
+    root = config.project.root
+    out: dict[str, dict[str, Json]] = {t: {} for t in targets}
+    if "L" in steps:
+        index = locals_.Prototypes(root)
+        for t in targets:
+            files = locals_.folder_files(root, t)
+            cards, bare = _local_cards(root, t, files, index) if files else ([], 0)
+            out[t]["L"] = {"namable": sum(len(c["slots"]) for c in cards), "no_evidence": bare}
+    named = [x for x in steps if x != "L"]
+    if named:
+        doc = structure.evidence(config, params["host"])
+        ctx = Map(config, doc, reads(config, doc))
+        done = {row["target"] for row in _sdk(ctx) if not judge(ctx, row)[0]}
+        for step in named:
+            every = [t for t in _targets(ctx, step) if t[1] not in done]
+            for t in targets:
+                try:
+                    kind, folder = _chosen(ctx, step, t)
+                except Refusal as refusal:
+                    out[t][step] = {"error": refusal.findings[0].reason if refusal.findings else "refused"}
+                    continue
+                if kind != "subsystem":
+                    out[t][step] = {"error": f"{t} is a {kind}, not a folder"}
+                    continue
+                if step == "N4":
+                    used = {u: sum(ctx.folder_of(c) == folder for c in ctx.callers.get(u[1], ())) for u in every}
+                    pick = [u for u, n in used.items() if n]
+                    out[t][step] = {"namable": len(pick), "no_evidence": _unread(ctx, folder)["no_evidence"]}
+                else:
+                    pick = [u for u in every if ctx.folder_of(u[1]) == folder]
+                    out[t][step] = {"namable": len(pick), "no_evidence": 0}
+    return {"action": "count", "steps": steps, "folders": out, "next": "recipe name next --step STEP --target FOLDER"}
+
+
 def run(config: Config, params: Json) -> Json:
-    return {"next": next_, "submit": submit, "banners": banners}[params["action"]](config, params)
+    return {"next": next_, "submit": submit, "banners": banners, "count": count}[params["action"]](config, params)
