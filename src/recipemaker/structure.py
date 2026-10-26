@@ -644,7 +644,9 @@ class Files:
                     count += n
         return count
 
-    def identifiers(self, old: str, new: str, paths: Iterable[str], local: str = "", comments: bool = False) -> int:
+    def identifiers(
+        self, old: str, new: str, paths: Iterable[str], local: str = "", comments: bool = False, line: int = 0
+    ) -> int:
         """Rename C tokens, preserving string bytes and unrelated local scopes; with COMMENTS a whole-word mention in a
         comment too (a symbol's old name left in a banner or note is a stale reference: 10-25 CLEAN-PAK-2 fixed 24 files
         by hand). Comment mentions are not counted as uses."""
@@ -654,7 +656,11 @@ class Files:
             text = self.get(path)
             if text is None or old not in text:  # no occurrence at all: neither a token nor an asm string
                 continue
-            span = repair.local_span(text, local) if local else (0, len(text))
+            span = (
+                (repair.span_at(text, local, line) if line else repair.local_span(text, local))
+                if local
+                else (0, len(text))
+            )
             if span is None:
                 continue
             a, b = span
@@ -856,7 +862,9 @@ def build(
             if subject in where:
                 where[target] = where.pop(subject)
         elif op == "local":
-            applied += bool(files.identifiers(subject, target, [move["path"]], move["function"]))
+            applied += bool(
+                files.identifiers(subject, target, [move["path"]], move["function"], line=int(move.get("line") or 0))
+            )
         elif op == "module":
             for names in (path, header):
                 if subject in names:

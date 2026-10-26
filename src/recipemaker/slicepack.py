@@ -18,9 +18,9 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from unbake.contracts import Config, Json
+from unbake.contracts import Config, Json, Refusal
 
-from recipemaker import access, debug, host, locals_, slices, state, structure, style, table
+from recipemaker import access, debug, host, locals_, slices, state, structure, style, table, world
 
 BODY_LIMIT = 4000
 PRINTABLE = re.compile(r"[\x20-\x7e\n\t]{4,}")
@@ -149,6 +149,24 @@ def body_range(ctx: Any, source: Source, name: str) -> tuple[int, int] | None:
     return text.count("\n", 0, fn.start) + 1, text.count("\n", 0, fn.end) + 1
 
 
+def asm_body(ctx: Any, name: str) -> list[list[str]]:
+    """The lines of the extracted assembly of function NAME in each version that places it and has the file (`body
+    L<n>` cites
+    line n of that file when no C body exists yet: the cited version is the one whose file has the line)."""
+    member = ctx.members.get(name)
+    out = []
+    for place in (member or {}).get("placements", ()):
+        try:
+            out.append(
+                world.asm_path(ctx.config, place["version"], name)
+                .read_text(encoding="utf-8", errors="replace")
+                .splitlines()
+            )
+        except (OSError, Refusal):
+            continue
+    return out
+
+
 def verifies(ctx: Any, item: str, names: Sequence[str], strings: Strings, source: Source) -> bool:
     """Whether a `body` or `string` evidence item is true of the target (the functions `names` speak for it)."""
     if m := _BODY.match(item.strip()):
@@ -159,6 +177,9 @@ def verifies(ctx: Any, item: str, names: Sequence[str], strings: Strings, source
             if span and span[0] <= line <= span[1]:
                 text = source.unit(ctx.members[n].get("unit") or "")[0].splitlines()
                 if not quote or quote[1] in text[line - 1]:
+                    return True
+            elif span is None:  # no C body yet: the extracted assembly of the function is its body
+                if any(1 <= line <= len(t) and (not quote or quote[1] in t[line - 1]) for t in asm_body(ctx, n)):
                     return True
         return False
     if m := _SDK.match(item.strip()):  # the project's libultra table names the target's address so

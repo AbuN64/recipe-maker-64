@@ -16,8 +16,9 @@ from recipemaker import access, cparse, locals_
 WORD = re.compile(r"[A-Za-z_]\w*")
 
 
-def local_span(text: str, function: str, aliased: bool = True) -> tuple[int, int] | None:
-    """One complete function definition or prototype; ambiguous conditional copies refuse."""
+def local_spans(text: str, function: str, aliased: bool = True) -> list[tuple[int, int]]:
+    """Every complete definition (else prototype) of FUNCTION: more than one when version conditionals each carry a
+    copy."""
     masked = access.mask(text)
     head = re.compile(rf"^[\w\s*]+\b{re.escape(function)}\s*\(")
     found = [(a, b) for a, b, directive in cparse.spans(masked) if not directive and head.match(masked[a:b])]
@@ -29,10 +30,28 @@ def local_span(text: str, function: str, aliased: bool = True) -> tuple[int, int
         for alias in re.findall(
             rf"(?m)^[ 	]*#[ 	]*define[ 	]+(\w+)[ 	]+{re.escape(function)}[ 	]*$", text
         ):
-            if alias != function and (span := local_span(text, alias, aliased=False)) is not None:
-                return span
-        return None
+            if alias != function and (spans := local_spans(text, alias, aliased=False)):
+                return spans
+        return []
+    return found
+
+
+def local_span(text: str, function: str, aliased: bool = True) -> tuple[int, int] | None:
+    """One complete function definition or prototype; ambiguous conditional copies refuse."""
+    found = local_spans(text, function, aliased)
     return found[0] if len(found) == 1 else None
+
+
+def span_at(text: str, function: str, line: int) -> tuple[int, int] | None:
+    """The definition of FUNCTION that holds the 1-based LINE when conditional copies make several: a row names the
+    line it
+    read, so the copy it read is the copy it renames (10-25 P3-R12: Pak_SelectMusicPreview's two bodies refused every
+    slot)."""
+    found = local_spans(text, function)
+    if len(found) == 1:
+        return found[0]
+    at = sum(len(x) for x in access.mask(text).splitlines(keepends=True)[: max(line - 1, 0)])
+    return next((s for s in found if s[0] <= at < s[1]), None)
 
 
 class Repairs:
@@ -106,7 +125,9 @@ class Repairs:
         move: dict[str, str] = {"op": "symbol", "subject": old, "target": new}
         if row["kind"] == "local":
             function = row.get("function")
-            span = local_span(text, function) if isinstance(function, str) and WORD.fullmatch(function) else None
+            span = (
+                span_at(text, function, row["line"]) if isinstance(function, str) and WORD.fullmatch(function) else None
+            )
             if span is None:
                 return "scope", "name one unambiguous function definition or prototype", []
             a, b = span
@@ -134,7 +155,7 @@ class Repairs:
             ):
                 return "evidence", bad, []
             taken = set(WORD.findall(scope)) | self.scoped.get(str(function), set())
-            move |= {"op": "local", "path": path, "function": str(function)}
+            move |= {"op": "local", "path": path, "function": str(function), "line": row["line"]}
         else:
             taken = self.names()
         if new in taken or api.name_issues(new, taken=sorted(taken - {old})):

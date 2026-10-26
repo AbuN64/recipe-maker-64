@@ -71,18 +71,85 @@ def neutral(key: Key, first: str) -> str:
     return f"{stem}_{key.vram:08X}{suffix}"
 
 
-def declared_line(root: Path, unit: str, function: str, old: str) -> int:
-    """The 1-based line of the first spelling of OLD inside the definition of FUNCTION in UNIT, 0 when there is none."""
+def declared_line(root: Path, unit: str, function: str, old: str, version: str = "") -> int:
+    """The 1-based line of the first spelling of OLD inside the definition of FUNCTION in UNIT, 0 when there is none.
+    Version
+    conditionals can each carry a definition: the one VERSION compiles is read (its `#if` lines decide), else the
+    first copy
+    that spells OLD when VERSION is not given or no copy is the version's alone."""
     path = root / unit
     if not unit or not path.is_file():
         return 0
     text = path.read_text(encoding="utf-8", errors="replace")
-    span = repair.local_span(text, function)
-    if span is None:
-        return 0
+    spans = repair.local_spans(text, function)
+    if len(spans) > 1 and version:
+        spans = _compiled_for(text, version, spans) or spans
     masked = access.mask(text)
-    found = re.search(rf"\b{re.escape(old)}\b", masked[span[0] : span[1]])
-    return masked.count("\n", 0, span[0] + found.start()) + 1 if found else 0
+    for a, b in spans:
+        found = re.search(rf"\b{re.escape(old)}\b", masked[a:b])
+        if found:
+            return masked.count("\n", 0, a + found.start()) + 1
+    return 0
+
+
+def _compiled_for(text: str, version: str, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The SPANS whose first line VERSION compiles, by the file's own `#if` lines (VERSION_<V> is the only macro that
+    holds:
+    unbake's template spells a version's macro so). [] when a condition cannot be read: the caller keeps every copy."""
+    macro = "VERSION_" + version.upper().replace("-", "_")
+    active = active_lines(text, macro)
+    if active is None:
+        return []
+    return [s for s in spans if active[text.count("\n", 0, s[0])]]
+
+
+_DEFINED = re.compile(r"defined\s*\(\s*(\w+)\s*\)|defined\s+(\w+)")
+
+
+def _holds(condition: str, macro: str) -> bool | None:
+    """Whether an #if condition holds when only MACRO is defined; None when it is no expression this reads."""
+    expr = _DEFINED.sub(lambda m: "1" if (m[1] or m[2]) == macro else "0", condition.split("//")[0].split("/*")[0])
+    expr = re.sub(r"\b[A-Za-z_]\w*\b", "0", expr)
+    expr = expr.replace("&&", " and ").replace("||", " or ")
+    expr = re.sub(r"!(?!=)", " not ", expr)
+    if not re.fullmatch(r"[\s0-9()andort!=<>]*", expr):
+        return None
+    try:
+        return bool(eval(expr, {"__builtins__": {}}))
+    except Exception:
+        return None
+
+
+def active_lines(text: str, macro: str) -> list[bool] | None:
+    """Per line of TEXT, whether the compiler reads it when only MACRO is defined; None when a condition cannot be
+    read."""
+    stack: list[list[bool]] = []  # [this branch active, a branch of this #if was taken, the enclosing code is active]
+    out: list[bool] = []
+    for line in text.split("\n"):
+        m = re.match(r"\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)", line)
+        if m:
+            kind, rest = m[1], m[2].strip()
+            outer = stack[-1][0] if stack else True
+            if kind in ("if", "ifdef", "ifndef"):
+                held = (
+                    (rest == macro) if kind == "ifdef" else (rest != macro) if kind == "ifndef" else _holds(rest, macro)
+                )
+                if held is None:
+                    return None
+                stack.append([outer and held, held, outer])
+            elif stack and kind == "elif":
+                held = _holds(rest, macro)
+                if held is None:
+                    return None
+                top = stack[-1]
+                top[0], top[1] = top[2] and not top[1] and held, top[1] or held
+            elif stack and kind == "else":
+                top = stack[-1]
+                top[0], top[1] = top[2] and not top[1], True
+            elif stack and kind == "endif":
+                stack.pop()
+        out.append(stack[-1][0] if stack else True)
+    return out
 
 
 def member_old(held: Mapping[str, str], offset: int) -> str:

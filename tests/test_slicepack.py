@@ -259,3 +259,19 @@ def test_the_answer_file_holds_the_pack_skeleton_rows_and_submit_leaves_unfilled
         },
     )
     assert done["unfilled"] == len(rows) and done["refused"] == 0
+
+
+def test_body_evidence_of_a_function_with_no_c_yet_cites_a_line_of_its_extracted_assembly(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    files = {"de": ["jr ra", "nop"], "us-rev1": [f"insn {i}" for i in range(1, 21)]}
+    for v, lines in files.items():
+        (tmp_path / v).write_text("\n".join(lines))
+    monkeypatch.setattr(slicepack.world, "asm_path", lambda config, version, name: tmp_path / version)
+    members = {"func_x": {"unit": "src/a.s", "placements": [{"version": "de"}, {"version": "us-rev1"}]}}
+    ctx = SimpleNamespace(members=members, config=None, root=tmp_path)
+    source = slicepack.Source(tmp_path)
+    ok = lambda item: slicepack.verifies(ctx, item, ["func_x"], None, source)  # noqa: E731
+    assert ok("body L17: writes the watch register")  # only the us-rev1 file has line 17
+    assert ok('body L3: x "insn 3"') and not ok('body L3: x "insn 4"')
+    assert not ok("body L21: past the end of every file")

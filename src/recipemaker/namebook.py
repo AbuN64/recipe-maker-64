@@ -246,9 +246,9 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
     if parsed.kind == "slot":
         # a NON_MATCHING body (unit None, fuzzy = its file) still spells its locals: the name is source text only
         unit = str(member.get("unit") or member.get("fuzzy") or "")
-        line = keys.declared_line(ctx.root, unit, function, parsed.slot)
+        line = keys.declared_line(ctx.root, unit, function, parsed.slot, parsed.version)
         if not line:
-            if keys.declared_line(ctx.root, unit, function, name):
+            if keys.declared_line(ctx.root, unit, function, name, parsed.version):
                 return {**rest, "_key": parsed.text()}, "applied", ""
             return row, "target", f"{function} has no local or parameter {parsed.slot}"
         return (

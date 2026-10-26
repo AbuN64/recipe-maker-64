@@ -274,3 +274,38 @@ def test_a_suggestion_may_correct_a_member_that_already_has_a_name():
     assert rule == "target" and "no unknown member" in why  # an owned row may not rename a named member
     got, rule, _ = namebook.resolve(ctx, fields, SimpleNamespace(), {**row, "suggest": True})
     assert rule == "" and got["_key"] == "member:CGameStatus_t+0x18"
+
+
+TWO_COPIES = (
+    "#if defined(VERSION_EU)\n"
+    "int pick(int arg0, int *pThis) {\n"
+    "    int selection = 1;\n"
+    "    return selection;\n"
+    "}\n"
+    "#endif\n"
+    "#if defined(VERSION_DE) || defined(VERSION_US_REV1)\n"
+    "int pick(int arg0, int *arg1) {\n"
+    "    int var_a0 = 2;\n"
+    "    return var_a0;\n"
+    "}\n"
+    "#endif\n"
+)
+
+
+def test_a_slot_of_a_function_with_a_copy_per_version_reads_the_copy_that_version_compiles(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/f.c").write_text(TWO_COPIES)
+    assert keys.declared_line(tmp_path, "src/f.c", "pick", "var_a0", "us-rev1") == 9
+    assert keys.declared_line(tmp_path, "src/f.c", "pick", "arg0", "us-rev1") == 8
+    assert keys.declared_line(tmp_path, "src/f.c", "pick", "arg0", "eu") == 2
+    assert keys.declared_line(tmp_path, "src/f.c", "pick", "var_a0", "eu") == 0  # the eu copy has no such slot
+    assert keys.declared_line(tmp_path, "src/f.c", "pick", "nothere", "us-rev1") == 0
+
+
+def test_the_copy_holding_the_evidence_line_is_the_one_a_local_row_renames(tmp_path):
+    from recipemaker import repair
+
+    spans = repair.local_spans(TWO_COPIES, "pick")
+    assert len(spans) == 2 and repair.local_span(TWO_COPIES, "pick") is None
+    assert repair.span_at(TWO_COPIES, "pick", 9) == spans[1] and repair.span_at(TWO_COPIES, "pick", 3) == spans[0]
+    assert repair.span_at(TWO_COPIES, "pick", 6) is None
