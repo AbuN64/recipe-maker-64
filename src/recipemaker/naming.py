@@ -587,8 +587,9 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "target", reason
     name_kind = "file" if kind in ("module", "subsystem") else "symbol"
     # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names,
-    # implementation)
-    if why := api.name_issues(name, name_kind, implementation=True):
+    # implementation), and so does a function's original name the project's SDK table gives its address (evidenced)
+    evidenced = kind == "function" and ctx.sdk_name(ctx.canon(target)) == name
+    if why := api.name_issues(name, name_kind, implementation=True, evidenced=evidenced):
         return "portable", why[0] + reserved_hint(name)
     if (
         kind in ("function", "global", "static")
@@ -599,7 +600,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     # Original/debug and SDK evidence never override target portability.
     merge = ctx.merge_folder(target, name) if kind == "subsystem" else ""
     folded = [n for n in ctx.taken if n != target and n != name and n != merge]
-    if why := api.name_issues(name, name_kind, taken=folded, implementation=True):  # the same admission as above
+    if why := api.name_issues(name, name_kind, taken=folded, implementation=True, evidenced=evidenced):  # as above
         return "duplicate", why[0]
     if kind == "subsystem":
         carried = ctx.carried(target, name)

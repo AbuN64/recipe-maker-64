@@ -883,6 +883,24 @@ def test_reserved_catalog_names_are_not_a_portability_exception(project):
     assert got["accepted"] == 0 and got["by_rule"] == {"portable": 1}
 
 
+def test_a_reserved_name_the_sdk_table_gives_the_address_reaches_admission(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__zorkHelper\tEXACT\tsame words\n")
+    got = submit(project, [row("func_80700000", "__zorkHelper", ["caller func_80001010"])])
+    assert got["accepted"] == 1, got["by_rule"]
+    assert {"op": "symbol", "subject": "func_80700000", "target": "__zorkHelper"} in moves(project)
+
+
+def test_a_reserved_name_without_sdk_evidence_is_still_refused(project):
+    table = project.project.root / "versions/us/libultra_names.tsv"
+    table.parent.mkdir(parents=True)
+    table.write_text(f"vram\tname\tevidence_class\tevidence\n0x{VRAM:08X}\t__zorkHelper\tEXACT\tsame words\n")
+    for name in ("__zorkOther", "_ZorkHelper"):  # the table names this address otherwise
+        got = submit(project, [row("func_80700000", name, ["caller func_80001010"])])
+        assert got["accepted"] == 0 and got["by_rule"] == {"portable": 1}, name
+
+
 def test_name_packs_publish_reviewed_per_file_debt(project):
     root = project.project.root
     debt = {"src/a.c": [{"reason": "reserved name", "lines": [7, 12]}]}
