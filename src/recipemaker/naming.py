@@ -1399,8 +1399,8 @@ def judge_rows(
             else:
                 out.accepted.append((row, direct))
             continue
-        if row.get("kind") == "field":
-            rule, reason, direct = fields.judge(row)
+        if row.get("kind") in ("field", "type"):
+            rule, reason, direct = fields.judge(row) if row["kind"] == "field" else fields.judge_type(row)
             if rule == "applied":
                 out.already.append(row)
             elif rule:
@@ -1409,7 +1409,7 @@ def judge_rows(
                 out.accepted.append((row, direct))
             continue
         if row.get("kind") not in _ORDER:
-            kinds = ", ".join([*sorted(_ORDER), "field", "local", "param", "repair"])
+            kinds = ", ".join([*sorted(_ORDER), "field", "type", "local", "param", "repair"])
             why = f"unknown naming row kind {row.get('kind')!r}; the kinds are {kinds}"
             out.refused.append({"row": row, "rule": "shape", "reason": why})
             continue

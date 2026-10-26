@@ -212,9 +212,11 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
         return (
             row,
             "shape",
-            f"{raw!r} is no row key (fn:VER:VRAM8, datum:VER:VRAM8, member:TAG+OFFSET, slot:VER:VRAM8:OLD)",
+            f"{raw!r} is no row key (fn:VER:VRAM8, datum:VER:VRAM8, member:TAG+OFFSET, type:TAG, slot:VER:VRAM8:OLD)",
         )
     name = str(row.get("name"))
+    if parsed.kind == "type":
+        return {**rest, "kind": "type", "target": parsed.tag, "_key": parsed.text()}, "", ""
     if parsed.kind == "member":
         old, why = fields.unknown_at(parsed.tag, parsed.offset)
         if not old:
@@ -351,5 +353,5 @@ def renames(rows: Sequence[Json]) -> str:
     return "".join(
         f"{r['target']}\t{r['name']}\t{r['kind']}\t{r.get('_key', '')}\n"
         for r in rows
-        if r.get("kind") in ("function", "global", "static", "field", "local")
+        if r.get("kind") in ("function", "global", "static", "field", "type", "local")
     )

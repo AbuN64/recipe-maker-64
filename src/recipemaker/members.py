@@ -137,6 +137,7 @@ class Fields:
         self.accepted: set[tuple[str, str]] = set()
         self.queued: list[tuple[str, str]] = []  # (record as spelled, new name) of rows queued but not yet in the tree
         self.words: set[str] | None = None
+        self.renamed: set[str] = set()  # the names type rows of this batch already took
 
     def load(self) -> None:
         """Read the project's records once, and count the queued rows' names as taken."""
@@ -159,6 +160,28 @@ class Fields:
         held = self.types.member.get(key, {})
         old = keys.member_old(held, offset)
         return (old, "") if old else ("", f"{key} has no unknown member at +{offset:#x}")
+
+    def judge_type(self, row: Json) -> tuple[str, str, list[Json]]:
+        """A `type` row (key `type:TAG`): the record named TAG, by tag or typedef name, takes the name everywhere the
+        tree spells it. It is a pure type rename: no member, function or datum row carries it."""
+        given = [row.get(k) for k in ("target", "name")]
+        if not all(isinstance(x, str) and x for x in given) or not str(row.get("doc") or "").strip():
+            return "shape", "a type row needs a key (type:TAG), name and doc", []
+        old, new = (str(x) for x in given)
+        if old == new or api.name_issues(new) or locals_.placeholder(new) or UNKNOWN.fullmatch(new):
+            return "name", f"{new} is no usable type name for {old}", []
+        self.load()
+        assert self.types is not None and self.texts is not None
+        if old not in self.types.key:
+            if new in self.types.key:
+                return "applied", f"the tree already holds the type {new}", []
+            return "target", f"no record type is named {old}", []
+        if self.words is None:
+            self.words = {w for t in self.texts.values() for w in locals_.WORD.findall(access.mask(t))}
+        if new in self.words or new in self.renamed:
+            return "duplicate", f"{new} is already spelled in the tree (renameproof refuses it); pick another word", []
+        self.renamed.add(new)
+        return "", "", [{"op": "type", "subject": old, "target": new}]
 
     def judge(self, row: Json) -> tuple[str, str, list[Json]]:
         given = [row.get(k) for k in ("target", "name", "struct")]

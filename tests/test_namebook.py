@@ -341,3 +341,42 @@ def test_another_lane_or_an_unlanded_or_foreign_name_is_still_named(book):
     assert submit(book, "L1", [fn("fn:us:80004030", "Actor_Start")])["accepted"] == 1
     namebook.append("L1", [{"_key": "fn:us:80004040", "name": "Actor_Update", "doc": "d", "evidence": []}])  # queued
     assert submit(book, "L1", [fn("fn:us:80004040", "Actor_Tock")])["by_rule"] == {"pending": 1}
+
+
+VOICE = "typedef struct ALVoice_s_tag {\n    int next;\n    int prev;\n} ALVoice_s_func_802B3000_de;\n"
+
+
+def test_a_type_key_parses_and_names_a_pure_type_rename():
+    assert keys.parse("type:ALVoice_s_func_802B3000_de", "us").text() == "type:ALVoice_s_func_802B3000_de"
+    assert keys.parse("type:", "us") is None
+
+
+def test_a_type_row_renames_a_record_by_its_key_and_refuses_a_second_taker(book):
+    (book.project.root / "src/v.h").write_text(VOICE)
+    row = {"key": "type:ALVoice_s_func_802B3000_de", "name": "ALVoice", "doc": "A synth voice.", "evidence": []}
+    got = submit(book, "L1", [row, {**row, "key": "type:ALVoice_s_tag", "name": "ALVoice"}])
+    assert (got["accepted"], got["refused"], got["queued"]) == (1, 1, 1)
+    line = namebook.ledger()[0]
+    assert line["key"] == "type:ALVoice_s_func_802B3000_de" and line["row"]["kind"] == "type"
+    assert line["row"]["target"] == "ALVoice_s_func_802B3000_de"
+
+
+def test_a_type_row_names_no_record_the_tree_lacks_and_knows_one_already_renamed(book):
+    (book.project.root / "src/v.h").write_text(VOICE.replace("ALVoice_s_func_802B3000_de", "ALVoice"))
+    gone = {"key": "type:NoSuchRecord", "name": "Other", "doc": "d", "evidence": []}
+    done = {"key": "type:ALVoice_s_func_802B3000_de", "name": "ALVoice", "doc": "d", "evidence": []}
+    got = submit(book, "L1", [gone, done])
+    assert got["refused"] == 1 and got["already"] == 1
+
+
+def test_a_type_row_patch_renames_the_type_in_every_file(book):
+    root = book.project.root
+    (root / "src/v.h").write_text(VOICE)
+    (root / "src/u.c").write_text('#include "v.h"\nvoid use(ALVoice_s_func_802B3000_de *v) {\n    v->next = 0;\n}\n')
+    row = {"key": "type:ALVoice_s_func_802B3000_de", "name": "ALVoice", "doc": "A synth voice.", "evidence": []}
+    path = book.tmp / "rows.jsonl"
+    path.write_text(json.dumps(row) + "\n")
+    got = naming.run(book, {"host": None, "action": "submit", "file": str(path), "no_apply": True})
+    assert (got["accepted"], got["refused"]) == (1, 0)
+    patch = (root / got["path"]).read_text()
+    assert "+} ALVoice;" in patch and "+void use(ALVoice *v) {" in patch

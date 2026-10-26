@@ -339,6 +339,8 @@ def key_of(doc: Json, row: Mapping[str, Any]) -> str:
         return slot_key(by_name.get(str(row.get("function") or ""), "fn:?"), target)
     if kind == "field":
         return str(doc.get("records", {}).get(str(row.get("struct") or ""), ""))
+    if kind == "type":
+        return f"type:{target}"
     return str(by_name.get(target, ""))
 
 
@@ -348,6 +350,8 @@ def owner_of(doc: Json, key: str) -> str:
         key = fn_of_slot(key)
     if key.startswith("member:"):
         return str(doc.get("records", {}).get(key.removeprefix("member:").rsplit("+", 1)[0], ""))
+    if key.startswith("type:"):
+        return str(doc.get("records", {}).get(key.removeprefix("type:"), ""))
     if key.count(":") == 1:  # the short form `fn:80123456` is the names_from version
         key = f"{key.split(':')[0]}:{doc.get('names_from', '')}:{key.split(':')[1]}"
     return str(doc["owner"].get(key, ""))

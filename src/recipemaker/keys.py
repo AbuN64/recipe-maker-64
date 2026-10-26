@@ -5,6 +5,7 @@ tree each time it is used, so a row stays valid while other rows, file moves and
   fn:VER:VRAM8        a function          (`fn:80123456` = the names_from version)
   datum:VER:VRAM8     a global or static  (same short form)
   member:TAG+OFFSET   a record member by byte offset (`member:CPlayerPool_t+0x1C`)
+  type:TAG            a record type by the tag or typedef name the tree holds (`type:ALVoice_s_func_802B3000_de`)
   slot:VER:VRAM8:OLD  a local or parameter OLD of the function at VER:VRAM8"""
 
 import re
@@ -16,15 +17,16 @@ from recipemaker import access, repair
 
 _ADDRESS = re.compile(r"(fn|datum):(?:([A-Za-z0-9-]+):)?([0-9A-Fa-f]{8})")
 _MEMBER = re.compile(r"member:([A-Za-z_][\w ]*?)\+(0[xX][0-9A-Fa-f]+|\d+)")
+_TYPE = re.compile(r"type:([A-Za-z_]\w*)")
 _SLOT = re.compile(r"slot:(?:([A-Za-z0-9-]+):)?([0-9A-Fa-f]{8}):([A-Za-z_]\w*)")
 _NEUTRAL = re.compile(r"(func|D)_([0-9A-F]{8})(?:_(\w+))?")
 _UNKNOWN = re.compile(r"unk_?([0-9A-Fa-f]+)")
-KINDS = {"fn": "function", "datum": "global", "member": "field", "slot": "local"}
+KINDS = {"fn": "function", "datum": "global", "member": "field", "type": "type", "slot": "local"}
 
 
 @dataclass(frozen=True)
 class Key:
-    kind: str  # fn | datum | member | slot
+    kind: str  # fn | datum | member | type | slot
     version: str = ""
     vram: int = 0
     tag: str = ""
@@ -34,6 +36,8 @@ class Key:
     def text(self) -> str:
         if self.kind == "member":
             return f"member:{self.tag}+{self.offset:#x}"
+        if self.kind == "type":
+            return f"type:{self.tag}"
         head = f"{self.kind}:{self.version}:{self.vram:08X}"
         return f"{head}:{self.slot}" if self.kind == "slot" else head
 
@@ -45,6 +49,8 @@ def parse(text: str, first: str) -> Key | None:
         return Key(m[1], m[2] or first, int(m[3], 16))
     if m := _MEMBER.fullmatch(text):
         return Key("member", tag=m[1].strip(), offset=int(m[2], 0))
+    if m := _TYPE.fullmatch(text):
+        return Key("type", tag=m[1])
     if m := _SLOT.fullmatch(text):
         return Key("slot", m[1] or first, int(m[2], 16), slot=m[3])
     return None

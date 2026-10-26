@@ -250,9 +250,9 @@ def test_banners_become_candidates_with_the_address_line(project, monkeypatch):
     assert run(project, "banners")["skipped"] == 0  # the source itself is unchanged, so the same candidate again
 
 
-def test_a_type_row_is_refused_as_malformed_for_want_of_a_header_graph(project):
+def test_a_type_row_naming_no_record_of_the_tree_is_refused_as_a_missing_target(project):
     got = submit(project, [row("Record_func_80004010", "ActorRecord", ["callee func_80004020"], kind="type")])
-    assert got["accepted"] == 0 and got["by_rule"] == {"shape": 1} and moves(project) == []
+    assert got["accepted"] == 0 and got["by_rule"] == {"target": 1} and moves(project) == []
 
 
 def test_submit_prints_the_patch_of_the_accepted_renames(project, monkeypatch):
