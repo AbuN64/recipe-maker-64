@@ -153,3 +153,35 @@ def test_the_slices_verb_writes_the_document_lane_files_and_assignments(project,
     assert slices.load(tmp_path)["assigned"].get("l2") == ["S002"] and again["slices"] == got["slices"]
     with pytest.raises(Exception, match="--assign takes"):
         naming.run(project, {**params, "lanes": None, "assign": ["bad"]})
+
+
+def test_a_missing_map_is_a_refusal_naming_the_path_and_a_merged_unit_in_the_map_is_harmless(project, tmp_path):  # noqa: F811
+    params = {"host": None, "action": "slices", "step": None, "lanes": 8, "out": str(tmp_path), "assign": []}
+    with pytest.raises(Exception, match=r"module map .*gone\.tsv does not exist"):
+        naming.run(project, {**params, "map": str(tmp_path / "gone.tsv")})
+    (tmp_path / "m.tsv").write_text("unit\tmodule\nsrc/merged_away.c\tMENU_PAUSE\n")
+    got = naming.run(project, {**params, "map": str(tmp_path / "m.tsv")})
+    assert got["slices"] > 0
+
+
+def test_the_slicer_reads_the_projects_own_module_map_when_no_map_is_given(project, tmp_path):  # noqa: F811
+    (project.project.root / "docs").mkdir(exist_ok=True)
+    (project.project.root / "docs/M.tsv").write_text("unit\tmodule\nsrc/a.c\tX\n")
+    project.project.module_map = "docs/M.tsv"
+    assert slices.map_path(project, None) == project.project.root / "docs/M.tsv"
+    project.project.module_map = "docs/none.tsv"
+    with pytest.raises(Exception, match="does not exist"):
+        slices.map_path(project, None)
+
+
+def test_a_tree_that_changes_under_the_slicer_is_refused_with_the_way_out(project, monkeypatch):  # noqa: F811
+    from unbake.contracts import Finding, Refusal
+
+    from recipemaker import structure
+
+    def moving(config, host=None):
+        raise Refusal(Finding("recipe.evidence", "the tree changed between unbake map and its capture"))
+
+    monkeypatch.setattr(structure, "evidence", moving)
+    with pytest.raises(Exception, match="changed while the slices were cut"):
+        naming.slices_evidence(project, None)

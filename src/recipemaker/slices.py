@@ -17,9 +17,9 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from unbake.contracts import Json
+from unbake.contracts import Config, Json
 
-from recipemaker import access, cparse, host, locals_, namebook
+from recipemaker import access, cparse, host, locals_, namebook, state
 from recipemaker import members as members_
 
 FORMAT = 1
@@ -104,10 +104,32 @@ def chunks(items: Sequence[Any], size: Callable[[Any], int]) -> list[list[Any]]:
     return fitted
 
 
-def read_map(path: Path) -> dict[str, str]:
+def map_path(config: Config, given: str | None) -> Path | None:
+    """The module map a slice run reads: the one named by --map, else the project's own (config.toml module_map), else
+    none. A named file that does not exist is a refusal with its path, not a crash; units the map lists but the tree no
+    longer holds (merged modules) are harmless, read_map only keys by unit."""
+    spelled = given or getattr(config.project, "module_map", None)
+    if not spelled:
+        return None
+    path = Path(spelled)
+    path = path if path.is_absolute() or given else Path(config.project.root) / path
+    if not path.is_file():
+        raise state.stop(
+            "recipe.slices",
+            f"the module map {path} does not exist",
+            action="pass --map a file that exists, or omit it to read the project's module_map"
+            if given
+            else "restore module_map in config.toml",
+        )
+    return path
+
+
+def read_map(path: Path | None) -> dict[str, str] | None:
     """A module map: `unit<TAB>module` lines (a first line `unit	module` and `#` comments are skipped). The slicer
     groups the functions of a unit under its module; a unit the map does not list keeps its folder (the input is
     pluggable: MODULES.tsv adds the real module names, nothing here depends on its other columns)."""
+    if path is None:
+        return None
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         cols = line.split("\t")

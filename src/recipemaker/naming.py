@@ -1553,16 +1553,34 @@ def count(config: Config, params: Json) -> Json:
     return {"action": "count", "steps": steps, "folders": out, "next": "recipe name next --step STEP --target FOLDER"}
 
 
+def slices_evidence(config: Config, host: Path | None) -> Json:
+    """The structure evidence for a slice run, read while no writer holds the tree (a shared tree lock: a land or an
+    applier that mutates the tree finishes first). A tree that still changes between `unbake map` and its capture is
+    refused with the way out: slices run on a leased tree of their own, never on the tree an applier or a round
+    mutates."""
+    with api.tree_lock(config, who="recipe name slices"):
+        try:
+            return structure.evidence(config, host)
+        except Refusal as refusal:
+            if "tree changed between" not in str(refusal):
+                raise
+            raise state.stop(
+                "recipe.slices",
+                f"{config.project.root} changed while the slices were cut (an applier or a round is writing it)",
+                action="run slices with --project on a leased tree, not the tree an applier or the train mutates",
+            ) from None
+
+
 def cut(config: Config, params: Json) -> Json:
     """`recipe name slices --lanes N [--map MODULES.tsv] [--assign LANE=ID,ID] [--out DIR]`: the slice document (T3)."""
     where = Path(params["out"]) if params.get("out") else None
     held = slices.load(where)
     lanes = int(params.get("lanes") or (held or {}).get("lanes") or 12)
     if params.get("lanes") or held is None:
-        doc = structure.evidence(config, params["host"])
+        mapping = slices.read_map(slices.map_path(config, params.get("map")))
+        doc = slices_evidence(config, params["host"])
         ctx = Map(config, doc, reads(config, doc))
         functions, data, records = slices.collect(ctx, config.project.root)
-        mapping = slices.read_map(Path(params["map"])) if params.get("map") else None
         result = dict(slices.compute(functions, data, records, lanes, held, mapping, doc["names_from"]))
     else:
         result = dict(held)
