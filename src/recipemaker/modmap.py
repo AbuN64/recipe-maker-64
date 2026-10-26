@@ -38,7 +38,9 @@ CONFIDENCE = {"pending": 0, "low": 1, "medium": 2, "high": 3}  # a map's name co
 def read(path: Path) -> list[dict[str, str]]:
     """The map rows as dicts, in file order."""
     with open(path, encoding="utf-8", newline="") as handle:
-        return [r for r in csv.DictReader((l for l in handle if l.strip() and not l.startswith("#")), delimiter="\t")]
+        return [
+            r for r in csv.DictReader((ln for ln in handle if ln.strip() and not ln.startswith("#")), delimiter="\t")
+        ]
 
 
 def groups(rows: Iterable[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
@@ -74,7 +76,7 @@ def split_unit(text: str) -> tuple[list[str], str]:
     at = 0
     while at < len(lines) and (not lines[at].strip() or _INCLUDE.match(lines[at].rstrip("\n"))):
         at += 1
-    return [l.rstrip("\n") for l in lines[:at] if l.strip()], "".join(lines[at:])
+    return [ln.rstrip("\n") for ln in lines[:at] if ln.strip()], "".join(lines[at:])
 
 
 def _spelling(line: str) -> str:
@@ -139,7 +141,8 @@ def disagreements(units: Sequence[str], src: dict[str, str]) -> list[str]:
 def dedupe(text: str) -> tuple[str, list[str]]:
     """(text, clashes): a top-level statement identical to an earlier one outside any #if is dropped; two statements
     outside #if that define one name with different text are a clash."""
-    depth, seen, named, drop, clashes = 0, set(), {}, [], []
+    depth, seen, drop, clashes = 0, set[str](), list[tuple[int, int]](), list[str]()
+    named: dict[str, str] = {}
     masked = _mask(text)
     for lo, hi, directive in cparse.spans(masked):
         stmt = masked[lo:hi]
@@ -166,7 +169,7 @@ def dedupe(text: str) -> tuple[str, list[str]]:
 
 
 def own_header(units_files: Any, unit: str) -> str | None:
-    """The address header of one unit (include/ + the unit's path without `src/` or `src/<top>/`, extension .H or .h)."""
+    """The address header of one unit (include/ + the unit's path without `src/` or `src/<top>/`, .H or .h)."""
     parts = Path(unit).with_suffix("").parts
     if parts[0] != "src":
         return None
@@ -184,7 +187,7 @@ def fold(files: Any, path: str) -> str:
     if held is None or held[0] != len(files.text):
         held = (len(files.text), {p.lower(): p for p in files.everything()})
         files._lower = held
-    return held[1].get(path.lower(), path)
+    return str(held[1].get(path.lower(), path))
 
 
 def guard_of(header: str) -> str:
@@ -205,12 +208,11 @@ def merge_headers(files: Any, target: str, olds: Sequence[str]) -> str | None:
         if not found:
             return f"{path} has no include guard of the shape #ifndef X / #define X / #endif"
         head, body = split_unit(found[2])
-        includes += [l for l in head if _spelling(l) not in moved]
+        includes += [x for x in head if _spelling(x) not in moved]
         bodies.append(body.strip("\n"))
-    seen: set[str] = set()
-    uniq = [l for l in includes if not (l in seen or seen.add(l))]
+    uniq = list(dict.fromkeys(includes))
     guard = guard_of(target)
-    text = f"#ifndef {guard}\n#define {guard}\n" + "".join(l + "\n" for l in uniq)
+    text = f"#ifndef {guard}\n#define {guard}\n" + "".join(x + "\n" for x in uniq)
     text += "\n" + "\n\n".join(b for b in bodies if b) + "\n#endif\n"
     text, clashes = dedupe(text)
     if clashes:
@@ -220,7 +222,13 @@ def merge_headers(files: Any, target: str, olds: Sequence[str]) -> str | None:
 
 
 def merge_module(
-    files: Any, module: str, units: Sequence[str], header: str, headers: dict[str, str], src: dict[str, str], notes: list[str]
+    files: Any,
+    module: str,
+    units: Sequence[str],
+    header: str,
+    headers: dict[str, str],
+    src: dict[str, str],
+    notes: list[str],
 ) -> tuple[str, str]:
     """(text, why): UNITS (read from SRC, in map order) merged into one file for MODULE with its HEADER. The module
     header and the unit headers are edited in FILES now; the units themselves are written by the caller, once every
@@ -250,7 +258,7 @@ def merge_module(
         return "", why
     for old in olds:
         headers[old.removeprefix("include/")] = ours
-    return "".join(l + "\n" for l in top) + ("\n" if top else "") + merged, ""
+    return "".join(x + "\n" for x in top) + ("\n" if top else "") + merged, ""
 
 
 def prepare(src: dict[str, str], action: str, unit: str) -> str:
@@ -264,7 +272,9 @@ def prepare(src: dict[str, str], action: str, unit: str) -> str:
         for lo, hi, _directive in reversed([s for s in cparse.spans(masked) if not s[2]]):
             stmt, shown = text[lo:hi], masked[lo:hi]
             if "=" in shown and not re.search(r"\bconst\b|\bextern\b|\btypedef\b", shown.split("=")[0]):
-                text = text[:lo] + re.sub(r"^(static\s+)?", lambda m: (m[1] or "") + "const ", stmt, count=1) + text[hi:]
+                text = (
+                    text[:lo] + re.sub(r"^(static\s+)?", lambda m: (m[1] or "") + "const ", stmt, count=1) + text[hi:]
+                )
         src[unit] = text
         return ""
     return f"{unit}: data inside the code run of its module joins the code by hand"
@@ -278,7 +288,7 @@ def rewrite_includes(files: Any, headers: dict[str, str]) -> int:
         for path in files.including(old, "include/" + old):
             text = files.get(path)
             if text is not None and path != "include/" + new:
-                changed, n = pattern.subn(lambda m: f"{m[1]}{new}{m[2]}", text)
+                changed, n = pattern.subn(rf"\g<1>{new}\g<2>", text)
                 if n:
                     files.put(path, changed)
                     done += n
@@ -293,7 +303,7 @@ def _rekey_rows(files: Any, where: dict[str, str]) -> None:
     text = files.get("config.toml")
     if not text:
         return
-    row = re.compile(r'''(?ms)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["\'])([^"\'\n]+)\2([ \t]*\][^\n]*\n.*?)(?=^\[|\Z)''')
+    row = re.compile(r"""(?ms)^([ \t]*\[[ \t]*file[ \t]*\.[ \t]*)(["\'])([^"\'\n]+)\2([ \t]*\][^\n]*\n.*?)(?=^\[|\Z)""")
     taken: set[str] = set()
 
     def one(m: re.Match[str]) -> str:
@@ -326,7 +336,12 @@ def run(config: Any, params: Json) -> Json:
         if not present:
             continue  # done already
         if len(present) != len(mrows):
-            refused.append({"module": module, "reason": "part way merged: " + ", ".join(r["unit"] for r in mrows if r not in present)})
+            refused.append(
+                {
+                    "module": module,
+                    "reason": "part way merged: " + ", ".join(r["unit"] for r in mrows if r not in present),
+                }
+            )
         elif stage == "now" and any(r["stage"] != "now" for r in mrows):
             deferred.append(module)
         else:
@@ -367,10 +382,10 @@ def run(config: Any, params: Json) -> Json:
         snap = (dict(files.text), dict(files.origin))
         mine = dict(src)
         why, text, left = "", "", []
-        for r in reclass.get(module, ()):
-            if r.unit in units:
-                why = why or prepare(mine, r.action, r.unit)
-                left += [r.unit] if r.action == "drop" else []
+        for rec in reclass.get(module, ()):
+            if rec.unit in units:
+                why = why or prepare(mine, rec.action, rec.unit)
+                left += [rec.unit] if rec.action == "drop" else []
         keep = [u for u in units if u not in left]
         target, header = module, mrows[0]["header"]
         if CONFIDENCE.get(mrows[0]["confidence"], 3) < floor and keep:
@@ -393,8 +408,8 @@ def run(config: Any, params: Json) -> Json:
             written[target] = text
             where[module] = target
     for module in merged:  # every unit goes first: a module's path is often the path of a unit of another module
-        for r in todo[module]:
-            files.text[r["unit"]] = None
+        for row in todo[module]:
+            files.text[row["unit"]] = None
     for module, text in written.items():
         if text:
             files.put(module, text)

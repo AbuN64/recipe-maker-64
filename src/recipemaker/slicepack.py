@@ -312,6 +312,8 @@ def _fn_card(
         shown = text[fn.start : fn.end]
         card["body"] = shown if len(shown) <= BODY_LIMIT else shown[:BODY_LIMIT] + "\n/* ... cut ... */"
         card["body_cut"] = len(shown) > BODY_LIMIT
+        if card["body_cut"]:  # the rest is in the source: where to read it
+            card["body_lines"] = f"{card.get('file', '')}:{card['line']}-{card['line'] + shown.count(chr(10))}"
         fn_slots = locals_.slots(text, fn)
         for s in fn_slots:
             hints = locals_.suggestions(

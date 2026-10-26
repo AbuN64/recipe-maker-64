@@ -129,3 +129,12 @@ def test_reclassify_drops_zero_padding_and_constifies_other_data():
     assert modcheck.reclassify(found, zero)[0].action == "drop"
     assert modcheck.reclassify(found, live)[0].action == "const"
     assert modcheck.reclassify([("M", "us", "p", "data", "text", ".text", 4, 4)], zero)[0].action == "text"
+
+
+def test_reserved_name_hint_spells_the_style_form():
+    from recipemaker import naming
+
+    assert naming.reserved_hint("__Cache___RecycleNode").endswith(
+        "write Cache_RecycleNode (Module_VerbNoun, one underscore)"
+    )
+    assert naming.reserved_hint("Cache_RecycleNode") == ""

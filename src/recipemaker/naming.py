@@ -440,6 +440,15 @@ def _applied(ctx: Map, row: Json) -> bool:
     return bool(_exists(ctx, row)) and not _exists(ctx, {**row, "target": name})
 
 
+def reserved_hint(name: str) -> str:
+    """What to write instead of a name that starts with an underscore (reserved for the implementation): the form
+    the style asks for (a lane once read `Prefix_VerbNoun` as `__PREFIX___VerbNoun` and wrote 70 refused rows)."""
+    if not name.startswith("_"):
+        return ""
+    form = name.lstrip("_").replace("___", "_")
+    return f"; a leading underscore is reserved: write {form} (Module_VerbNoun, one underscore)"
+
+
 def _form(ctx: Map, row: Json) -> tuple[str, str]:
     """Whether the new name has the shape its kind and subsystem ask for, and holds no banned word."""
     kind, target, name = row["kind"], row["target"], row["name"]
@@ -513,7 +522,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names,
     # implementation)
     if why := api.name_issues(name, name_kind, implementation=True):
-        return "portable", why[0]
+        return "portable", why[0] + reserved_hint(name)
     if (
         kind in ("function", "global", "static")
         and name in BUILTINS
