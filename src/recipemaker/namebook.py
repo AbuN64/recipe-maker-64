@@ -298,13 +298,14 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     suggest(lane, advice, lambda r: "")
     refused(lane, judged.refused)
     by_rule = Counter(r["rule"] for r in judged.refused)
-    with (
-        locked(),
-        open(store() / "submits.jsonl", "a", encoding="utf-8") as handle,
-    ):  # WATCH counts accepted/refused per lane
-        log = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lane": lane, "rows": len(rows), "accepted": len(stored)}
-        log |= {"refused": len(judged.refused), "suggested": len(advice), "by_rule": dict(by_rule)}
-        handle.write(json.dumps(log, sort_keys=True) + "\n")
+    if rows:  # an empty submit (the warm-up call after main moves) is no lane activity: WATCH counts only real ones
+        with (
+            locked(),
+            open(store() / "submits.jsonl", "a", encoding="utf-8") as handle,
+        ):  # WATCH counts accepted/refused per lane
+            log = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "lane": lane, "rows": len(rows), "accepted": len(stored)}
+            log |= {"refused": len(judged.refused), "suggested": len(advice), "by_rule": dict(by_rule)}
+            handle.write(json.dumps(log, sort_keys=True) + "\n")
     return {
         "action": "submit",
         "ledger": lane,

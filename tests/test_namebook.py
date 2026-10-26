@@ -205,3 +205,9 @@ def test_a_suggest_row_is_checked_for_shape_and_key_only(book):
         [bad_name, fn("fn:us:80009999", "Actor_X", suggest=True), {"key": "fn:us:80004010", "suggest": True}],
     )
     assert (got["suggested"], got["refused"]) == (1, 2) and got["by_rule"] == {"target": 1, "shape": 1}
+
+
+def test_an_empty_submit_leaves_no_submit_log_line(book):
+    """The warm-up call after main moves (`submit --ledger warm` on an empty file) must not show as a lane in WATCH."""
+    assert submit(book, "warm", [])["rows"] == 0
+    assert not (book.tmp / "names/submits.jsonl").exists()
