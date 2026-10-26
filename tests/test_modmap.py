@@ -242,3 +242,31 @@ def test_occupied_refuses_a_target_that_exists_and_stays(tmp_path):
     assert "merge that module first" in modmap.occupied(files, "src/g/GA_2.CPP", set())
     assert modmap.occupied(files, "src/g/GA_2.CPP", {"src/g/GA_2.CPP"}) == ""
     assert modmap.occupied(files, "src/g/NEW.CPP", set()) == ""
+
+
+CODE_AND_JUNK = (
+    "int fa(int v) {\n    int r = v;\n    return r;\n}\n"
+    "#if defined(VERSION_US)\nconst unsigned int rodata_unresolved_1[1] = {\n    0x00000000,\n};\n#endif\n"
+    "#if defined(VERSION_EU)\nunsigned int live_2[2] = {\n    0x00000000,\n    0x00000001,\n};\n#endif\n"
+)
+
+
+def test_a_drop_reclass_keeps_the_function_of_a_unit_and_strips_only_its_zero_data():
+    src = {"a": CODE_AND_JUNK}
+    assert modmap.holds_code(CODE_AND_JUNK) and modmap.prepare(src, "drop", "a") == ""
+    assert src["a"] == (
+        "int fa(int v) {\n    int r = v;\n    return r;\n}\n"
+        "#if defined(VERSION_EU)\nunsigned int live_2[2] = {\n    0x00000000,\n    0x00000001,\n};\n#endif\n"
+    )
+
+
+def test_a_drop_reclass_leaves_a_pure_padding_unit_to_the_caller():
+    junk = "#if X\nunsigned char pad[3] = {\n    0x00, 0x00, 0x00,\n};\n#endif\n"
+    src = {"a": junk}
+    assert not modmap.holds_code(junk) and modmap.prepare(src, "drop", "a") == "" and src["a"] == junk
+
+
+def test_a_const_reclass_never_prefixes_a_function_definition():
+    src = {"a": "int fa(void) {\n    int r = 1;\n    return r;\n}\nunsigned char t[2] = { 1, 2 };\n"}
+    modmap.prepare(src, "const", "a")
+    assert src["a"] == "int fa(void) {\n    int r = 1;\n    return r;\n}\nconst unsigned char t[2] = { 1, 2 };\n"
