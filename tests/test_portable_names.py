@@ -9,18 +9,49 @@ from unbake.contracts import Refusal
 from recipemaker import naming, structure, style, tree
 
 
+def _ctx(taken=(), sdk=None):
+    """A Map stand-in: `sdk` is the name the project's SDK table gives each target."""
+    return SimpleNamespace(taken=set(taken), members={}, canon=lambda n: n, sdk_name=lambda n: (sdk or {}).get(n, ""))
+
+
 @pytest.mark.parametrize("name", ["class", "_Private", "Bad$Name", "A" * 248])
 def test_name_judgment_cannot_bypass_portability_with_debug_or_sdk_evidence(monkeypatch, name):
     monkeypatch.setattr(naming, "_exists", lambda ctx, row: "")
-    ctx = SimpleNamespace(taken=set())
+    ctx = _ctx()
     row = {"kind": "function", "target": "func_8000", "name": name, "doc": "original", "evidence": [f"debug {name}"]}
     assert naming.judge(ctx, row)[0] == "portable"
     assert not style.legal("function", name)
 
 
+def test_a_reserved_name_the_sdk_evidence_declares_the_original_is_not_refused_as_portable(monkeypatch):
+    monkeypatch.setattr(naming, "_exists", lambda ctx, row: "")
+    row = {
+        "kind": "function",
+        "target": "func_8000",
+        "name": "__zorkHelper",
+        "doc": "sdk",
+        "evidence": ["sdk __zorkHelper"],
+    }
+    assert naming.judge(_ctx(sdk={"func_8000": "__zorkHelper"}), row)[0] != "portable"
+
+
+def test_a_reserved_name_without_sdk_evidence_is_refused_as_portable(monkeypatch):
+    monkeypatch.setattr(naming, "_exists", lambda ctx, row: "")
+    row = {
+        "kind": "function",
+        "target": "func_8000",
+        "name": "__zorkHelper",
+        "doc": "sdk",
+        "evidence": ["sdk __zorkHelper"],
+    }
+    assert naming.judge(_ctx(), row)[0] == "portable"
+    assert naming.judge(_ctx(sdk={"func_8000": "__zorkOther"}), row)[0] == "portable"
+    assert naming.judge(_ctx(sdk={"func_8000": "class"}), {**row, "name": "class"})[0] == "portable"
+
+
 def test_name_judgment_catches_casefolded_existing_symbol(monkeypatch):
     monkeypatch.setattr(naming, "_exists", lambda ctx, row: "")
-    ctx = SimpleNamespace(taken={"Actor_Draw"})
+    ctx = _ctx(["Actor_Draw"])
     row = {"kind": "function", "target": "func_8000", "name": "actor_draw", "doc": "draw", "evidence": ["tag actor"]}
     assert naming.judge(ctx, row)[0] == "duplicate"
 
@@ -34,6 +65,15 @@ def test_structure_checks_direct_move_inputs_before_building_a_patch(tmp_path, o
     with pytest.raises(Refusal):
         structure.build(tmp_path, [{"op": op, "subject": "old", "target": target}], {}.get, {})
     assert sorted(tmp_path.iterdir()) == before
+
+
+def test_structure_admits_a_reserved_name_the_sdk_evidence_declares_and_refuses_the_rest(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.c").write_text("int old(void) { return 1; }\n")
+    move = {"op": "symbol", "subject": "old", "target": "__zorkHelper"}
+    with pytest.raises(Refusal, match="reserved identifier"):
+        structure.build(tmp_path, [move], {}.get, {}, evidenced=["__zorkOther"])
+    assert structure.build(tmp_path, [move], {}.get, {}, evidenced=["__zorkHelper"])["moves"] == 1
 
 
 def test_structure_checks_collision_against_unchanged_source(tmp_path):

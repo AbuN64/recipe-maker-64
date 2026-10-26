@@ -734,6 +734,7 @@ def _patch(config: Config, doc: Json, moves: Sequence[Json]) -> Json:
                 moves,
                 lambda name: captured.owner(doc["names_from"], name) if captured else None,
                 structure.modules_of(doc) if doc else {},
+                evidenced=frozenset(structure.sdk_names(config.project.root, doc["versions"]).values()) if doc else (),
             )
         )
     return {

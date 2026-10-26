@@ -780,9 +780,11 @@ def build(
     owner: Callable[[str], str | None],
     modules: Mapping[str, Json],
     note: Callable[[str], None] | None = None,
+    evidenced: Collection[str] = (),
 ) -> Json:
     """A unified diff of the moves, as `{"patch", "files", "moves"}`. `owner` gives the file now holding a function
-    (the tree's), `modules` the source and header path of each module the moves name.
+    (the tree's), `modules` the source and header path of each module the moves name, `evidenced` the original names
+    the project's SDK tables declare (a reserved name among them is admitted).
 
     - member: the function's C body or INCLUDE_* line leaves its owner file for the module's file, made if absent;
     - symbol: its `versions/*/symbol_addrs.txt` lines and, word-bounded, every identifier in src/ and include/;
@@ -800,7 +802,7 @@ def build(
             if move["op"] in ("merge", "type")
             else move["target"]
         )
-        if name_why := api.name_issues(name, kind, implementation=True):  # the SDK's own reserved names pass
+        if name_why := api.name_issues(name, kind, implementation=True, evidenced=name in evidenced):
             raise state.stop("recipe.structure", name_why[0])
     member_words: dict[str, int] | None = None  # how many record bodies spell each word, read at the first field move
     types: access.Types | None = None  # the records and the data they type, read at the first shared member move
@@ -919,8 +921,8 @@ def build(
         after = {p: text for p in files.everything() if (text := files.get(p)) is not None}
         before.update({p: text for p, text in files.orig.items() if text is not None})
         census = root / ".unbake" / "recipe" / "naming-census.pkl"  # each file's census, kept between runs
-        existing = {(f.path, f.reason) for f in api.naming_findings(before, census)}
-        added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in existing]
+        existing = {(f.path, f.reason) for f in api.naming_findings(before, census, evidenced)}
+        added = [f for f in api.naming_findings(after, census, evidenced) if (f.path, f.reason) not in existing]
         if added:
             raise state.stop("recipe.structure", added[0].reason, path=added[0].path)
     if note:
@@ -1312,7 +1314,12 @@ def run(config: Config, params: Json) -> Json:
     captured = api.capture(config)
     with narrated("build"):
         built = build(
-            root, ops(proposal), lambda n: captured.owner(document["names_from"], n), modules_of(document), say
+            root,
+            ops(proposal),
+            lambda n: captured.owner(document["names_from"], n),
+            modules_of(document),
+            say,
+            frozenset(sdk.values()),
         )
     kept = bool(built["moves"]) or not paths  # a scoped proposal with nothing to move saves no patch
     return {
