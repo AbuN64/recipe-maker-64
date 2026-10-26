@@ -43,9 +43,9 @@ class Reclass(NamedTuple):
     versions: tuple[str, ...]
 
 
-def elf_sizes(path: str) -> dict[str, int]:
-    """{class: bytes} of one ELF32 object, from its section headers."""
-    out: dict[str, int] = defaultdict(int)
+def elf_sections(path: str) -> dict[str, tuple[int, int]]:
+    """{class: (bytes, alignment)} of one ELF32 object, from its section headers."""
+    out: dict[str, tuple[int, int]] = {}
     with open(path, "rb") as handle:
         data = handle.read()
     if data[:4] != b"\x7fELF":
@@ -58,8 +58,9 @@ def elf_sizes(path: str) -> dict[str, int]:
     for h in hdrs:
         name = data[stro + h[0] : data.index(b"\0", stro + h[0])].decode()
         if cls := CLASS_OF.get(name):
-            out[cls] += h[5]
-    return dict(out)
+            size, align = out.get(cls, (0, 1))
+            out[cls] = (size + h[5], max(align, h[8]))
+    return out
 
 
 def parse_ld(path: str) -> list[tuple[str | None, str, str, tuple[str, ...], int]]:
@@ -108,7 +109,7 @@ def identity(config: Path | str) -> Callable[[str], str]:
 def facts(tree: str, versions: Sequence[str], ld: str = LINK, obj: str = OBJECT) -> Facts:
     """Per version: the link rows with each entry's byte size and its start offset in its output section."""
     out: Facts = {}
-    cache: dict[tuple[str, str], dict[str, int] | None] = {}
+    cache: dict[tuple[str, str], dict[str, tuple[int, int]] | None] = {}
     for v in versions:
         seq: list[dict[str, Any]] = []
         pos: dict[str | None, int] = defaultdict(int)
@@ -121,12 +122,22 @@ def facts(tree: str, versions: Sequence[str], ld: str = LINK, obj: str = OBJECT)
             key = (v, unit)
             if key not in cache:
                 path = os.path.join(tree, obj.format(v=v, unit=unit))
-                cache[key] = elf_sizes(path) if os.path.exists(path) else None
+                cache[key] = elf_sections(path) if os.path.exists(path) else None
             sizes = cache[key]
-            size = sum((sizes or {}).get(c, 0) for c in classes)
+            size = sum((sizes or {}).get(c, (0, 1))[0] for c in classes)
+            align = max((sizes or {}).get(c, (0, 1))[1] for c in classes)
             cls = classes[0] if len(classes) == 1 else "+".join(classes)
             seq.append(
-                {"o": outsec, "k": "entry", "u": unit, "c": cls, "n": size, "at": pos[outsec], "missing": sizes is None}
+                {
+                    "o": outsec,
+                    "k": "entry",
+                    "u": unit,
+                    "c": cls,
+                    "n": size,
+                    "al": align,
+                    "at": pos[outsec],
+                    "missing": sizes is None,
+                }
             )
             pos[outsec] += size
         out[v] = seq
@@ -179,6 +190,12 @@ def check(
             if mod := unit_mod.get(e["u"]):
                 where[(mod, e["c"])].append((i, e["o"], e["u"]))
         nxt = dict(pairwise(live))
+        # where a module's merged object starts in its output section: gcc pads inside the object from there
+        start: dict[tuple[str, str | None], int] = {}
+        for kind in ("rodata", "data"):
+            for i in live:
+                if (mod := unit_mod.get(seq[i]["u"])) and seq[i]["c"] == kind:
+                    start.setdefault((mod, seq[i]["o"]), seq[i]["at"])
         for (mod, cls), hits in where.items():
             outs = {o for _, o, _ in hits}
             if len(outs) > 1:
@@ -193,11 +210,26 @@ def check(
                         # the zero padding gcc emits between literals), a rodata run broken by data means the data
                         # entries at its ends are the misdeclared ones
                         if cls in ("text", "rodata"):
-                            targets = [(seq[k], cls) for k in range(i + 1, j) if seq[k]["k"] == "entry"
+                            targets = [(k, cls) for k in range(i + 1, j) if seq[k]["k"] == "entry"
                                        and seq[k]["n"] > 0 and seq[k]["c"] == "data"]  # fmt: skip
                         else:
-                            targets = [(seq[i], "rodata"), (seq[j], "rodata")]
-                        reclass += [(mod, v, e["u"], e["c"], to, e["o"], e["at"], e["n"]) for e, to in targets]
+                            targets = [(i, "rodata"), (j, "rodata")]
+                        # the alignment of the entry after each: the linker pads a dropped run only to that
+                        reclass += [
+                            (
+                                mod,
+                                v,
+                                seq[k]["u"],
+                                seq[k]["c"],
+                                to,
+                                seq[k]["o"],
+                                seq[k]["at"],
+                                seq[k]["n"],
+                                seq[nxt[k]]["al"] if k in nxt else 0,
+                                seq[k]["at"] - start[mod, seq[k]["o"]],
+                            )
+                            for k, to in targets
+                        ]
                     else:
                         txt = [e["u"] + "(" + e["c"] + ")" for e in between if unit_mod.get(e["u"]) != mod][:4]
                         fails.append((mod, v, cls, f"{ua} .. {ub} not adjacent: {', '.join(txt)}"))
@@ -208,6 +240,16 @@ def check(
                     for k in range(i + 1, j)
                     if seq[k]["k"] == "align" and seq[k]["pad"]
                 ]
+        # a run of zero bytes that is exactly what gcc pads before the next entry of the same module is padding the
+        # merged object makes itself, whichever class its link row has
+        for i in live:
+            e = seq[i]
+            if (mod := unit_mod.get(e["u"])) and e["c"] in ("rodata", "data") and (mod, e["o"]) in start:
+                k = nxt.get(i)
+                after = seq[k]["al"] if k is not None and unit_mod.get(seq[k]["u"]) == mod else 0
+                reclass.append(
+                    (mod, v, e["u"], e["c"], "pad", e["o"], e["at"], e["n"], after, e["at"] - start[mod, e["o"]])
+                )
     return fails, softs, reclass
 
 
@@ -229,23 +271,30 @@ def roms(tree: str, versions: Sequence[str], rom: str, ld: str = LINK) -> Mappin
 
 
 def reclassify(found: Sequence[tuple[Any, ...]], held: Mapping[str, tuple[bytes, dict[str, int]]]) -> list[Reclass]:
-    """The unit-level actions a `check` reclass list asks for: zero bytes that go into rodata are dropped (the merged
-    object pads itself), other data that goes into rodata is declared `const`, data inside a text run joins the code."""
+    """The unit-level actions a `check` reclass list asks for: zero bytes that go into rodata are dropped when the
+    alignment of the entry after them pads exactly that many (the merged object pads itself), other data that goes
+    into rodata is declared `const`, data inside a text run joins the code. A unit that asks for none of these and
+    whose every entry (`pad`) is such padding is dropped too."""
     seen: dict[tuple[str, str], dict[str, Any]] = {}
-    for mod, v, unit, _frm, to, outsec, at, size in found:
+    for mod, v, unit, _frm, to, outsec, at, size, after, rel in found:
         zero = False
         if v in held and outsec in held[v][1]:
             rom, secs = held[v]
-            zero = not any(rom[secs[outsec] + at : secs[outsec] + at + size])
-        one = seen.setdefault((mod, unit), {"to": to, "zero": True, "vs": set()})
+            # zero bytes are padding only where the next entry's alignment pads exactly that many after what precedes
+            zero = not any(rom[secs[outsec] + at : secs[outsec] + at + size]) and after > 0 and (-rel) % after == size
+        one = seen.setdefault((mod, unit), {"to": "", "zero": True, "pad": True, "vs": set()})
+        if to == "pad":
+            one["pad"] = one["pad"] and zero
+            continue
+        one["to"] = one["to"] or to
         one["zero"] = one["zero"] and zero
         one["vs"].add(v)
-    return [
-        Reclass(
-            mod,
-            unit,
-            "drop" if d["zero"] and d["to"] == "rodata" else "const" if d["to"] == "rodata" else "text",
-            tuple(sorted(d["vs"])),
-        )
-        for (mod, unit), d in seen.items()
-    ]
+    out: list[Reclass] = []
+    for (mod, unit), d in seen.items():
+        if not d["to"]:
+            if d["pad"]:
+                out.append(Reclass(mod, unit, "drop", ()))
+            continue
+        action = "drop" if d["zero"] and d["to"] == "rodata" else "const" if d["to"] == "rodata" else "text"
+        out.append(Reclass(mod, unit, action, tuple(sorted(d["vs"]))))
+    return out
