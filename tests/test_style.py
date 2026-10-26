@@ -352,3 +352,32 @@ def test_a_prototype_in_a_shared_header_follows_the_folder_that_defines_the_func
     ctx.homes = {"Nav_Step": ["nav"]}
     got = [n for _, n in style._names(facts, ["types"], ctx)]
     assert len(got) == 1 and got[0].startswith("Other_Step")
+
+
+def _mapped(tmp_path, files, rows):
+    """A project whose config.toml names a module map with the given (unit, module, prefix) rows."""
+    lines = "".join(f"{u}\t{m}\t-\t{p}\n" for u, m, p in rows)
+    config = project(tmp_path, {**files, "docs/MODULES.tsv": "unit\tmodule\theader\tprefix\n" + lines})
+    config.project.module_map = "docs/MODULES.tsv"
+    return config
+
+
+def test_the_module_maps_prefix_judges_a_function_instead_of_its_folder(tmp_path):
+    team = "src/game/team/team_draw.c"
+    files = {team: "void TeamSelect_Draw(void) {}\nvoid Team_Draw(void) {}\n"}
+    seen = rules(run(_mapped(tmp_path, files, [(team, "src/game/ai/cteamselect.c", "TeamSelect")])))
+    found = [d for r, d in seen if r == "function-name"]
+    assert len(found) == 1 and found[0].startswith("Team_Draw (must be TeamSelect_CamelCase")
+
+
+def test_a_file_the_map_does_not_list_keeps_the_folder_rule(tmp_path):
+    files = {"src/game/team/team_draw.c": "void Team_Draw(void) {}\n"}
+    seen = rules(run(_mapped(tmp_path, files, [("src/game/other.c", "src/game/ai/x.c", "Other")])))
+    assert not [r for r, _ in seen if r == "function-name"]
+
+
+def test_a_module_map_the_config_names_but_the_tree_lacks_is_refused(tmp_path):
+    config = project(tmp_path, {"src/game/team/team_draw.c": "int g_a;\n"})
+    config.project.module_map = "docs/MODULES.tsv"
+    with pytest.raises(Exception, match="module_map"):
+        run(config)

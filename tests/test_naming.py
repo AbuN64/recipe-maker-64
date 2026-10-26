@@ -1043,6 +1043,7 @@ def test_n5_packs_only_functions_nothing_outside_their_folder_calls():
         members=members,
         doc={"names_from": "us"},
         word=lambda f: "Menu" if f == "M" else "",
+        function_word=lambda n: "Menu" if folders[n] == "M" else "",
         folder_of=lambda n: folders[n],
         callers={
             "func_8000000A": ["func_8000000B"],
@@ -1118,3 +1119,38 @@ def test_evidence_naming_a_symbol_the_tree_no_longer_has_says_so(project):
     text = json.dumps(got)
     assert got["by_rule"] == {"unverifiable": 1}
     assert "D_gone_pool is no symbol of this tree" in text
+
+
+def _with_map(project, rows):
+    path = project.project.root / "docs" / "MODULES.tsv"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("unit\tmodule\theader\tprefix\n" + "".join(f"{u}\t{m}\t-\t{p}\n" for u, m, p in rows))
+    project.project.module_map = "docs/MODULES.tsv"
+
+
+def test_submit_takes_the_function_prefix_from_the_module_map_not_the_folder(project):
+    _with_map(project, [("src/c.c", "src/game/main/crew/crew.c", "CrewBoss")])
+    rows = [
+        row("func_80004010", "CrewBoss_Spawn", ["callee func_80004020"]),
+        row("func_80004030", "Actor_Spawn", ["callee func_80004020"]),  # the folder's word, not the map's
+    ]
+    got = submit(project, rows)
+    assert got["accepted"] == 1 and got["by_rule"] == {"regex": 1}
+
+
+def test_a_unit_the_map_does_not_list_keeps_its_folders_prefix(project):
+    _with_map(project, [("src/other.c", "src/game/main/crew/crew.c", "CrewBoss")])
+    got = submit(project, [row("func_80004010", "Actor_Spawn", ["callee func_80004020"])])
+    assert got["accepted"] == 1
+
+
+def test_a_pack_card_shows_the_maps_prefix(project):
+    _with_map(project, [("src/c.c", "src/game/main/crew/crew.c", "CrewBoss")])
+    ctx = naming.Map.__new__(naming.Map)
+    ctx.prefixes = {"src/c.c": "CrewBoss"}
+    ctx.members = {"func_1": {"unit": "src/c.c"}}
+    ctx.modules = {}
+    ctx.alias = {}
+    ctx.canon = lambda n: n
+    ctx.module_at = lambda n: ""
+    assert ctx.function_word("func_1") == "CrewBoss"

@@ -280,7 +280,7 @@ def _fn_card(
     )
     loaded = strings.loaded(name)
     folder = ctx.folder_of(name)
-    word = ctx.word(folder)
+    word = ctx.function_word(name)
     card: dict[str, Any] = {
         "key": key,
         "kind": "function",

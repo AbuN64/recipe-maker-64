@@ -5,14 +5,14 @@ nothing."""
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from unbake import api
 from unbake.contracts import Config, Json, sha256
 
-from recipemaker import cparse, debug, host, table
+from recipemaker import cparse, debug, host, prefixes, table
 
 FACTS = 3  # the version of what _facts reads: bump it and every file is read again
 SEVERITY = {"m2c-local": "warning"}
@@ -83,10 +83,10 @@ def pattern(kind: str, word: str = "") -> str:
     folder that takes no prefix) has the unprefixed form."""
     names = _rules()["names"]
     bare = kind in ("function", "module") and not word
-    key = f"unprefixed_{kind}" if bare or (kind == "function" and word in _rules()["unprefixed"]) else kind
+    key = f"unprefixed_{kind}" if bare or (kind == "function" and word.lower() in _rules()["unprefixed"]) else kind
     regular = str(names[key]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
     if (
-        kind == "function" and word in _rules()["unprefixed"]
+        kind == "function" and word.lower() in _rules()["unprefixed"]
     ):  # also the prefixed form: a builtin's wrapper is Math_Sqrtf
         prefixed = str(names["function"]).replace("{Prefix}", pascal(word)).replace("{dir}", word)
         regular = f"(?:{regular}|{prefixed})"
@@ -219,6 +219,7 @@ class Context:
         self._tables: dict[str, Any] | None = None
         self._original: set[str] | None = None
         self.homes: dict[str, list[str]] = {}  # a defined function to the subsystem words of the folders defining it
+        self.prefixes: dict[str, str] = prefixes.table(config)  # the module map's prefix per unit, module and header
 
     def known(self) -> set[str]:
         return self.versions
@@ -255,8 +256,11 @@ def kind(path: str | PurePosixPath) -> str:
     return _SUFFIXES.get(PurePosixPath(path).suffix.lower(), "")
 
 
-def _words(path: str) -> list[str]:
-    """The subsystem words a file can take its prefix from: its folder, and for a header its own stem."""
+def _words(path: str, mapped: Mapping[str, str] | None = None) -> list[str]:
+    """The prefixes a file's functions can take: the module map's prefix for the file when the map lists it (the one
+    authority, `prefixes`), else the subsystem words of its folder and, for a header, its own stem."""
+    if mapped and path in mapped:
+        return [mapped[path]]
     parts = PurePosixPath(path)
     found = [parts.parent.name, *([parts.stem] if kind(parts) == "h" else [])]
     return list(dict.fromkeys(word for folder in found if (word := prefix_word(folder))))
@@ -299,15 +303,21 @@ def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]
     where = PurePosixPath(path)
     if not kind(where) or any(path.startswith(x) for x in rules["paths"]["exempt"]):
         return []
-    words = _words(path)
+    folder_words = _words(path)
+    words = _words(path, context.prefixes)
     out += [(rule, path, detail) for rule, detail in _names(facts, words, context, kind(where) == "c")]
-    if kind(where) == "c" and words and not neutral(where.stem) and not legal("module", where.stem, words[0]):
+    if (
+        kind(where) == "c"
+        and folder_words
+        and not neutral(where.stem)
+        and not legal("module", where.stem, folder_words[0])
+    ):
         out.append(("file-name", path, where.stem))
     folder = where.parent.name
     if (
         kind(where) == "c"
         and folder.lower() not in [*rules["paths"]["no_prefix"], ""]
-        and not words
+        and not folder_words
         and not neutral(folder)
     ):
         out.append(("dir-name", str(where.parent), folder))
@@ -406,7 +416,7 @@ def findings(config: Config, paths: Sequence[str] = (), base: str = "") -> tuple
     facts, parsed = gather(config, listing)
     context = Context(config)
     for path, found in facts.items():
-        if kind(path) == "c" and (word := prefix_word(PurePosixPath(path).parent.name)):
+        if kind(path) == "c" and (word := (context.prefixes.get(path) or prefix_word(PurePosixPath(path).parent.name))):
             for name, static, defined in found["fns"]:
                 if defined and not static and word not in context.homes.setdefault(name, []):
                     context.homes[name].append(word)

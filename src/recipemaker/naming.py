@@ -27,6 +27,7 @@ from recipemaker import (
     host,
     locals_,
     namebook,
+    prefixes,
     repair,
     settle,
     slicepack,
@@ -146,6 +147,7 @@ class Map:
         self.members: dict[str, Json] = {m["name"]: m for m in doc["members"]}
         self.modules: dict[str, dict[str, Any]] = {m["name"]: dict(m) for m in doc["modules"]}
         self.config = config
+        self.prefixes = prefixes.table(config)
         self.tables = _tables(config, doc["versions"])
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
@@ -209,6 +211,16 @@ class Map:
         """The module (one source file) that holds a member now, after the renames accepted so far."""
         module = self.members[member]["module"] if member in self.members else ""
         return self.alias.get(module, module)
+
+    def function_word(self, member: str) -> str:
+        """The prefix of a function's name: the module map's prefix for the file that holds it (`prefixes`, the one
+        authority `recipe style` reads too), else its folder's prefix word."""
+        held = self.members.get(self.canon(member), {})
+        module = self.modules.get(self.module_at(self.canon(member)), {})
+        for path in (held.get("unit"), module.get("source")):
+            if path and (word := self.prefixes.get(path)):
+                return word
+        return self.word(self.folder_of(self.canon(member)))
 
     def word(self, folder: str) -> str:
         """The prefix word of a folder (a placeholder's is the word before its counter), or an empty string when it
@@ -459,7 +471,7 @@ def _form(ctx: Map, row: Json) -> tuple[str, str]:
         return "", ""  # a standard C library routine keeps its name whatever folder holds it (no subsystem prefix)
     if kind in ("function", "module"):
         folder = ctx.folder_of(ctx.canon(target)) if kind == "function" else ctx.folder(target)
-        word = ctx.word(folder)
+        word = ctx.function_word(target) if kind == "function" else ctx.word(folder)
         external = kind == "function" and ctx.canon(target) not in ctx.members and ctx.symbol_kind(target) == kind
         class_method = kind == "function" and re.fullmatch(
             table("knowledge/style.toml")["names"]["class_function"], name
@@ -552,8 +564,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         # An external name can gain a subsystem when its body is first placed.
         # Permit only adding that required prefix; existing names remain stable.
         placed = ctx.canon(target) in ctx.members
-        word = ctx.word(ctx.folder_of(ctx.canon(target))) if kind == "function" and placed else ""
-        prefix = word.title() + "_" if word else ""
+        word = ctx.function_word(target) if kind == "function" and placed else ""
+        prefix = style.pascal(word) + "_" if word else ""
         repair = prefix and name == prefix + target and _form(ctx, {**row, "name": target})[0] == "regex"
         if not repair or ctx.verifies(f"debug {target}", ctx.users(target, kind)):
             return "named", f"{target} already has a name"
@@ -758,7 +770,7 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         rows = [
             (len({c for c in ctx.callers.get(n, ()) if ctx.folder_of(c) != ctx.folder_of(n)}), n)
             for n, m in neutral.items()
-            if m["kind"] == "function" and ctx.word(ctx.folder_of(n))
+            if m["kind"] == "function" and ctx.function_word(n)
         ]
         rows += [(len(ctx.callers.get(n, ())), n) for n in external]
         return [("function", n) for fan, n in sorted(rows, key=lambda r: (-r[0], r[1])) if fan]
@@ -766,7 +778,7 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         # (callers and callees inside the folder, the tags its calls carry)
         rows = []
         for n, m in neutral.items():
-            if m["kind"] != "function" or not ctx.word(ctx.folder_of(n)):
+            if m["kind"] != "function" or not ctx.function_word(n):
                 continue
             home = ctx.folder_of(n)
             callers = ctx.callers.get(n, ())
