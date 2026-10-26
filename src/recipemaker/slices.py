@@ -138,6 +138,45 @@ def read_map(path: Path | None) -> dict[str, str] | None:
     return out
 
 
+def _stable_entries(
+    merged: Sequence[tuple[list[str], str, list[Json]]],
+    functions: Sequence[Json],
+    previous: Json | None,
+    module_of: Mapping[str, str] | None,
+) -> list[tuple[str, list[str], str, list[Json]]]:
+    """(id, groups, parent, functions) per slice. With no earlier document: S001.. in address order. With one, a slice
+    keeps its id and the functions it held (a module map that merged or moved units regroups nothing: 10-25 a re-run
+    renumbered 264 of 270 slices and --assign ids pointed at other functions); a function no slice held joins the last
+    slice of its group while that has room, else new slices are appended after the highest id ever used."""
+    old = [s for s in (previous or {}).get("slices", []) if s.get("kind") == "slice"]
+    if not old:
+        return [(f"S{n:03d}", groups, parent, fns) for n, (groups, parent, fns) in enumerate(merged, 1)]
+    by_key = {f["key"]: f for f in functions}
+    kept: list[list[Any]] = []
+    placed: set[str] = set()
+    for sl in old:
+        fns = [by_key[k] for k in sl.get("fns", []) if k in by_key]
+        placed.update(f["key"] for f in fns)
+        if fns:
+            kept.append([sl["id"], list(sl.get("groups") or []), sl.get("parent", ""), fns])
+    top = max(int(str(sl["id"])[1:]) for sl in old if str(sl["id"])[1:].isdigit())
+    fresh: dict[str, list[Json]] = defaultdict(list)
+    for f in functions:
+        if f["key"] not in placed:
+            fresh[(module_of or {}).get(f.get("unit", ""), f["group"])].append(f)
+    for group in sorted(fresh, key=lambda g: min(f["vram"] for f in fresh[g])):
+        todo = sorted(fresh[group], key=lambda f: f["vram"])
+        home = next((e for e in reversed(kept) if group in e[1]), None)
+        while (
+            home and todo and len(home[3]) < MAX_FNS and sum(f["size"] for f in home[3]) + todo[0]["size"] <= MAX_BYTES
+        ):
+            home[3].append(todo.pop(0))
+        for part in chunks(todo, lambda f: f["size"]):
+            top += 1
+            kept.append([f"S{top:03d}", [group], part[0]["parent"], part])
+    return [(e[0], e[1], e[2], e[3]) for e in kept]
+
+
 def compute(
     functions: Sequence[Json],
     data: Sequence[Json],
@@ -170,11 +209,11 @@ def compute(
                 merged[-1] = (merged[-1][0] + [group], parent, before + fns)
                 continue
         merged.append(([group], parent, fns))
+    entries = _stable_entries(merged, functions, previous, module_of)
     slices: list[Json] = []
     owner: dict[str, str] = {}
     by_name: dict[str, str] = {}
-    for n, (groups, parent, fns) in enumerate(merged, 1):
-        sid = f"S{n:03d}"
+    for sid, groups, parent, fns in entries:
         slices.append(
             {
                 "id": sid,
@@ -189,7 +228,7 @@ def compute(
         for f in fns:
             owner[f["key"]] = sid
             by_name[f["name"]] = f["key"]
-    fn_slice = {f["name"]: owner[f["key"]] for _, _, fns in merged for f in fns}
+    fn_slice = {f["name"]: owner[f["key"]] for _, _, _, fns in entries for f in fns}
     shared: list[Json] = []
     unread: list[str] = []
     byid = {s["id"]: s for s in slices}

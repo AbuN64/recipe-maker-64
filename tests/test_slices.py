@@ -185,3 +185,25 @@ def test_a_tree_that_changes_under_the_slicer_is_refused_with_the_way_out(projec
     monkeypatch.setattr(structure, "evidence", moving)
     with pytest.raises(Exception, match="changed while the slices were cut"):
         naming.slices_evidence(project, None)
+
+
+def test_slice_ids_and_their_functions_survive_a_module_map_change_and_new_functions_append():
+    fns = [{**fn(i, "AAA" if i < 60 else "BBB"), "unit": f"u{i // 30}"} for i in range(120)]
+    first = doc_of(fns)
+    slices.assign(first, "x", ["S001"])
+    held = {s["id"]: list(s["fns"]) for s in first["slices"] if s["kind"] == "slice"}
+    # the map now merges every unit into one module: a cold recompute would cut different slices
+    merged = {f["unit"]: "ONE" for f in fns}
+    cold = doc_of(fns, module_of=merged)
+    assert {s["id"]: s["fns"] for s in cold["slices"] if s["kind"] == "slice"} != held
+    again = doc_of(fns, module_of=merged, previous=first)
+    assert {s["id"]: s["fns"] for s in again["slices"] if s["kind"] == "slice"} == held
+    assert again["assigned"] == {"x": ["S001"]}
+    # two runs over the same map are identical, and new functions only append (a vanished one just leaves its slice)
+    assert doc_of(fns, module_of=merged, previous=again)["slices"] == again["slices"]
+    extra = [{**fn(500 + i, "CCC"), "unit": "u9"} for i in range(5)]
+    grown = doc_of(fns[:-1] + extra, module_of=merged, previous=again)
+    sl = {s["id"]: s["fns"] for s in grown["slices"] if s["kind"] == "slice"}
+    for sid, keys in held.items():
+        assert [k for k in keys if k in sl[sid]] == [k for k in keys if k != fns[-1]["key"]]
+    assert all(f["key"] in grown["owner"] for f in extra)
