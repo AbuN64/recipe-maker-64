@@ -113,3 +113,21 @@ def test_plain_c_renames_keep_house_style(tmp_path):
     result = structure.build(tmp_path, [{"op": "symbol", "subject": "old", "target": "Draw"}], {}.get, {})
     assert "+#define Alias Draw" in result["patch"]
     assert "__asm__" not in result["patch"]
+
+
+def _apply_rename(tmp_path, new, table):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.c").write_text("void zork(void) {}\n")
+    (tmp_path / "versions" / "v1").mkdir(parents=True)
+    (tmp_path / "versions" / "v1" / "libultra_names.tsv").write_text("vram\tname\n" + table)
+    patch = f"--- a/src/a.c\n+++ b/src/a.c\n@@ -1 +1 @@\n-void zork(void) {{}}\n+void {new}(void) {{}}\n"
+    structure._portable_patch(tmp_path, patch)
+
+
+def test_applying_a_reserved_name_the_sdk_table_declares_original_is_not_refused(tmp_path):
+    _apply_rename(tmp_path, "__zorkHelper", "80000000\t__zorkHelper\n")
+
+
+def test_applying_a_reserved_name_no_sdk_table_declares_is_refused(tmp_path):
+    with pytest.raises(Refusal):
+        _apply_rename(tmp_path, "__zorkHelper", "80000000\tzorkOther\n")

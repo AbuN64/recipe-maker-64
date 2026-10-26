@@ -1022,6 +1022,14 @@ def test_submit_exits_nonzero_and_names_rule_and_field_of_every_refused_row(proj
     assert submit(project, [row("func_80004010", "Actor_Spawn", ["callee func_80004020"])])["exit"] == 0
 
 
+def test_submit_fails_and_says_why_when_the_apply_is_refused(project, monkeypatch):
+    refused = {"applied": False, "apply_refused": "patch context moved", "next": "recipe apply"}
+    monkeypatch.setattr(naming, "_land", lambda *a, **k: refused)
+    got = submit(project, [row("func_80004010", "Actor_Spawn", ["callee func_80004020"])])
+    assert got["exit"] == 1 and got["refused"] == 0
+    assert [f["message"] for f in got["findings"]] == ["not applied: patch context moved"]
+
+
 def test_submit_findings_carry_each_refusal_for_the_wrapper(project):
     got = submit(project, [row("func_80004030", "Menu_Spawn", ["callee func_80004020"])])
     assert got["findings"][0]["key"] == "recipe.name" and "refused regex name" in got["findings"][0]["message"]

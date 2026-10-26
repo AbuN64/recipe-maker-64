@@ -1397,10 +1397,18 @@ def _portable_patch(root: Path, patch: str) -> None:
         if dst != "/dev/null":
             after[dst] = "".join(result)
     census = root / ".unbake" / "recipe" / "naming-census.pkl"
-    known = api.naming_findings(before, census)
+    table = root / "versions"  # the SDK names every version's table declares original, as `build` admits them
+    evidenced = frozenset(
+        sdk_names(root, sorted(d.name for d in table.iterdir() if d.is_dir()) if table.is_dir() else ()).values()
+    )
+    known = api.naming_findings(before, census, evidenced)
     held = {(f.path, f.reason) for f in known}
     named = {f.reason for f in known}  # a name the tree already spells somewhere moves with its text (a merged file)
-    added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in held and f.reason not in named]
+    added = [
+        f
+        for f in api.naming_findings(after, census, evidenced)
+        if (f.path, f.reason) not in held and f.reason not in named
+    ]
     if added:
         raise state.stop("recipe.apply", added[0].reason, path=added[0].path)
 

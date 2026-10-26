@@ -1479,11 +1479,15 @@ def submit(config: Config, params: Json) -> Json:
         "refusals": refusal_lines(refused),
         "findings": [  # the decomp wrapper prints these when the exit code is 1
             {"key": "recipe.name", "blocking": True, "message": line}
-            for line in [*refusal_lines(refused), *settle.lines(landed.get("settle"))]
+            for line in [
+                *refusal_lines(refused),
+                *([f"not applied: {landed['apply_refused']}"] if "apply_refused" in landed else []),
+                *settle.lines(landed.get("settle")),
+            ]
         ],
         "exit": 1
-        if refused or (landed.get("settle") or {}).get("unfixed")
-        else 0,  # a refused row is a failure the caller's `&&` must see; accepted rows are still patched
+        if refused or "apply_refused" in landed or (landed.get("settle") or {}).get("unfixed")
+        else 0,  # a refused row or a refused apply is a failure the caller's `&&` must see; accepted rows stay patched
         **built,
         "banners": f".unbake/recipe/name/banners-{k}.json",
         "next": _SHIP.format(built["path"]) if built["moves"] else "recipe name next",
