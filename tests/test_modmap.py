@@ -270,3 +270,32 @@ def test_a_const_reclass_never_prefixes_a_function_definition():
     src = {"a": "int fa(void) {\n    int r = 1;\n    return r;\n}\nunsigned char t[2] = { 1, 2 };\n"}
     modmap.prepare(src, "const", "a")
     assert src["a"] == "int fa(void) {\n    int r = 1;\n    return r;\n}\nconst unsigned char t[2] = { 1, 2 };\n"
+
+
+def test_a_module_part_way_merged_merges_the_units_that_are_left_and_notes_the_gone_ones(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    tree(
+        tmp_path,
+        {
+            "src/g/A1.CPP": UNIT_A,
+            "src/g/B1.CPP": UNIT_B,
+            "include/g/A1.H": "#ifndef G_A1_H\n#define G_A1_H\nextern int fa(void);\n#endif\n",
+            "include/g/B1.H": "#ifndef G_B1_H\n#define G_B1_H\nextern int fb(void);\n#endif\n",
+        },
+    )
+    head = "unit\tmodule\theader\tstage\tconfidence\tkind\n"
+    row = "{}\tsrc/g/MOD.CPP\tinclude/g/MOD.H\tnow\thigh\tcode\n"
+    (tmp_path / "map.tsv").write_text(
+        head + "".join(row.format(u) for u in ("src/g/A1.CPP", "src/g/GONE.CPP", "src/g/B1.CPP"))
+    )
+    monkeypatch.setattr(modcheck, "facts", lambda *_: {})
+    monkeypatch.setattr(modcheck, "unbuilt", lambda *_: [])
+    monkeypatch.setattr(modcheck, "identity", lambda *_: lambda _u: "")
+    monkeypatch.setattr(modcheck, "check", lambda *_: ([], [], []))
+    monkeypatch.setattr(modcheck, "roms", lambda *_: {})
+    config = SimpleNamespace(project=SimpleNamespace(root=str(tmp_path), versions=["us"]))
+    got = modmap.run(config, {"map": str(tmp_path / "map.tsv"), "stage": "all"})
+    assert got["refused"] == [] and got["modules"] == ["src/g/MOD.CPP"] and got["units"] == 2
+    assert got["notes"] == ["src/g/MOD.CPP: units gone from the tree, merged without them: src/g/GONE.CPP"]
+    assert "+int fa(void)" in got["patch"] and "+int fb(void)" in got["patch"]

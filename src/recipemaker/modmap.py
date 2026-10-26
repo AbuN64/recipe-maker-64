@@ -8,8 +8,9 @@ What it refuses, with the module and the reason (the rest of the selection still
   map, mixed toolchain or flags);
 - a module of assembler units, or one that mixes assembler with C;
 - two units that define the same name with different text;
-- a module part way merged (some of its units gone, some left);
 - a module whose data has to join the code of its run (`text` reclass): by hand.
+A module part way merged (some of its units gone from the tree, some left) merges the units that are left: the rows
+of the gone ones are reconciled away with a note, and the contiguity check of the units that remain decides.
 Zero alignment padding units a reclass finds are dropped, constants declared without `const` get it.
 
 The map is a TSV with a header row; columns `unit`, `module`, `header`, `stage` are read, the rows of one module are
@@ -534,22 +535,19 @@ def run(config: Any, params: Json) -> Json:
     stage = params.get("stage") or "now"
     refused: list[Json] = []
     deferred: list[str] = []
+    notes: list[str] = []
     todo: dict[str, list[dict[str, str]]] = {}
     for module, mrows in wanted.items():
         present = [r for r in mrows if files.get(r["unit"]) is not None]
         if not present:
             continue  # done already
-        if len(present) != len(mrows):
-            refused.append(
-                {
-                    "module": module,
-                    "reason": "part way merged: " + ", ".join(r["unit"] for r in mrows if r not in present),
-                }
-            )
-        elif stage == "now" and any(r["stage"] != "now" for r in mrows):
+        if stage == "now" and any(r["stage"] != "now" for r in mrows):
             deferred.append(module)
         else:
             todo[module] = present
+            if len(present) != len(mrows):
+                gone_rows = ", ".join(r["unit"] for r in mrows if r not in present)
+                notes.append(f"{module}: units gone from the tree, merged without them: {gone_rows}")
     reclass: dict[str, list[modcheck.Reclass]] = defaultdict(list)
     if todo:
         tree = str(root)
@@ -579,7 +577,6 @@ def run(config: Any, params: Json) -> Json:
     dropped: list[str] = []
     written: dict[str, str] = {}
     where: dict[str, str] = {}
-    notes: list[str] = []
     externs_pack: list[Json] = []
     renames_pack: list[Json] = []
     gave_up: set[str] = set()
@@ -650,5 +647,5 @@ def run(config: Any, params: Json) -> Json:
         "externs": externs_pack,
         "statics": renames_pack,
         "dropped": dropped,
-        "units": sum(len(wanted[m]) for m in merged),
+        "units": sum(len(todo[m]) for m in merged),
     }
