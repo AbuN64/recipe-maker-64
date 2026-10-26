@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+from unbake.contracts import Refusal
+
 from recipemaker import modcheck, modmap, structure
 
 UNIT_A = (
@@ -176,33 +179,68 @@ def test_settle_follows_a_function_definition_and_leaves_ifdef_blocks_alone():
     assert done == ["fa"] and got["b"] == "int fa(int v);\n#if X\nint fa(char);\n#endif\n"
 
 
-def _two_unit_tree(tmp_path, other):
+def _two_unit_tree(tmp_path, other, fa="int fa(void)", fb="int fb(void)"):
     return tree(
         tmp_path,
         {
             "src/g/A1.CPP": DEFINER,
             "src/g/B1.CPP": other,
-            "include/g/A1.H": "#ifndef G_A1_H\n#define G_A1_H\nextern int fa(void);\n#endif\n",
-            "include/g/B1.H": "#ifndef G_B1_H\n#define G_B1_H\nextern int fb(void);\n#endif\n",
+            "include/g/A1.H": f"#ifndef G_A1_H\n#define G_A1_H\nextern {fa};\n#endif\n",
+            "include/g/B1.H": f"#ifndef G_B1_H\n#define G_B1_H\nextern {fb};\n#endif\n",
         },
     )
 
 
-def test_merge_module_reports_the_externs_pack_or_settles_them(tmp_path):
-    for mode in ("report", "settle"):
-        files = _two_unit_tree(tmp_path / mode, USER)
-        src = {u: files.get(u) or "" for u in ("src/g/A1.CPP", "src/g/B1.CPP")}
-        pack, notes = [], []
-        text, why = modmap.merge_module(
-            files, "src/g/MOD.CPP", ["src/g/A1.CPP", "src/g/B1.CPP"], "include/g/MOD.H", {}, src, notes, pack, mode
-        )
-        assert why == ""
-        if mode == "report":
-            assert pack[0]["name"] == "D_1" and pack[0]["defined_here"] is True
-            assert {d["unit"] for d in pack[0]["declarations"]} == {"src/g/B1.CPP"}
-            assert "extern int D_1;" in text
-        else:
-            assert pack == [] and "extern unsigned char D_1[8];" in text and "extern int D_1;" not in text
+def test_merge_module_refuses_a_conflicting_extern_or_settles_it(tmp_path):
+    files = _two_unit_tree(tmp_path / "report", USER)
+    src = {u: files.get(u) or "" for u in ("src/g/A1.CPP", "src/g/B1.CPP")}
+    with pytest.raises(
+        Refusal, match=r"D_1 is `int D_1;` in src/g/B1.CPP and `unsigned char D_1\[8\];` in its definition"
+    ):
+        modmap.merge_module(files, "src/g/MOD.CPP", list(src), "include/g/MOD.H", {}, src, [], "report")
+    files = _two_unit_tree(tmp_path / "settle", USER)
+    text, why = modmap.merge_module(files, "src/g/MOD.CPP", list(src), "include/g/MOD.H", {}, src, [], "settle")
+    assert why == ""
+    assert "extern unsigned char D_1[8];" in text and "extern int D_1;" not in text
+
+
+CONFLICTS = [  # (what A says, what B says): one name, two recorded types
+    ("extern Shared_MenuContext *D_2;\n", "extern func_80203E78_S1 *D_2;\n"),
+    ("extern float D_2;\n", "extern struct SharedTrackConstants D_2;\n"),
+    ("void *GraphU64_AddVec3(void *a);\n", "CVector3 *GraphU64_AddVec3(void *a);\n"),
+    ("void GraphU64_AddVec3(void *a);\n", "void GraphU64_AddVec3(CVector3 *a);\n"),
+]
+
+
+@pytest.mark.parametrize(("one", "two"), CONFLICTS)
+def test_merge_module_refuses_a_name_two_units_record_with_different_types(tmp_path, one, two):
+    src = {"src/g/A1.CPP": one + "int fa(void);\n", "src/g/B1.CPP": two + "int fb(void);\n"}
+    files = tree(tmp_path, src)
+    name = one.split("(")[0].split()[-1].lstrip("*") if "(" in one else one.rstrip(";\n").split()[-1].lstrip("*")
+    with pytest.raises(Refusal) as refused:
+        modmap.merge_module(files, "src/g/MOD.CPP", list(src), "-", {}, src, [])
+    reason = refused.value.findings[0].reason
+    assert name in reason and one.rstrip("\n").removeprefix("extern ") in reason
+    assert two.rstrip("\n").removeprefix("extern ") in reason
+
+
+@pytest.mark.parametrize(("one", "two"), CONFLICTS)
+def test_merge_module_refuses_a_unit_that_disagrees_with_an_included_header(tmp_path, one, two):
+    src = {"src/g/A1.CPP": '#include "g/T.H"\n' + two + "int fa(void);\n"}
+    files = tree(tmp_path, {**src, "include/g/T.H": "#ifndef G_T_H\n#define G_T_H\n" + one + "#endif\n"})
+    with pytest.raises(Refusal) as refused:
+        modmap.merge_module(files, "src/g/MOD.CPP", list(src), "-", {}, src, [])
+    reason = refused.value.findings[0].reason
+    assert "include/g/T.H" in reason and "src/g/A1.CPP" in reason
+
+
+def test_merge_module_merges_units_that_agree_on_every_type(tmp_path):
+    decl = "extern float D_2;\nvoid *Fn(void *a);\n"
+    src = {"src/g/A1.CPP": decl + "int fa(void);\n", "src/g/B1.CPP": decl + "int fb(void);\n"}
+    files = tree(tmp_path, {**src, "include/g/T.H": "#ifndef G_T_H\n#define G_T_H\n" + decl + "#endif\n"})
+    src["src/g/A1.CPP"] = '#include "g/T.H"\n' + src["src/g/A1.CPP"]
+    text, why = modmap.merge_module(files, "src/g/MOD.CPP", list(src), "-", {}, src, [])
+    assert why == "" and "int fa(void);" in text and "int fb(void);" in text
 
 
 HELP_A = "static int help(int v) { return v + 1; }\nint fa(int v) { return help(v); } /* help */\n"
@@ -225,7 +263,7 @@ def test_static_clashes_proposes_a_new_name_only_for_a_different_later_helper():
 
 def test_merge_module_refuses_two_different_helpers_with_the_proposal_or_renames_the_later_one(tmp_path):
     for mode in ("report", "rename"):
-        files = _two_unit_tree(tmp_path / mode, HELP_B)
+        files = _two_unit_tree(tmp_path / mode, HELP_B, "int fa(int v)", "int fb(int v)")
         src = {"src/g/A1.CPP": HELP_A, "src/g/B1.CPP": HELP_B}
         notes, renames = [], []
         text, why = modmap.merge_module(
@@ -236,7 +274,6 @@ def test_merge_module_refuses_two_different_helpers_with_the_proposal_or_renames
             {},
             src,
             notes,
-            [],
             "report",
             mode,
             renames,

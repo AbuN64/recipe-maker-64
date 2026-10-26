@@ -8,6 +8,9 @@ What it refuses, with the module and the reason (the rest of the selection still
   map, mixed toolchain or flags);
 - a module of assembler units, or one that mixes assembler with C;
 - two units that define the same name with different text;
+- one name whose recorded types disagree: declared in two units, in a unit and in a header the file includes, or
+  against its definition, each spelled differently. The whole plan refuses (no patch), naming the name and both
+  spellings; `--externs settle` first respells the unit declarations as the defining unit's type;
 - a module whose data has to join the code of its run (`text` reclass): by hand.
 A module part way merged (some of its units gone from the tree, some left) merges the units that are left: the rows
 of the gone ones are reconciled away with a note, and the contiguity check of the units that remain decides.
@@ -23,7 +26,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from unbake.contracts import Json
+from unbake.contracts import Finding, Json, Refusal
 
 from recipemaker import cparse, modcheck
 
@@ -113,7 +116,9 @@ def _defined(stmt: str) -> str:
 def _declared(stmt: str) -> str:
     """The name a declaration statement (extern data or a prototype) introduces ('' when it is none)."""
     text = _norm(stmt).removeprefix("extern ")
-    if "{" in text or "=" in text or text.startswith(("typedef", "struct", "union", "enum", "static", "#")):
+    if "{" in text or "=" in text or text.startswith(("typedef", "static", "#")):
+        return ""
+    if re.match(r"(?:struct|union|enum)\s+\w+\s*;$", text):  # a forward declaration; a variable of that type is not
         return ""
     found = re.search(r"(\w+)\s*\(", text) if "(" in text else re.search(r"(\w+)\s*(?:\[[^\]]*\]\s*)*;$", text)
     return found[1] if found else ""
@@ -339,6 +344,50 @@ def merge_headers(files: Any, target: str, olds: Sequence[str]) -> str | None:
     return None
 
 
+def _included(files: Any, lines: Iterable[str]) -> dict[str, str]:
+    """path -> the text between the guard of every header the include LINES reach in FILES, each once."""
+    reached: dict[str, str] = {}
+    pending = list(lines)
+    while pending:
+        spelled = _spelling(pending.pop())
+        path = next(
+            (p for s in (f"include/{spelled}", spelled) if spelled and files.get(p := fold(files, s)) is not None), ""
+        )
+        if path and path not in reached:
+            text = files.get(path) or ""
+            reached[path] = found[2] if (found := GUARD.match(text)) else text
+            pending += split_unit(reached[path])[0]
+    return reached
+
+
+def _spelled_in(path: str, text: str) -> list[tuple[str, str, str]]:
+    """(name, where, declaration) of every extern or prototype of TEXT outside #if, without its `extern`."""
+    masked, depth, out = _mask(text), 0, []
+    for lo, hi, directive in cparse.spans(masked):
+        stmt = masked[lo:hi]
+        if directive:
+            word = stmt.lstrip().removeprefix("#").lstrip()
+            depth += word.startswith("if") - word.startswith("endif")
+        elif not depth and (name := _declared(stmt)):
+            out.append((name, path, _norm(stmt).removeprefix("extern ")))
+    return out
+
+
+def conflicts(
+    files: Any, units: Sequence[str], src: dict[str, str], top: Sequence[str]
+) -> dict[str, list[tuple[str, str]]]:
+    """name -> [(where, declaration)] for every name the merged file would see spelled two ways: by the units, by a
+    header the TOP includes reach, or by its definition. The compiler would refuse each (a conflicting type)."""
+    canon, _ = declarations(units, src)
+    seen: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for path, text in [*((u, src[u]) for u in units), *_included(files, top).items()]:
+        for name, where, decl in _spelled_in(path, text):
+            seen[name].append((where, decl))
+    for name, sig in canon.items():
+        seen[name].append(("its definition", sig.removeprefix("extern ")))
+    return {n: found for n, found in seen.items() if len({d for _, d in found}) > 1}
+
+
 def merge_module(
     files: Any,
     module: str,
@@ -347,7 +396,6 @@ def merge_module(
     headers: dict[str, str],
     src: dict[str, str],
     notes: list[str],
-    pack: list[Json] | None = None,
     externs: str = "report",
     statics: str = "report",
     renames: list[Json] | None = None,
@@ -379,21 +427,9 @@ def merge_module(
             ]
         )
     )
-    if clash:
-        if externs == "settle":
-            src, settled = settle(units, src, clash)
-            notes.extend(f"{module}: {n} declaration settled to its defining unit's type" for n in settled)
-            clash = [n for n in clash if n not in settled]
-        if pack is not None:
-            for n in clash:  # no unit of the module defines it: the declarations CLEAN-P1-EXTERNS settles
-                pack.append(
-                    {
-                        "module": module,
-                        "name": n,
-                        "defined_here": n in canon,
-                        "declarations": [{"unit": u, "text": t} for u, t in spelled.get(n, ())],
-                    }
-                )
+    if clash and externs == "settle":
+        src, settled = settle(units, src, clash)
+        notes.extend(f"{module}: {n} declaration settled to its defining unit's type" for n in settled)
     top: list[str] = []
     body = ""
     for u in units:
@@ -409,9 +445,13 @@ def merge_module(
     if clashes:
         hint = f" (--statics rename: {', '.join(f'{u} {n} -> {new}' for u, n, new in proposals)})" if proposals else ""
         return "", f"{', '.join(dict.fromkeys(clashes))} defined twice with different text{hint}"
-    notes.extend(f"{module}: {n} declared with different text in two units" for n in clash)
     if olds and (why := merge_headers(files, header, olds)):
         return "", why
+    for name, found in conflicts(files, units, src, top).items():
+        (w1, d1), (w2, d2) = found[0], next(f for f in found if f[1] != found[0][1])
+        raise Refusal(
+            Finding("source.extern-conflict", f"{module}: {name} is `{d1}` in {w1} and `{d2}` in {w2}", unit=name)
+        )
     for old in olds:
         headers[old.removeprefix("include/")] = ours
     return "".join(x + "\n" for x in top) + ("\n" if top else "") + merged, ""
@@ -599,7 +639,6 @@ def run(config: Any, params: Json) -> Json:
     dropped: list[str] = []
     written: dict[str, str] = {}
     where: dict[str, str] = {}
-    externs_pack: list[Json] = []
     renames_pack: list[Json] = []
     gave_up: set[str] = set()
     constants: set[str] = set()
@@ -633,7 +672,6 @@ def run(config: Any, params: Json) -> Json:
                 headers,
                 mine,
                 notes,
-                externs_pack,
                 str(params.get("externs") or "report"),
                 str(params.get("statics") or "report"),
                 renames_pack,
@@ -672,7 +710,6 @@ def run(config: Any, params: Json) -> Json:
         "refused": refused,
         "deferred": deferred,
         "notes": notes,
-        "externs": externs_pack,
         "statics": renames_pack,
         "dropped": dropped,
         "units": sum(len(todo[m]) for m in merged),

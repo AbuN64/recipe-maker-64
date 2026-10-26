@@ -217,7 +217,7 @@ def _parser() -> argparse.ArgumentParser:
         choices=("report", "settle"),
         default="report",
         help="map: `settle` respells an extern or prototype two units spell differently as the defining unit's type"
-        " (never a body); `report` lists them as a pack for the extern cleanup",
+        " (never a body); `report` refuses the plan, naming the name and both spellings",
     )
     one.add_argument(
         "--statics",
