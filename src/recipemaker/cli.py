@@ -213,6 +213,20 @@ def _parser() -> argparse.ArgumentParser:
         help="map: modules whose name confidence is below this keep the first unit's address stem (default medium)",
     )
     one.add_argument(
+        "--externs",
+        choices=("report", "settle"),
+        default="report",
+        help="map: `settle` respells an extern or prototype two units spell differently as the defining unit's type"
+        " (never a body); `report` lists them as a pack for the extern cleanup",
+    )
+    one.add_argument(
+        "--statics",
+        choices=("report", "rename"),
+        default="report",
+        help="map: `rename` gives a later file-local helper that shares a name with a different earlier one the name"
+        " NAME_2 (uses in its unit follow, strings and comments stay); `report` refuses the module and proposes it",
+    )
+    one.add_argument(
         "--rom", help="map: the base ROM per version for the zero-padding test (default roms/baserom.{v}.z64)"
     )
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")

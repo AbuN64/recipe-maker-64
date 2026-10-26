@@ -138,6 +138,123 @@ def disagreements(units: Sequence[str], src: dict[str, str]) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def _signature(stmt: str) -> str:
+    """The declaration a definition statement stands for (`extern` data without its initializer, a prototype for a
+    function), '' for a static, a typedef, a record or anything that is not an external name."""
+    text = _norm(stmt)
+    if text.startswith(("static", "typedef", "struct", "union", "enum", "#", "extern")):
+        return ""
+    brace, equals = text.find("{"), text.find("=")
+    if brace >= 0 and (equals < 0 or brace < equals):  # a function body
+        head = text[:brace].strip()
+        return head + ";" if re.search(r"\w+\s*\(.*\)$", head) else ""
+    left = text.split("=")[0].strip().rstrip(";").strip()
+    return f"extern {left};" if re.search(r"\w+\s*(?:\[[^\]]*\]\s*)*$", left) and "(" not in left else ""
+
+
+def declarations(units: Sequence[str], src: dict[str, str]) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
+    """(name -> the declaration its definition in these units gives, name -> [(unit, text)] of every extern or
+    prototype outside #if): what `settle` needs to bring the declarations to the defining unit's type."""
+    canon: dict[str, str] = {}
+    spelled: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for unit in units:
+        masked, depth = _mask(src[unit]), 0
+        for lo, hi, directive in cparse.spans(masked):
+            stmt = masked[lo:hi]
+            if directive:
+                word = stmt.lstrip().removeprefix("#").lstrip()
+                depth += word.startswith("if") - word.startswith("endif")
+            elif depth:
+                continue
+            elif name := _declared(stmt):
+                body = _norm(stmt)
+                if body.startswith("extern") or re.search(r"\)\s*;$", body):
+                    spelled[name].append((unit, body))
+                elif sig := _signature(stmt):
+                    canon.setdefault(name, sig)  # a tentative definition without `extern`
+            elif (name := _defined(stmt)) and (sig := _signature(stmt)):
+                canon.setdefault(name, sig)
+    return canon, spelled
+
+
+def settle(units: Sequence[str], src: dict[str, str], names: Sequence[str]) -> tuple[dict[str, str], list[str]]:
+    """(the texts with each declaration of NAMES that differs from its defining unit's type respelled as that type,
+    the names settled). A name no unit of the module defines is left to the pack. Only extern and prototype
+    statements change, never a body; the five-ROM check after `recipe apply` is the judge."""
+    canon, _ = declarations(units, src)
+    out = dict(src)
+    done: list[str] = []
+    for name in names:
+        want = canon.get(name)
+        if not want:
+            continue
+        for unit in units:
+            masked, depth = _mask(out[unit]), 0
+            edits: list[tuple[int, int]] = []
+            for lo, hi, directive in cparse.spans(masked):
+                stmt = masked[lo:hi]
+                if directive:
+                    word = stmt.lstrip().removeprefix("#").lstrip()
+                    depth += word.startswith("if") - word.startswith("endif")
+                elif not depth and _declared(stmt) == name:
+                    body = _norm(stmt)
+                    if (body.startswith("extern") or body.endswith(");")) and _norm(want) != body:
+                        edits.append((lo, hi))
+            for lo, hi in reversed(edits):
+                lead = out[unit][lo:hi][: len(out[unit][lo:hi]) - len(out[unit][lo:hi].lstrip())]
+                out[unit] = out[unit][:lo] + lead + want + out[unit][hi:]
+        done.append(name)
+    return out, done
+
+
+_LITERAL = re.compile(r"""\"(?:\\.|[^"\\\n])*\"|'(?:\\.|[^'\\\n])*'|/\*.*?\*/|//[^\n]*""", re.S)
+
+
+def rename_word(text: str, old: str, new: str) -> str:
+    """TEXT with the identifier OLD spelled NEW in code: strings, characters and comments stay as they are."""
+    word = re.compile(rf"\b{re.escape(old)}\b")
+    out, at = [], 0
+    for m in _LITERAL.finditer(text):
+        out += [word.sub(new, text[at : m.start()]), m[0]]
+        at = m.end()
+    return "".join([*out, word.sub(new, text[at:])])
+
+
+def static_defs(text: str) -> dict[str, str]:
+    """name -> normalized text of every file-local function or variable a unit defines outside #if."""
+    masked, depth = _mask(text), 0
+    out: dict[str, str] = {}
+    for lo, hi, directive in cparse.spans(masked):
+        stmt = masked[lo:hi]
+        if directive:
+            word = stmt.lstrip().removeprefix("#").lstrip()
+            depth += word.startswith("if") - word.startswith("endif")
+        elif not depth and _norm(stmt).startswith("static") and (name := _defined(stmt)) and " " not in name:
+            out.setdefault(name, _norm(stmt))
+    return out
+
+
+def static_clashes(units: Sequence[str], src: dict[str, str]) -> list[tuple[str, str, str]]:
+    """[(unit, name, new name)]: a file-local helper two units of a module define with different text. The first
+    definition keeps its name; each different later one gets `NAME_2`, `NAME_3` (a name no unit spells yet)."""
+    seen: dict[str, list[str]] = {}
+    out: list[tuple[str, str, str]] = []
+    used = {w for u in units for w in re.findall(r"\w+", src[u])}
+    for unit in units:
+        for name, text in static_defs(src[unit]).items():
+            variants = seen.setdefault(name, [])
+            if text in variants:
+                continue
+            variants.append(text)
+            if len(variants) > 1:
+                count = len(variants)
+                while f"{name}_{count}" in used:
+                    count += 1
+                used.add(f"{name}_{count}")
+                out.append((unit, name, f"{name}_{count}"))
+    return out
+
+
 def dedupe(text: str) -> tuple[str, list[str]]:
     """(text, clashes): a top-level statement identical to an earlier one outside any #if is dropped; two statements
     outside #if that define one name with different text are a clash."""
@@ -229,6 +346,10 @@ def merge_module(
     headers: dict[str, str],
     src: dict[str, str],
     notes: list[str],
+    pack: list[Json] | None = None,
+    externs: str = "report",
+    statics: str = "report",
+    renames: list[Json] | None = None,
 ) -> tuple[str, str]:
     """(text, why): UNITS (read from SRC, in map order) merged into one file for MODULE with its HEADER. The module
     header and the unit headers are edited in FILES now; the units themselves are written by the caller, once every
@@ -239,6 +360,39 @@ def merge_module(
     olds = [h for u in units if header.startswith("include/") and (h := own_header(files, u))]
     moved = {o.removeprefix("include/") for o in olds}
     ours = header.removeprefix("include/")
+    proposals = static_clashes(units, src)
+    if proposals and statics == "rename":
+        src = dict(src)
+        for unit, name, new in proposals:
+            src[unit] = rename_word(src[unit], name, new)
+            notes.append(f"{module}: static {name} in {unit} renamed {new} (a different helper of the same name)")
+        proposals = []
+    if renames is not None:
+        renames += [{"module": module, "unit": u, "name": n, "to": new} for u, n, new in proposals]
+    canon, spelled = declarations(units, src)
+    clash = list(
+        dict.fromkeys(
+            [
+                *disagreements(units, src),
+                *(n for n, found in spelled.items() if n in canon and any(t != canon[n] for _, t in found)),
+            ]
+        )
+    )
+    if clash:
+        if externs == "settle":
+            src, settled = settle(units, src, clash)
+            notes.extend(f"{module}: {n} declaration settled to its defining unit's type" for n in settled)
+            clash = [n for n in clash if n not in settled]
+        if pack is not None:
+            for n in clash:  # no unit of the module defines it: the declarations CLEAN-P1-EXTERNS settles
+                pack.append(
+                    {
+                        "module": module,
+                        "name": n,
+                        "defined_here": n in canon,
+                        "declarations": [{"unit": u, "text": t} for u, t in spelled.get(n, ())],
+                    }
+                )
     top: list[str] = []
     body = ""
     for u in units:
@@ -252,8 +406,9 @@ def merge_module(
         top.append(f'#include "{ours}"')
     merged, clashes = dedupe(body)
     if clashes:
-        return "", f"{', '.join(dict.fromkeys(clashes))} defined twice with different text"
-    notes.extend(f"{module}: {n} declared with different text in two units" for n in disagreements(units, src))
+        hint = f" (--statics rename: {', '.join(f'{u} {n} -> {new}' for u, n, new in proposals)})" if proposals else ""
+        return "", f"{', '.join(dict.fromkeys(clashes))} defined twice with different text{hint}"
+    notes.extend(f"{module}: {n} declared with different text in two units" for n in clash)
     if olds and (why := merge_headers(files, header, olds)):
         return "", why
     for old in olds:
@@ -319,6 +474,14 @@ def _rekey_rows(files: Any, where: dict[str, str]) -> None:
     files.put("config.toml", row.sub(one, text))
 
 
+def occupied(files: Any, target: str, going: set[str]) -> str:
+    """Why a module may not be written to TARGET ('' when it may): the file exists and this run does not merge it away
+    (GASTATE_5 -> GASTATE_2, a unit of the module GASTATE that waits), so the write would drop what it holds."""
+    if target in going or files.get(target) is None:
+        return ""
+    return f"{target} exists and belongs to a module not merged away in this run: merge that module first"
+
+
 def run(config: Any, params: Json) -> Json:
     """`recipe structure --map FILE`: the patch that applies the map (see the module doc)."""
     from recipemaker import structure  # structure imports this module lazily
@@ -376,6 +539,9 @@ def run(config: Any, params: Json) -> Json:
     written: dict[str, str] = {}
     where: dict[str, str] = {}
     notes: list[str] = []
+    externs_pack: list[Json] = []
+    renames_pack: list[Json] = []
+    gave_up: set[str] = set()
     src = {r["unit"]: files.get(r["unit"]) or "" for mrows in todo.values() for r in mrows}
     for module, mrows in todo.items():
         units = [r["unit"] for r in mrows]
@@ -393,8 +559,23 @@ def run(config: Any, params: Json) -> Json:
             target, header = keep[0], (own_header(files, keep[0]) or "-")
             if len(keep) == 1 and not left:
                 continue
+        going = {r["unit"] for m, rs in todo.items() if m not in gave_up for r in rs}
         if not why and keep:
-            text, why = merge_module(files, target, keep, header, headers, mine, notes)
+            why = occupied(files, target, going)
+        if not why and keep:
+            text, why = merge_module(
+                files,
+                target,
+                keep,
+                header,
+                headers,
+                mine,
+                notes,
+                externs_pack,
+                str(params.get("externs") or "report"),
+                str(params.get("statics") or "report"),
+                renames_pack,
+            )
         if why:
             files.text.clear()
             files.text.update(snap[0])
@@ -402,6 +583,7 @@ def run(config: Any, params: Json) -> Json:
             files.origin.update(snap[1])
             files._spelled = None  # the include index is rebuilt from the restored texts
             refused.append({"module": module, "reason": why})
+            gave_up.add(module)
         else:
             merged.append(module)
             dropped += left
@@ -424,6 +606,8 @@ def run(config: Any, params: Json) -> Json:
         "refused": refused,
         "deferred": deferred,
         "notes": notes,
+        "externs": externs_pack,
+        "statics": renames_pack,
         "dropped": dropped,
         "units": sum(len(wanted[m]) for m in merged),
     }

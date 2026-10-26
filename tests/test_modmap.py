@@ -138,3 +138,107 @@ def test_reserved_name_hint_spells_the_style_form():
         "write Cache_RecycleNode (Module_VerbNoun, one underscore)"
     )
     assert naming.reserved_hint("Cache_RecycleNode") == ""
+
+
+DEFINER = "unsigned char D_1[8] = { 1 };\nint fa(void) { return D_1[0]; }\n"
+USER = "extern int D_1;\nint fb(void);\nint fb(void) { return D_1; }\n"
+
+
+def test_settle_respells_a_declaration_as_its_defining_units_type_and_touches_no_body():
+    src = {"a": DEFINER, "b": USER}
+    got, done = modmap.settle(["a", "b"], src, ["D_1"])
+    assert done == ["D_1"] and got["a"] == DEFINER
+    assert got["b"] == "extern unsigned char D_1[8];\nint fb(void);\nint fb(void) { return D_1; }\n"
+
+
+def test_settle_leaves_a_name_no_unit_defines_to_the_pack():
+    src = {"a": "extern int D_9;\n", "b": "extern char D_9;\n"}
+    got, done = modmap.settle(["a", "b"], src, ["D_9"])
+    assert done == [] and got == src
+
+
+def test_settle_follows_a_function_definition_and_leaves_ifdef_blocks_alone():
+    src = {"a": "int fa(int v) { return v; }\n", "b": "int fa();\n#if X\nint fa(char);\n#endif\n"}
+    got, done = modmap.settle(["a", "b"], src, ["fa"])
+    assert done == ["fa"] and got["b"] == "int fa(int v);\n#if X\nint fa(char);\n#endif\n"
+
+
+def _two_unit_tree(tmp_path, other):
+    return tree(
+        tmp_path,
+        {
+            "src/g/A1.CPP": DEFINER,
+            "src/g/B1.CPP": other,
+            "include/g/A1.H": "#ifndef G_A1_H\n#define G_A1_H\nextern int fa(void);\n#endif\n",
+            "include/g/B1.H": "#ifndef G_B1_H\n#define G_B1_H\nextern int fb(void);\n#endif\n",
+        },
+    )
+
+
+def test_merge_module_reports_the_externs_pack_or_settles_them(tmp_path):
+    for mode in ("report", "settle"):
+        files = _two_unit_tree(tmp_path / mode, USER)
+        src = {u: files.get(u) or "" for u in ("src/g/A1.CPP", "src/g/B1.CPP")}
+        pack, notes = [], []
+        text, why = modmap.merge_module(
+            files, "src/g/MOD.CPP", ["src/g/A1.CPP", "src/g/B1.CPP"], "include/g/MOD.H", {}, src, notes, pack, mode
+        )
+        assert why == ""
+        if mode == "report":
+            assert pack[0]["name"] == "D_1" and pack[0]["defined_here"] is True
+            assert {d["unit"] for d in pack[0]["declarations"]} == {"src/g/B1.CPP"}
+            assert "extern int D_1;" in text
+        else:
+            assert pack == [] and "extern unsigned char D_1[8];" in text and "extern int D_1;" not in text
+
+
+HELP_A = "static int help(int v) { return v + 1; }\nint fa(int v) { return help(v); } /* help */\n"
+HELP_B = 'static int help(int v) { return v * 2; }\nint fb(int v) { puts("help"); return help(v); }\n'
+
+
+def test_rename_word_leaves_strings_and_comments_alone():
+    text = "int help(void); /* help */ puts(\"help\"); x = help(1); y = 'h'; // help\n"
+    assert modmap.rename_word(text, "help", "help_2") == (
+        "int help_2(void); /* help */ puts(\"help\"); x = help_2(1); y = 'h'; // help\n"
+    )
+
+
+def test_static_clashes_proposes_a_new_name_only_for_a_different_later_helper():
+    same = {"a": HELP_A, "b": HELP_A.replace("fa", "fb")}
+    assert modmap.static_clashes(["a", "b"], same) == []
+    assert modmap.static_clashes(["a", "b"], {"a": HELP_A, "b": HELP_B}) == [("b", "help", "help_2")]
+    assert modmap.static_clashes(["a", "b"], {"a": HELP_A, "b": HELP_B + "int help_2;\n"}) == [("b", "help", "help_3")]
+
+
+def test_merge_module_refuses_two_different_helpers_with_the_proposal_or_renames_the_later_one(tmp_path):
+    for mode in ("report", "rename"):
+        files = _two_unit_tree(tmp_path / mode, HELP_B)
+        src = {"src/g/A1.CPP": HELP_A, "src/g/B1.CPP": HELP_B}
+        notes, renames = [], []
+        text, why = modmap.merge_module(
+            files,
+            "src/g/MOD.CPP",
+            ["src/g/A1.CPP", "src/g/B1.CPP"],
+            "include/g/MOD.H",
+            {},
+            src,
+            notes,
+            [],
+            "report",
+            mode,
+            renames,
+        )
+        if mode == "report":
+            assert "help defined twice" in why and "src/g/B1.CPP help -> help_2" in why
+            assert renames == [{"module": "src/g/MOD.CPP", "unit": "src/g/B1.CPP", "name": "help", "to": "help_2"}]
+        else:
+            assert why == "" and "static int help_2(int v) { return v * 2; }" in text
+            assert "return help_2(v);" in text and 'puts("help")' in text and "return help(v);" in text
+            assert any("renamed help_2" in n for n in notes)
+
+
+def test_occupied_refuses_a_target_that_exists_and_stays(tmp_path):
+    files = tree(tmp_path, {"src/g/GA_2.CPP": "int fb(void);\n"})
+    assert "merge that module first" in modmap.occupied(files, "src/g/GA_2.CPP", set())
+    assert modmap.occupied(files, "src/g/GA_2.CPP", {"src/g/GA_2.CPP"}) == ""
+    assert modmap.occupied(files, "src/g/NEW.CPP", set()) == ""
