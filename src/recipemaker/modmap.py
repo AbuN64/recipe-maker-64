@@ -536,6 +536,7 @@ def run(config: Any, params: Json) -> Json:
     refused: list[Json] = []
     deferred: list[str] = []
     notes: list[str] = []
+    absent: dict[str, str] = {}
     todo: dict[str, list[dict[str, str]]] = {}
     for module, mrows in wanted.items():
         present = [r for r in mrows if files.get(r["unit"]) is not None]
@@ -546,8 +547,7 @@ def run(config: Any, params: Json) -> Json:
         else:
             todo[module] = present
             if len(present) != len(mrows):
-                gone_rows = ", ".join(r["unit"] for r in mrows if r not in present)
-                notes.append(f"{module}: units gone from the tree, merged without them: {gone_rows}")
+                absent[module] = ", ".join(r["unit"] for r in mrows if r not in present)
     reclass: dict[str, list[modcheck.Reclass]] = defaultdict(list)
     if todo:
         tree = str(root)
@@ -624,6 +624,8 @@ def run(config: Any, params: Json) -> Json:
             gave_up.add(module)
         else:
             merged.append(module)
+            if module in absent:
+                notes.append(f"{module}: units gone from the tree, merged without them: {absent[module]}")
             dropped += left
             written[target] = text
             where[module] = target
