@@ -153,6 +153,7 @@ class Map:
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
         self._externs: set[str] | None = None
+        self._extern_members: set[str] | None = None  # the members some extern declaration spells under any alias
         self._strings: slicepack.Strings | None = (
             None  # the strings the data holds (`string` evidence), built at first use
         )
@@ -405,6 +406,13 @@ class Map:
             text = done.stdout.decode("utf-8", errors="replace") if done.exit in (0, 1) else ""
             self._externs = set(re.findall(r"[A-Za-z_]\w*", text))
         return self._externs
+
+    def is_extern(self, name: str) -> bool:
+        """Whether a datum is declared `extern` anywhere under ANY spelling of it: its own name or a version twin's
+        (`D_800C2950_de` in a header beside the member `D_800C2950`), which `externs` alone misses (it holds words)."""
+        if self._extern_members is None:
+            self._extern_members = {self.canon(w) for w in self.externs()}
+        return name in self.externs() or self.canon(name) in self._extern_members
 
     def same(self, a: str, b: str) -> bool:
         """Whether two spellings are one symbol: equal, or two names some version's symbol table puts at one address
@@ -839,7 +847,7 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         (
             n,
             "global"
-            if n not in ctx.members or len({ctx.module_at(c) for c in by}) >= 2 or n in ctx.externs()
+            if n not in ctx.members or len({ctx.module_at(c) for c in by}) >= 2 or ctx.is_extern(n)
             else "static",
         )
         for n, by in data.items()
@@ -1154,7 +1162,7 @@ def _chosen(ctx: Map, step: str, target: str) -> tuple[str, str]:
         return ("function", member["name"])
     if member:
         readers = {ctx.module_at(c) for c in ctx.callers.get(member["name"], ())}
-        return ("global" if len(readers) >= 2 or member["name"] in ctx.externs() else "static", member["name"])
+        return ("global" if len(readers) >= 2 or ctx.is_extern(member["name"]) else "static", member["name"])
     if target in {ctx.folder(m) for m in ctx.modules}:
         return ("subsystem", target)
     if kind := ctx.symbol_kind(target):  # a symbol some version's table knows, owned by no module (a bss datum)

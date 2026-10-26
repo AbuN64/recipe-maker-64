@@ -154,7 +154,7 @@ def candidates(
             if len(held) != 1:
                 continue
             readers = list(dict.fromkeys(ctx.callers.get(name, ())))
-            scope = "global" if name in ctx.externs() or len({ctx.module_at(c) for c in readers}) >= 2 else "static"
+            scope = "global" if ctx.is_extern(name) or len({ctx.module_at(c) for c in readers}) >= 2 else "static"
             new = string_name(held[0], scope)
             fragment = words(held[0])[0] if new else ""
             if not new:

@@ -386,7 +386,7 @@ def _fn_card(
 
 def _datum_card(ctx: Any, name: str, key: str, strings: Strings, extra: Json) -> Json:
     readers = list(dict.fromkeys(ctx.callers.get(name, ())))
-    scope = "global" if name in ctx.externs() or len({ctx.module_at(c) for c in readers}) >= 2 else "static"
+    scope = "global" if ctx.is_extern(name) or len({ctx.module_at(c) for c in readers}) >= 2 else "static"
     return {
         "key": key,
         "kind": "datum",

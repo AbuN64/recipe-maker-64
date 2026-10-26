@@ -1210,3 +1210,12 @@ def test_a_reprefix_row_renames_a_named_function_to_the_maps_prefix_and_only_tha
     assert got["accepted"] == 0 and got["by_rule"] == {
         "named": 1
     }  # any other rename of a named function still needs a reason
+
+
+def test_a_datum_declared_extern_under_a_version_twins_spelling_counts_as_extern(project, monkeypatch):
+    """CLEAN-P1-EXTERNS: `s_flyModeOffText` was proposed for a datum whose twin is extern in a header."""
+    _aliased(monkeypatch)
+    ctx = naming.Map(project, document(), GRAPH)
+    ctx._externs = {"D_alias_de"}  # no word of any extern declaration is the member's own name
+    monkeypatch.setattr(ctx, "canon", lambda n: "D_80005000" if n == "D_alias_de" else n)
+    assert ctx.is_extern("D_80005000") and not ctx.is_extern("D_80002000")
