@@ -299,3 +299,22 @@ def test_a_module_part_way_merged_merges_the_units_that_are_left_and_notes_the_g
     assert got["refused"] == [] and got["modules"] == ["src/g/MOD.CPP"] and got["units"] == 2
     assert got["notes"] == ["src/g/MOD.CPP: units gone from the tree, merged without them: src/g/GONE.CPP"]
     assert "+int fa(void)" in got["patch"] and "+int fb(void)" in got["patch"]
+
+
+def test_a_const_reclass_names_the_data_it_made_const_and_the_externs_follow(tmp_path):
+    from recipemaker.structure import Files
+
+    src = {"a": 'char g_idx[40] = "x";\nstatic int s = 3;\nunsigned short D_t[2] = {1, 2};\n'}
+    made: set[str] = set()
+    modmap.prepare(src, "const", "a", made)
+    assert made == {"g_idx", "D_t"}
+    (tmp_path / "include").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include" / "h.H").write_text(
+        "extern char g_idx[40];\nextern const char other[2];\nextern int g_idx2;\n"
+    )
+    (tmp_path / "src" / "u.c").write_text("extern unsigned short D_t[];\nvoid f(void) { extern char g_idx[40]; }\n")
+    files = Files(tmp_path)
+    assert modmap.constify_declarations(files, made) == 3
+    assert files.get("include/h.H") == "extern const char g_idx[40];\nextern const char other[2];\nextern int g_idx2;\n"
+    assert files.get("src/u.c") == "extern const unsigned short D_t[];\nvoid f(void) { extern const char g_idx[40]; }\n"

@@ -452,7 +452,25 @@ def strip_zero_data(text: str) -> str:
     return text
 
 
-def prepare(src: dict[str, str], action: str, unit: str) -> str:
+def _data_name(head: str) -> str:
+    """The name a data definition HEAD (the text before its `=`) declares: its last word before any array bounds."""
+    found = re.search(r"(\w+)\s*(?:\[[^\]]*\]\s*)*$", head.strip())
+    return found[1] if found else ""
+
+
+def constify_declarations(files: Any, names: Iterable[str]) -> int:
+    """Each `extern` declaration of NAMES without `const` gets it, so it spells its definition's new type (a definition
+    made const beside a non-const header declaration was `conflicting types`, B10 record 12)."""
+    done = 0
+    for name in sorted(set(names)):
+        pattern = re.compile(
+            rf"(\bextern\s+)(?![^;{{}}]*\bconst\b)([^;{{}}()=]*?\b{re.escape(name)}\b\s*(?:\[[^;{{}}]*\])?\s*;)"
+        )
+        done += files.replace(pattern, r"\1const \2", files.everything(), needle=name)
+    return done
+
+
+def prepare(src: dict[str, str], action: str, unit: str, made: set[str] | None = None) -> str:
     """The reclass edit of one unit's text in SRC (why not, '' when done): `drop` is the caller's for a unit that
     defines no function (zero padding the merged object pads itself), a unit with code keeps it and loses only its
     zero data; `const` declares data definitions const, never a function; `text` (data inside the code) is by hand."""
@@ -472,6 +490,8 @@ def prepare(src: dict[str, str], action: str, unit: str) -> str:
                 text = (
                     text[:lo] + re.sub(r"^(static\s+)?", lambda m: (m[1] or "") + "const ", stmt, count=1) + text[hi:]
                 )
+                if made is not None and not shown.lstrip().startswith("static"):
+                    made.add(_data_name(shown.split("=")[0]))
         src[unit] = text
         return ""
     return f"{unit}: data inside the code run of its module joins the code by hand"
@@ -580,15 +600,17 @@ def run(config: Any, params: Json) -> Json:
     externs_pack: list[Json] = []
     renames_pack: list[Json] = []
     gave_up: set[str] = set()
+    constants: set[str] = set()
     src = {r["unit"]: files.get(r["unit"]) or "" for mrows in todo.values() for r in mrows}
     for module, mrows in todo.items():
         units = [r["unit"] for r in mrows]
         snap = (dict(files.text), dict(files.origin))
         mine = dict(src)
         why, text, left = "", "", []
+        made: set[str] = set()
         for rec in reclass.get(module, ()):
             if rec.unit in units:
-                why = why or prepare(mine, rec.action, rec.unit)
+                why = why or prepare(mine, rec.action, rec.unit, made)
                 left += [rec.unit] if rec.action == "drop" and not holds_code(src[rec.unit]) else []
         keep = [u for u in units if u not in left]
         target, header = module, mrows[0]["header"]
@@ -624,6 +646,7 @@ def run(config: Any, params: Json) -> Json:
             gave_up.add(module)
         else:
             merged.append(module)
+            constants |= made
             if module in absent:
                 notes.append(f"{module}: units gone from the tree, merged without them: {absent[module]}")
             dropped += left
@@ -636,6 +659,7 @@ def run(config: Any, params: Json) -> Json:
         if text:
             files.put(module, text)
     rewrite_includes(files, headers)
+    constify_declarations(files, constants)
     _rekey_rows(files, {r["unit"]: where[m] for m in merged for r in todo[m]})
     patch = files.diff()
     return {
