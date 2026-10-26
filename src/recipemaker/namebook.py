@@ -305,7 +305,9 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
         seen.add(key)
         return None
 
-    judged = naming.judge_rows(config, params, rows, [r["row"] for r in waiting], gate)
+    now = status()
+    landed = {r["key"]: r["name"] for r in ledger() if r["lane"] == lane and r["key"] and now.get(r["seq"]) == "landed"}
+    judged = naming.judge_rows(config, params, rows, [r["row"] for r in waiting], gate, landed)
     stored = [r for r, _ in judged.accepted if not r.get("suggest")]
     advice = [r for r, _ in judged.accepted if r.get("suggest")]
     written = append(lane, stored)

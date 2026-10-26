@@ -309,3 +309,35 @@ def test_the_copy_holding_the_evidence_line_is_the_one_a_local_row_renames(tmp_p
     assert len(spans) == 2 and repair.local_span(TWO_COPIES, "pick") is None
     assert repair.span_at(TWO_COPIES, "pick", 9) == spans[1] and repair.span_at(TWO_COPIES, "pick", 3) == spans[0]
     assert repair.span_at(TWO_COPIES, "pick", 6) is None
+
+
+def land(book, lane, key, name):
+    """A row of `lane` that landed: the tree holds `name` for the key's function (Actor_Update in the fixture)."""
+    namebook.append(lane, [{"_key": key, "name": name, "doc": "d", "evidence": []}])
+    namebook.event({"event": "landed", "batch": 1, "seqs": [max(r["seq"] for r in namebook.ledger())]})
+
+
+def test_a_lane_corrects_the_name_its_own_landed_row_gave_under_the_same_key(book, monkeypatch):
+    monkeypatch.setitem(GRAPH, "Actor_Update", (["func_80004020"], []))
+    land(book, "L1", "fn:us:80004040", "Actor_Update")
+    got = submit(book, "L1", [fn("fn:us:80004040", "Actor_Tick")])
+    assert (got["accepted"], got["refused"]) == (1, 0)
+    assert namebook.ledger()[-1]["key"] == "fn:us:80004040" and namebook.ledger()[-1]["name"] == "Actor_Tick"
+    assert namebook.ledger()[-1]["row"]["target"] == "Actor_Update"  # the rename moves the tree's current name
+
+
+def test_a_correction_still_needs_evidence_and_a_name_the_rules_accept(book, monkeypatch):
+    monkeypatch.setitem(GRAPH, "Actor_Update", (["func_80004020"], []))
+    land(book, "L1", "fn:us:80004040", "Actor_Update")
+    assert submit(book, "L1", [fn("fn:us:80004040", "Actor_DoStuff")])["by_rule"] == {"banned": 1}
+    got = submit(book, "L1", [fn("fn:us:80004040", "Actor_Tick", evidence=["callee osMissing"])])
+    assert got["by_rule"] == {"unverifiable": 1}
+
+
+def test_another_lane_or_an_unlanded_or_foreign_name_is_still_named(book):
+    land(book, "L1", "fn:us:80004040", "Actor_Update")
+    assert submit(book, "L2", [fn("fn:us:80004040", "Actor_Tick")])["by_rule"] == {"named": 1}
+    land(book, "L1", "fn:us:80004010", "Actor_Spawn")  # the tree holds func_80004010, not the landed name
+    assert submit(book, "L1", [fn("fn:us:80004030", "Actor_Start")])["accepted"] == 1
+    namebook.append("L1", [{"_key": "fn:us:80004040", "name": "Actor_Update", "doc": "d", "evidence": []}])  # queued
+    assert submit(book, "L1", [fn("fn:us:80004040", "Actor_Tock")])["by_rule"] == {"pending": 1}

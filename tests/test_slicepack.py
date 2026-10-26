@@ -158,6 +158,8 @@ def test_body_and_string_evidence_are_checked_against_the_source_and_the_data(na
     assert ctx.verifies("string Score", users)  # it loads D_80005000
     assert not ctx.verifies("string Missing", users)
     assert ctx.verifies("string pts", ["D_80005000"])
+    assert ctx.verifies("body L3: reads a member into a local", ["D_80005000"])  # a datum cites its loader's body
+    assert not ctx.verifies("body L9: outside the function", ["D_80005000"])
     assert slicepack.extra_form("body L1: x") and not slicepack.extra_form("callee x")
 
 

@@ -388,6 +388,8 @@ class Map:
             if self._strings is None:
                 self._strings, self._source = slicepack.Strings(self.config, self), slicepack.Source(self.root)
             assert self._source is not None
+            # a datum has no body: the functions that load it speak for it (the functions `caller` evidence names)
+            names = list(dict.fromkeys(x for n in names for x in ([n] if n in self.calls else self.callers.get(n, ()))))
             return slicepack.verifies(self, item, names, self._strings, self._source)
         found = _EVIDENCE.match(item)
         if not found:
@@ -611,7 +613,7 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         unnamed = style.neutral_module(PurePosixPath(ctx.modules[target]["source"]).stem)
     else:
         unnamed = style.folder_unnamed(target) if kind == "subsystem" else style.neutral(target)
-    if not unnamed and not original:
+    if not unnamed and not original and not row.get("_fix"):
         if kind == "function" and ctx.sdk_name(ctx.canon(target)) == target:
             return "catalog", f"{target} is an SDK function: its name is the catalog name"
         # An external name can gain a subsystem when its body is first placed.
@@ -1321,10 +1323,18 @@ def read_rows(path: Path) -> list[Json]:
     return rows
 
 
-def judge_rows(config: Config, params: Json, rows: list[Json], queued: Sequence[Json] = (), gate: Any = None) -> Judged:
+def judge_rows(
+    config: Config,
+    params: Json,
+    rows: list[Json],
+    queued: Sequence[Json] = (),
+    gate: Any = None,
+    landed: Mapping[str, str] | None = None,
+) -> Judged:
     """Every row of a names file against the rules and the evidence. `queued` = rows already accepted but not yet in the
     tree (the ledger's), whose names and slots count as taken; `gate(row)` returns (rule, reason) to refuse a row before
-    any other rule (the ledger's ownership check)."""
+    any other rule (the ledger's ownership check). `landed` = key -> the name this lane's landed row gave it: a row that
+    renames a function or datum from exactly that name is the lane's correction under the same key (fixes forward)."""
     out = Judged(rows=rows)
     ctx: Map | None = None
     repairs = repair.Repairs(config.project.root, lambda: debug.variables(config))
@@ -1359,6 +1369,8 @@ def judge_rows(config: Config, params: Json, rows: list[Json], queued: Sequence[
             if rule:
                 out.refused.append({"row": row, "rule": rule, "reason": reason})
                 continue
+            if landed and landed.get(str(row.get("_key"))) == row.get("target") != row.get("name"):
+                row = {**row, "_fix": True}
         if gate is not None and (why := gate(row)):
             if why[0] == "applied":
                 out.already.append(row)
