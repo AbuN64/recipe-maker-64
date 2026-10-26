@@ -178,6 +178,7 @@ class Map:
         self.alias: dict[str, str] = {}  # a module renamed by an accepted row: old name to new name
         self.taken: set[str] = {*self.members, *self.modules, *(n for t in self.tables.values() for n in t)}
         self._naming: tree.Naming | None = None
+        self._prefix_words: set[str] | None = None  # every prefix this project spells (`reprefix`), built at first use
         for module in self.modules.values():
             self.taken |= {PurePosixPath(module[k]).stem for k in ("source", "header")} | {self.folder(module["name"])}
 
@@ -211,6 +212,10 @@ class Map:
         """The module (one source file) that holds a member now, after the renames accepted so far."""
         module = self.members[member]["module"] if member in self.members else ""
         return self.alias.get(module, module)
+
+    def reprefix(self, name: str) -> str:
+        """The name `name` takes under the module map's prefix for its file, or "" (see `reprefix_of`)."""
+        return reprefix_of(self, name)
 
     def function_word(self, member: str) -> str:
         """The prefix of a function's name: the module map's prefix for the file that holds it (`prefixes`, the one
@@ -505,6 +510,32 @@ def _head(item: str) -> str:
     return f"{found[1]} {found[2]}" if found else item
 
 
+def reprefix_of(ctx: Map, name: str) -> str:
+    """The name a function takes when its file's prefix (the module map's, `function_word`) is another than the one it
+    spells: `Scene_Draw` in a file the map gives `Engine` becomes `Engine_Draw`. Only a prefix this project uses (a map
+    prefix or a folder's prefix word) is swapped, so a word that is no prefix (`Particle_...` with no such module)
+    stays; a class method, an SDK or standard routine and a name the debug catalog spells are original and stay.
+    "" when nothing changes."""
+    member = ctx.members.get(ctx.canon(name))
+    if member is None or member["kind"] != "function" or style.neutral(name):
+        return ""
+    word = ctx.function_word(name)
+    head, sep, rest = name.partition("_")
+    if not word or not sep or not rest or head == style.pascal(word):
+        return ""
+    if re.fullmatch(table("knowledge/style.toml")["names"]["class_function"], name) or ctx.sdk_name(ctx.canon(name)):
+        return ""
+    if ctx.catalog is not None and ctx.catalog.named(name):
+        return ""
+    if ctx._prefix_words is None:
+        ctx._prefix_words = {style.pascal(w) for w in ctx.prefixes.values()} | {
+            style.pascal(w) for f in {ctx.folder(m) for m in ctx.modules} if (w := style.prefix_word(f))
+        }
+    if head not in ctx._prefix_words:
+        return ""
+    return style.pascal(word) + "_" + rest
+
+
 def _original(ctx: Map, row: Json) -> bool:
     """Whether the row gives a function or datum the name its original debug record gives it there (`debug NAME`
     evidence, verified): the original spelling is the style, and it replaces a name given here."""
@@ -567,6 +598,9 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         word = ctx.function_word(target) if kind == "function" and placed else ""
         prefix = style.pascal(word) + "_" if word else ""
         repair = prefix and name == prefix + target and _form(ctx, {**row, "name": target})[0] == "regex"
+        swap = kind == "function" and placed and ctx.reprefix(target) == name
+        if swap:
+            repair = True
         if not repair or ctx.verifies(f"debug {target}", ctx.users(target, kind)):
             return "named", f"{target} already has a name"
     if original and ctx.canon(target) == name:
@@ -585,6 +619,11 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
         return "duplicate", f"carrying the prefix to {name} gives a name already taken: {clash[0]}"
     if sdk:
         return "", ""  # the libultra table line for this address is the evidence, with or without a caller
+    if kind == "function" and ctx.canon(target) in ctx.members and ctx.reprefix(target) == name:
+        return (
+            "",
+            "",
+        )  # the module map's prefix for the file that holds it is the evidence (`recipe name auto --kinds reprefix`)
     evidence = row.get("evidence")
     if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
         return "evidence", "a name needs at least one evidence item"

@@ -1154,3 +1154,59 @@ def test_a_pack_card_shows_the_maps_prefix(project):
     ctx.canon = lambda n: n
     ctx.module_at = lambda n: ""
     assert ctx.function_word("func_1") == "CrewBoss"
+
+
+def _prefix_ctx(members, prefixes, folders=("Actor", "Scene"), catalog=None, sdk=()):
+    ctx = naming.Map.__new__(naming.Map)
+    ctx.prefixes = prefixes
+    ctx.members = members
+    ctx.modules = {f"m{i}": {"name": f"m{i}"} for i, _ in enumerate(folders)}
+    ctx.folder = lambda m: folders[int(m[1:])]
+    ctx.folder_of = lambda n: "Actor"
+    ctx.alias = {}
+    ctx.canon = lambda n: n
+    ctx.module_at = lambda n: ""
+    ctx.catalog = catalog
+    ctx.sdk_name = lambda n: n if n in sdk else ""
+    ctx._prefix_words = None
+    return ctx
+
+
+def test_reprefix_swaps_a_folder_prefix_for_the_maps_prefix_and_leaves_the_rest():
+    fn = {"kind": "function", "unit": "src/c.c"}
+    ctx = _prefix_ctx(
+        {
+            n: fn
+            for n in (
+                "Scene_Draw",
+                "Particle_Draw",
+                "CPlayer_Update",
+                "CrewBoss_Spawn",
+                "osSetTimer",
+                "Scene_",
+                "func_80001000",
+            )
+        },
+        {"src/c.c": "CrewBoss"},
+        sdk=("osSetTimer",),
+    )
+    assert ctx.reprefix("Scene_Draw") == "CrewBoss_Draw"  # a prefix the project uses, not the file's
+    assert ctx.reprefix("Particle_Draw") == ""  # a word that is no prefix of this project stays
+    assert ctx.reprefix("CPlayer_Update") == ""  # a class method
+    assert ctx.reprefix("CrewBoss_Spawn") == "" and ctx.reprefix("Scene_") == "" and ctx.reprefix("func_80001000") == ""
+    assert ctx.reprefix("osSetTimer") == ""
+    ctx.catalog = type("C", (), {"named": staticmethod(lambda n: [1] if n == "Scene_Draw" else [])})()
+    assert ctx.reprefix("Scene_Draw") == ""  # the original developers' spelling
+    ctx.prefixes = {}
+    ctx.folder_of = lambda n: ""
+    assert ctx.reprefix("Scene_Draw") == ""  # no prefix for the file at all
+
+
+def test_a_reprefix_row_renames_a_named_function_to_the_maps_prefix_and_only_that(project):
+    _with_map(project, [("src/c.c", "src/game/main/crew/crew.c", "CrewBoss")])
+    got = submit(project, [row("Actor_Update", "CrewBoss_Update", [])])
+    assert got["accepted"] == 1, got  # the map is the evidence
+    got = submit(project, [row("Actor_Update", "CrewBoss_Launch", [])])
+    assert got["accepted"] == 0 and got["by_rule"] == {
+        "named": 1
+    }  # any other rename of a named function still needs a reason

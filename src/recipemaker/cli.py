@@ -268,7 +268,9 @@ def _parser() -> argparse.ArgumentParser:
     one.add_argument(
         "--out", help="slices: the names directory; step S: where the pack is written; auto: the rows file"
     )
-    one.add_argument("--kinds", help="auto: a comma list of sdk, catalog, strings (default all)")
+    one.add_argument(
+        "--kinds", help="auto: a comma list of sdk, catalog, strings, locals, reprefix (default sdk, catalog, strings)"
+    )
     one = verb("style", "style findings; exit 1 when one is an error")
     one.add_argument("paths", nargs="*", help="check only these paths")
     one.add_argument("--paths", nargs="+", dest="only", metavar="PATH", help="the same, as `structure` takes them")
