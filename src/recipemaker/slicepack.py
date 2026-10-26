@@ -197,6 +197,43 @@ def _done(directory: Path | None) -> set[str]:
     return keys
 
 
+DEFER_AFTER = 2  # refusals of one key after which a pack stops offering it (`name next --retry` offers it again)
+
+
+def _deferred(directory: Path | None, out: Path) -> tuple[set[str], set[str]]:
+    """(the keys the lane listed in its GAPS.jsonl in the pack directory, the keys submits refused DEFER_AFTER times):
+    targets a pack skips, so `name next` advances past evidence gaps and refusals instead of repeating the cards."""
+    gaps: set[str] = set()
+    for line in _read_lines(out / "GAPS.jsonl"):
+        if key := _key_of(line):
+            gaps.add(key)
+    counts: Counter[str] = Counter()
+    for line in _read_lines((directory or slices.names_dir()) / "refused.jsonl"):
+        if key := _key_of(line):
+            counts[key] += 1
+    return gaps, {k for k, n in counts.items() if n >= DEFER_AFTER}
+
+
+def _read_lines(path: Path) -> list[Json]:
+    try:
+        texts = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[Json] = []
+    for text in texts:
+        try:
+            row = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def _key_of(row: Json) -> str:
+    return str(row.get("key") or "")
+
+
 def _names_by_key(ctx: Any, first: str) -> dict[str, str]:
     """Function key -> current name, over every function member."""
     out: dict[str, str] = {}
@@ -379,6 +416,11 @@ def build(config: Config, params: Json, ctx: Any, doc: Json) -> Json:
     root = config.project.root
     names = _names_by_key(ctx, first)
     done = _done(params.get("names_dir"))
+    out = Path(params["out"]) if params.get("out") else root / ".unbake/recipe/name"
+    out = out if out.is_absolute() else root / out
+    gaps, refused = _deferred(params.get("names_dir"), out)
+    skipped = len(gaps - done) + (0 if params.get("retry") else len(refused - gaps - done))
+    done = done | gaps | (set() if params.get("retry") else refused)
     source, strings = Source(root), Strings(config, ctx, params.get("asm_reader") or asm_text)
     chosen = [ids[i] for i in mine]
     fn_keys = [k for s in chosen for k in s.get("fns", []) if k in names]
@@ -412,8 +454,6 @@ def build(config: Config, params: Json, ctx: Any, doc: Json) -> Json:
         name = data_names.get(key)
         if name and style.neutral(name) and key not in done:
             cards.append(_datum_card(ctx, name, key, strings, extra))
-    out = Path(params["out"]) if params.get("out") else root / ".unbake/recipe/name"
-    out = out if out.is_absolute() else root / out
     k = 1 + max([int(m[1]) for p in out.glob("pack-*-*.json") if (m := re.search(r"-(\d+)\.json$", p.name))], default=0)
     label = "+".join(mine)
     pack_path, answer = out / f"pack-{label}-{k}.json", out / f"names-{label}-{k}.jsonl"
@@ -438,6 +478,17 @@ def build(config: Config, params: Json, ctx: Any, doc: Json) -> Json:
         "rule": "one row per function, per slot and per datum you can name; members become rows with suggest:true",
     }
     structure.write(pack_path, json.dumps(pack))
+    skeleton = [
+        r
+        for c in cards
+        for r in (
+            *(c.get("rows") or {}).get("slots", ()),
+            *[v for k, v in (c.get("rows") or {}).items() if k != "slots"],
+        )
+    ]
+    structure.write(
+        answer, "".join(json.dumps(r) + "\n" for r in skeleton)
+    )  # fill the names in; unfilled rows are left out
     left = len(fn_keys) - sum(1 for c in cards if c["kind"] == "function")
     count = Counter(c["kind"] for c in cards)
     return {
@@ -451,5 +502,6 @@ def build(config: Config, params: Json, ctx: Any, doc: Json) -> Json:
         "data": count["datum"],
         "slots": sum(len(c["proposals"]["slots"]) for c in cards if c["kind"] == "function"),
         "functions_left": max(0, left),
+        "skipped": skipped,
         "next": f"recipe name submit --ledger {target} {answer}" if cards else "recipe name slices",
     }

@@ -242,6 +242,9 @@ def _parser() -> argparse.ArgumentParser:
         help="submit: judge the rows against the tree and the queued rows, write no tree, queue the accepted ones",
     )
     one.add_argument("--count", type=int, default=40, help="targets per pack")
+    one.add_argument(
+        "--retry", action="store_true", help="step S: offer again the keys refused twice (GAPS.jsonl keys stay skipped)"
+    )
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
     one.add_argument("--steps", help="count: the steps read, a comma list of L, N1, N3, N4, N5 (default L,N4,N5)")
     one.add_argument("--targets", nargs="+", metavar="FOLDER", help="count: the folders counted, in one evidence build")

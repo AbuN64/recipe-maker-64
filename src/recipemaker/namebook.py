@@ -116,6 +116,20 @@ def append(lane: str, rows: Sequence[Json]) -> list[Json]:
     return out
 
 
+def refused(lane: str, items: Sequence[Json]) -> None:
+    """Remember the keys a submit refused (`refused.jsonl`, one line per refusal): `name next --step S` defers a key
+    refused twice, so a pack moves on to targets it has not offered instead of repeating the same cards."""
+    keyed = [(str(i["row"].get("_key") or i["row"].get("key") or ""), i) for i in items]
+    if not any(key for key, _ in keyed):
+        return
+    store().mkdir(parents=True, exist_ok=True)
+    with locked(), open(store() / "refused.jsonl", "a", encoding="utf-8") as handle:
+        for key, item in keyed:
+            if key:
+                line = {"key": key, "lane": lane, "rule": item["rule"], "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+                handle.write(json.dumps(line, sort_keys=True) + "\n")
+
+
 def suggest(lane: str, rows: Sequence[Json], owner: Callable[[Json], str]) -> None:
     store().mkdir(parents=True, exist_ok=True)
     with locked(), open(store() / "suggest.jsonl", "a", encoding="utf-8") as handle:
@@ -254,6 +268,8 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     lane = str(params["ledger"])
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", lane):
         raise state.stop("recipe.name", f"{lane!r} is no lane name", action="recipe name submit --ledger LANE FILE")
+    unfilled = [r for r in rows if isinstance(r, dict) and r.get("key") and r.get("name") == ""]
+    rows = [r for r in rows if not (isinstance(r, dict) and r.get("key") and r.get("name") == "")]  # pack skeleton rows
     sent_back = take_returns(lane)
     waiting = queued()
     taken_keys = {r["key"] for r in waiting if r["key"]}
@@ -280,6 +296,7 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     advice = [r for r, _ in judged.accepted if r.get("suggest")]
     written = append(lane, stored)
     suggest(lane, advice, lambda r: "")
+    refused(lane, judged.refused)
     by_rule = Counter(r["rule"] for r in judged.refused)
     with (
         locked(),
@@ -296,6 +313,7 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
         "suggested": len(advice),
         "refused": len(judged.refused),
         "already": len(judged.already),
+        "unfilled": len(unfilled),
         "queued": len(waiting) + len(written),
         "seqs": [w["seq"] for w in written],
         "by_rule": dict(by_rule),

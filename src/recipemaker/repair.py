@@ -21,6 +21,8 @@ def local_span(text: str, function: str) -> tuple[int, int] | None:
     masked = access.mask(text)
     head = re.compile(rf"^[\w\s*]+\b{re.escape(function)}\s*\(")
     found = [(a, b) for a, b, directive in cparse.spans(masked) if not directive and head.match(masked[a:b])]
+    if len(found) > 1:  # a prototype beside its definition (or two): the one with a body holds the locals
+        found = [(a, b) for a, b in found if "{" in masked[a:b]]
     return found[0] if len(found) == 1 else None
 
 
@@ -103,7 +105,7 @@ class Repairs:
             if not a <= at < b:
                 return "scope", "evidence line is outside the named function", []
             scope = masked[a:b]
-            declaration = re.compile(rf"\b(\w+)(?:\s+|\s*\*\s*){re.escape(old)}\s*(?=[=;,)\[])")
+            declaration = re.compile(rf"\b(\w+)(?:\s+|\s*(?:\*\s*)+|\s*\(\s*\*\s*){re.escape(old)}\s*(?=[=;,)\[])")
             declared = [m for m in declaration.finditer(scope) if m[1] not in ("return", "goto", "case")]
             if not declared or re.search(r"\b(?:struct|union)\s+\w*\s*\{", scope):
                 return "scope", "local scope needs a declaration and no nested record definition", []

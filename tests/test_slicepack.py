@@ -211,3 +211,51 @@ def test_auto_locals_name_a_slot_after_the_one_parameter_it_is_passed_as(names, 
     ]
     assert got["by_kind"]["locals"] == 1
     assert autoname.GOOD.fullmatch("amount") and not autoname.GOOD.fullmatch("unused0")
+
+
+def _open_functions(names, owner, **more):
+    got = pack(names, target=owner, count=40, **more)
+    return got, {c["target"] for c in cards(names, got).values() if c["kind"] == "function" and c["open"]["function"]}
+
+
+def test_a_key_in_the_pack_directorys_gaps_file_is_skipped_by_the_next_pack(names):
+    key = slices.fn_key("us", 0x80001040)
+    owner = slices.load(names.dir)["owner"][key]
+    _, before = _open_functions(names, owner)
+    assert "func_80004010" in before
+    gaps = names.dir / "packs" / "GAPS.jsonl"
+    gaps.write_text(json.dumps({"key": key, "reason": "no evidence"}) + "\nnot json\n")
+    got, after = _open_functions(names, owner)
+    assert "func_80004010" not in after and got["skipped"] == 1
+
+
+def test_a_key_refused_twice_is_deferred_until_retry_asks_for_it(names):
+    key = slices.fn_key("us", 0x80001040)
+    owner = slices.load(names.dir)["owner"][key]
+    refused = names.dir / "refused.jsonl"
+    refused.write_text(json.dumps({"key": key, "rule": "regex"}) + "\n")
+    assert "func_80004010" in _open_functions(names, owner)[1]  # once is not enough
+    refused.write_text(refused.read_text() * 2)
+    got, after = _open_functions(names, owner)
+    assert "func_80004010" not in after and got["skipped"] >= 1
+    assert "func_80004010" in _open_functions(names, owner, retry=True)[1]
+
+
+def test_the_answer_file_holds_the_pack_skeleton_rows_and_submit_leaves_unfilled_ones_out(names):
+    key = slices.fn_key("us", 0x80001040)
+    owner = slices.load(names.dir)["owner"][key]
+    got = pack(names, target=owner, count=40)
+    rows = [json.loads(line) for line in Path(got["answer"]).read_text().splitlines()]
+    assert key in {r["key"] for r in rows} and all(r["name"] == "" for r in rows)
+    done = naming.run(
+        names,
+        {
+            "host": None,
+            "action": "submit",
+            "ledger": "L1",
+            "file": got["answer"],
+            "no_apply": True,
+            "names_dir": names.dir,
+        },
+    )
+    assert done["unfilled"] == len(rows) and done["refused"] == 0

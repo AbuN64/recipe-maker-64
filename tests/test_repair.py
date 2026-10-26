@@ -175,3 +175,38 @@ def test_a_param_row_is_a_local_row_and_an_unknown_kind_names_the_kinds(tmp_path
     result = naming.submit(config, {"file": str(path), "host": None, "no_apply": True})
     assert result["accepted"] == 1 and result["accepted_rows"] == ["local in change template -> entry"]
     assert result["refused"] == 1 and "the kinds are" in result["refusals"][0] and "param" in result["refusals"][0]
+
+
+def _local(tmp_path, text, old, new, line):
+    config = project(tmp_path, {"src/a.c": text})
+    row = {
+        "kind": "local",
+        "target": old,
+        "name": new,
+        "path": "src/a.c",
+        "line": line,
+        "function": "change",
+        "doc": "Out.",
+    }
+    return repair.Repairs(config.project.root).judge(row)
+
+
+def test_a_double_pointer_parameter_is_a_declaration(tmp_path):
+    why, _, moves = _local(
+        tmp_path, "void change(unsigned char **template) { **template = 0; }\n", "template", "dataOut", 1
+    )
+    assert why == "" and moves[0]["op"] == "local"
+
+
+def test_a_function_pointer_parameter_is_a_declaration(tmp_path):
+    why, _, moves = _local(tmp_path, "void change(void (*template)(int)) { template(0); }\n", "template", "callback", 1)
+    assert why == "" and moves[0]["op"] == "local"
+
+
+def test_a_prototype_beside_its_definition_does_not_hide_the_locals(tmp_path):
+    text = "void change(int *template);\nvoid change(int *template) { *template = 0; }\n"
+    why, _, moves = _local(tmp_path, text, "template", "count", 2)
+    assert why == "" and moves[0]["op"] == "local"
+    from recipemaker import keys
+
+    assert keys.declared_line(tmp_path, "src/a.c", "change", "template") == 2
