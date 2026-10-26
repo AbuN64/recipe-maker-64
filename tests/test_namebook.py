@@ -211,3 +211,21 @@ def test_an_empty_submit_leaves_no_submit_log_line(book):
     """The warm-up call after main moves (`submit --ledger warm` on an empty file) must not show as a lane in WATCH."""
     assert submit(book, "warm", [])["rows"] == 0
     assert not (book.tmp / "names/submits.jsonl").exists()
+
+
+def test_a_datum_no_module_owns_resolves_through_its_versions_symbol_table():
+    table = {"de": {"D_801539B0": (0x8014D720, None, 4, "data"), "D_8014D494_de": (0x8014D494, None, 1, "data")}}
+    ctx = naming.Map.__new__(naming.Map)
+    ctx.tables, ctx.members, ctx._by_vram = table, {}, None
+    ctx.doc = {"names_from": "us-rev1", "versions": ["de", "us-rev1"]}
+    ctx.canon = lambda name: name  # type: ignore[method-assign]
+    row = {"key": "datum:de:8014D720", "name": "g_frontendResourceState", "doc": "d", "evidence": []}
+    got, rule, _ = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), row)
+    assert rule == "" and got["kind"] == "global" and got["target"] == "D_801539B0"
+    other = {**row, "key": "datum:de:8014D494", "name": "s_x"}
+    static, rule, _ = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), other)
+    assert rule == "" and static["kind"] == "static" and static["target"] == "D_8014D494_de"
+    done = {**row, "name": "D_801539B0"}
+    assert namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), done)[1] == "applied"
+    _, rule, why = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), {**row, "key": "datum:de:80000000"})
+    assert rule == "target" and "no data is placed" in why

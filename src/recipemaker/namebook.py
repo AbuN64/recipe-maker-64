@@ -228,6 +228,15 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
     )
     member = ctx.members.get(function)
     want = "data" if parsed.kind == "datum" else "function"
+    if member is None and parsed.kind == "datum":
+        # data no module owns (bss, a symbol with no ROM): the version's own table still names the address, and the
+        # legacy `global` row (target = that spelling) already renames such a symbol
+        spelled = ctx.table_name(parsed.version, parsed.vram, "data")
+        if spelled and spelled not in ctx.members:
+            if spelled == name:
+                return {**rest, "_key": parsed.text()}, "applied", ""
+            kind = "static" if name.startswith("s_") else "global"
+            return {**rest, "kind": kind, "target": spelled, "_key": parsed.text()}, "", ""
     if member is None or (member["kind"] == "function") != (want == "function"):
         return row, "target", f"no {want} is placed at {parsed.version} {parsed.vram:08X}"
     if parsed.kind == "slot":

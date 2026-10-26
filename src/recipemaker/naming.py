@@ -151,6 +151,7 @@ class Map:
         self.tables = _tables(config, doc["versions"])
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
+        self._by_vram: dict[tuple[str, int, str], set[str]] | None = None  # (version, vram, kind) to table spellings
         self._vram: dict[tuple[str, int], set[str]] = {}  # (version, VRAM) to the members placed there
         self._externs: set[str] | None = None
         self._extern_members: set[str] | None = None  # the members some extern declaration spells under any alias
@@ -282,6 +283,19 @@ class Map:
         """The kind of a name some version's symbol table holds ("function" or "global"), else "" for no such symbol."""
         kinds = {"function" if t[name][3] == "func" else "global" for t in self.tables.values() if name in t}
         return next(iter(kinds)) if len(kinds) == 1 else ""
+
+    def table_name(self, version: str, vram: int, kind: str) -> str:
+        """The one spelling the version's symbol table gives a datum at VRAM when no member is placed there (bss and
+        other data no module of the map owns, e.g. `D_801539B0 = 0x8014D720` in de), else ''."""
+        if self._by_vram is None:
+            self._by_vram = {}
+            for v, table in self.tables.items():
+                for spelled, row in table.items():
+                    self._by_vram.setdefault((v, row[0], "function" if row[3] == "func" else "data"), set()).add(
+                        spelled
+                    )
+        held = self._by_vram.get((version, vram, kind), set())
+        return next(iter(held)) if len(held) == 1 else ""
 
     def canon(self, name: str) -> str:
         """The member a spelling names: itself, or the member that sits where a version's symbol table puts that
