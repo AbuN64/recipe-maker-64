@@ -255,3 +255,22 @@ def test_a_slot_of_a_body_written_under_a_define_alias_finds_its_line(tmp_path):
     )
     assert keys.declared_line(tmp_path, "src/f.c", "func_80426FA0_eu_x", "temp_a2") == 4
     assert keys.declared_line(tmp_path, "src/f.c", "func_80426FA0_eu_x", "nothere") == 0
+
+
+def test_a_register_split_placeholder_is_a_decompiler_slot():
+    from recipemaker import locals_
+
+    assert locals_.placeholder("regpart_temp_v0_2") and not locals_.placeholder("priorDefaultFocus")
+
+
+def test_a_suggestion_may_correct_a_member_that_already_has_a_name():
+    types = SimpleNamespace(key={"CGameStatus_t": "CGameStatus"}, member={"CGameStatus": {"mode": "s32"}})
+    fields = SimpleNamespace(
+        types=types, unknown_at=lambda tag, off: ("", "CGameStatus has no unknown member at +0x18")
+    )
+    ctx = SimpleNamespace(doc={"names_from": "us-rev1"})
+    row = {"key": "member:CGameStatus_t+0x18", "name": "scoreLimit", "doc": "d", "evidence": []}
+    _, rule, why = namebook.resolve(ctx, fields, SimpleNamespace(), row)
+    assert rule == "target" and "no unknown member" in why  # an owned row may not rename a named member
+    got, rule, _ = namebook.resolve(ctx, fields, SimpleNamespace(), {**row, "suggest": True})
+    assert rule == "" and got["_key"] == "member:CGameStatus_t+0x18"

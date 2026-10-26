@@ -39,7 +39,7 @@ tool_named = '(func_[0-9A-F]{8}|_[0-9a-f]{12}|draft_|_closed)'
 [comments]
 version_note = '^/\*\s*([a-z]{2}(?:-[a-z0-9]+)?):'
 not_versions = ["if", "so", "to", "do", "in", "on", "no", "ok", "or", "as", "at", "by", "id", "is", "it", "of", "up", "we"]
-m2c_local = '\b(?:temp_[a-z]\w*|var_[a-z]\w*|sp[0-9A-F]+|arg\d+)\b'
+m2c_local = '\b(?:regpart_\w+|temp_[a-z]\w*|var_[a-z]\w*|sp[0-9A-F]+|arg\d+)\b'
 guard_tool = 'UNBAKE'
 
 # An SDK callee name prefix gives the subsystem word. A prefix matches when an upper-case letter or underscore follows.

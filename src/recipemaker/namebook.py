@@ -221,6 +221,10 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
             held = fields.types.member.get(fields.types.key.get(parsed.tag, ""), {}) if fields.types else {}
             if name in held:
                 return {**rest, "_key": parsed.text()}, "applied", ""
+            if row.get("suggest") and held:
+                # a correction of a member that already has a name goes to the record's owner as advice: the record
+                # exists, the owner judges the name (P3-BLOG3 member:CGameStatus_t+0x18 scoreLimit was refused here)
+                return {**rest, "_key": parsed.text()}, "", ""
             return row, "target", why
         return {**rest, "kind": "field", "struct": parsed.tag, "target": old, "_key": parsed.text()}, "", ""
     function = ctx.canon(
