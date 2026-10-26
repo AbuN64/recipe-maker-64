@@ -1266,6 +1266,18 @@ def stream(built: Json) -> str:
 def run(config: Config, params: Json) -> Json:
     """`recipe structure`: write the proposal as a patch under `.unbake/recipe/patches/` and print it as JSON."""
     root = config.project.root
+    if params.get("map"):  # T7: a module map (MODULES.tsv) applied as one patch
+        from recipemaker import modmap
+
+        with narrated("map"):
+            built = modmap.run(config, params)
+        kept = bool(built["moves"])
+        return {
+            **built,
+            "path": _saved(config, built) if kept else "",
+            "stream": stream(built),
+            "next": "recipe apply" if kept else "recipe structure --map",
+        }
     document = evidence(config, params["host"])
     paths = [_rel(root, p) for p in params.get("paths") or ()]
     library = getattr(config.project, "libraries", ())
@@ -1370,8 +1382,10 @@ def _portable_patch(root: Path, patch: str) -> None:
         if dst != "/dev/null":
             after[dst] = "".join(result)
     census = root / ".unbake" / "recipe" / "naming-census.pkl"
-    held = {(f.path, f.reason) for f in api.naming_findings(before, census)}
-    added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in held]
+    known = api.naming_findings(before, census)
+    held = {(f.path, f.reason) for f in known}
+    named = {f.reason for f in known}  # a name the tree already spells somewhere moves with its text (a merged file)
+    added = [f for f in api.naming_findings(after, census) if (f.path, f.reason) not in held and f.reason not in named]
     if added:
         raise state.stop("recipe.apply", added[0].reason, path=added[0].path)
 

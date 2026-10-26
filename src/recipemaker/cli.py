@@ -51,7 +51,21 @@ def _render_look(result: Json) -> list[str]:
     return [*lines, *result["facts"]]
 
 
+def _render_map(result: Json) -> list[str]:
+    lines = [
+        f"merged {len(result['modules'])} modules from {result['units']} units in {result['path'] or 'no patch'}",
+        *([f"dropped zero padding units: {len(result['dropped'])}"] if result["dropped"] else []),
+        *([f"deferred to stage after-reclass: {len(result['deferred'])} modules"] if result["deferred"] else []),
+    ]
+    if len(result["modules"]) <= 40:
+        lines += [f"  {m}" for m in result["modules"]]
+    lines += [f"refused {r['module']}: {r['reason']}" for r in result["refused"]]
+    return lines + [f"check in the build: {n}" for n in result["notes"][:40]]
+
+
 def _render_structure(result: Json) -> list[str]:
+    if "refused" in result and "modules" in result:
+        return _render_map(result)
     sizes = [f"{k} {v['before']} -> {v['after']}" for k, v in result.items() if isinstance(v, dict) and "before" in v]
     return [
         f"proposed {result['moves']} moves in {result['path'] or 'no patch'}, {len(result['boundaries'])} boundaries",
@@ -179,6 +193,28 @@ def _parser() -> argparse.ArgumentParser:
     one = verb("structure", "propose module structure: one JSON object {patch, files, moves} on stdout")
     one.add_argument("--segment", help="only these segments (comma list)")
     one.add_argument("--paths", nargs="+", metavar="FILE", help="only the modules holding these files and linked moves")
+    one.add_argument("--map", help="apply a module map (MODULES.tsv): merge the units of each module into its file")
+    one.add_argument(
+        "--module", nargs="+", metavar="PREFIX", help="map: only the modules whose path starts with one of these"
+    )
+    one.add_argument(
+        "--units", type=int, default=40, help="map: take modules until this many units (a module is never cut)"
+    )
+    one.add_argument(
+        "--stage",
+        choices=("now", "all"),
+        default="now",
+        help="map: `all` also takes the modules that need a reclass first",
+    )
+    one.add_argument(
+        "--floor",
+        choices=("pending", "low", "medium", "high"),
+        default="medium",
+        help="map: modules whose name confidence is below this keep the first unit's address stem (default medium)",
+    )
+    one.add_argument(
+        "--rom", help="map: the base ROM per version for the zero-padding test (default roms/baserom.{v}.z64)"
+    )
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
     one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto"))
     one.add_argument("file", nargs="?", help="the names file for submit")
