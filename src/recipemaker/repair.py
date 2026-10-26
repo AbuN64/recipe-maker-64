@@ -16,13 +16,22 @@ from recipemaker import access, cparse, locals_
 WORD = re.compile(r"[A-Za-z_]\w*")
 
 
-def local_span(text: str, function: str) -> tuple[int, int] | None:
+def local_span(text: str, function: str, aliased: bool = True) -> tuple[int, int] | None:
     """One complete function definition or prototype; ambiguous conditional copies refuse."""
     masked = access.mask(text)
     head = re.compile(rf"^[\w\s*]+\b{re.escape(function)}\s*\(")
     found = [(a, b) for a, b, directive in cparse.spans(masked) if not directive and head.match(masked[a:b])]
     if len(found) > 1:  # a prototype beside its definition (or two): the one with a body holds the locals
         found = [(a, b) for a, b in found if "{" in masked[a:b]]
+    if not found and aliased:
+        # a NON_MATCHING body written under another spelling: `#define ALIAS FUNCTION` then `s32 ALIAS(...) {`
+        # (10-25 P3-Q20: 39 slot rows of eu/eu-x menu bodies refused "has no local")
+        for alias in re.findall(
+            rf"(?m)^[ 	]*#[ 	]*define[ 	]+(\w+)[ 	]+{re.escape(function)}[ 	]*$", text
+        ):
+            if alias != function and (span := local_span(text, alias, aliased=False)) is not None:
+                return span
+        return None
     return found[0] if len(found) == 1 else None
 
 

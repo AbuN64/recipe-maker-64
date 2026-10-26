@@ -229,3 +229,29 @@ def test_a_datum_no_module_owns_resolves_through_its_versions_symbol_table():
     assert namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), done)[1] == "applied"
     _, rule, why = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), {**row, "key": "datum:de:80000000"})
     assert rule == "target" and "no data is placed" in why
+
+
+def test_a_slot_of_a_non_matching_body_finds_its_line_in_the_fuzzy_file(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/f.c").write_text(
+        "#ifdef NON_MATCHING\nvoid func_80004010(s32 arg0) {\n    s32 temp_a2 = arg0;\n}\n#endif\n"
+    )
+    ctx = SimpleNamespace(
+        doc={"names_from": "us"},
+        root=tmp_path,
+        canon=lambda name: name,
+        members={"func_80004010": {"kind": "function", "unit": None, "fuzzy": "src/f.c"}},
+    )
+    row = {"key": "slot:us:80004010:temp_a2", "name": "leftTab", "doc": "d", "evidence": []}
+    got, rule, why = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), row)
+    assert rule == "" and got["kind"] == "local" and (got["path"], got["line"]) == ("src/f.c", 3), why
+
+
+def test_a_slot_of_a_body_written_under_a_define_alias_finds_its_line(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/f.c").write_text(
+        "#ifdef NON_MATCHING\n#define Frontend_Open func_80426FA0_eu_x\ns32 Frontend_Open(s32 arg0) {\n"
+        "    s32 temp_a2 = arg0;\n    return temp_a2;\n}\n#endif\n"
+    )
+    assert keys.declared_line(tmp_path, "src/f.c", "func_80426FA0_eu_x", "temp_a2") == 4
+    assert keys.declared_line(tmp_path, "src/f.c", "func_80426FA0_eu_x", "nothere") == 0
