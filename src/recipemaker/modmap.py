@@ -433,9 +433,10 @@ def _definitions(text: str) -> list[tuple[int, int, str]]:
     return [(lo, hi, masked[lo:hi]) for lo, hi, directive in cparse.spans(masked) if not directive]
 
 
-def holds_code(text: str) -> bool:
-    """Whether the unit TEXT defines a function: its file can never be dropped as zero padding."""
-    return any(_is_function(shown) for _lo, _hi, shown in _definitions(text))
+def holds_content(text: str) -> bool:
+    """Whether the unit TEXT defines a function or any data that is not all zero: its file can never be dropped as zero
+    padding (a string beside zero padding is the unit's own bytes, nothing else emits it)."""
+    return bool(_definitions(strip_zero_data(text)))
 
 
 def strip_zero_data(text: str) -> str:
@@ -472,10 +473,11 @@ def constify_declarations(files: Any, names: Iterable[str]) -> int:
 
 def prepare(src: dict[str, str], action: str, unit: str, made: set[str] | None = None) -> str:
     """The reclass edit of one unit's text in SRC (why not, '' when done): `drop` is the caller's for a unit that
-    defines no function (zero padding the merged object pads itself), a unit with code keeps it and loses only its
-    zero data; `const` declares data definitions const, never a function; `text` (data inside the code) is by hand."""
+    holds only zero data (padding the merged object pads itself), a unit with code or other data keeps it and loses
+    only its zero data; `const` declares data definitions const, never a function; `text` (data inside the code) is by
+    hand."""
     if action == "drop":
-        if holds_code(src[unit]):
+        if holds_content(src[unit]):
             src[unit] = strip_zero_data(src[unit])
         return ""
     if action == "const":
@@ -611,7 +613,7 @@ def run(config: Any, params: Json) -> Json:
         for rec in reclass.get(module, ()):
             if rec.unit in units:
                 why = why or prepare(mine, rec.action, rec.unit, made)
-                left += [rec.unit] if rec.action == "drop" and not holds_code(src[rec.unit]) else []
+                left += [rec.unit] if rec.action == "drop" and not holds_content(src[rec.unit]) else []
         keep = [u for u in units if u not in left]
         target, header = module, mrows[0]["header"]
         if CONFIDENCE.get(mrows[0]["confidence"], 3) < floor and keep:

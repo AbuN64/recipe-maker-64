@@ -253,7 +253,7 @@ CODE_AND_JUNK = (
 
 def test_a_drop_reclass_keeps_the_function_of_a_unit_and_strips_only_its_zero_data():
     src = {"a": CODE_AND_JUNK}
-    assert modmap.holds_code(CODE_AND_JUNK) and modmap.prepare(src, "drop", "a") == ""
+    assert modmap.holds_content(CODE_AND_JUNK) and modmap.prepare(src, "drop", "a") == ""
     assert src["a"] == (
         "int fa(int v) {\n    int r = v;\n    return r;\n}\n"
         "#if defined(VERSION_EU)\nunsigned int live_2[2] = {\n    0x00000000,\n    0x00000001,\n};\n#endif\n"
@@ -263,7 +263,15 @@ def test_a_drop_reclass_keeps_the_function_of_a_unit_and_strips_only_its_zero_da
 def test_a_drop_reclass_leaves_a_pure_padding_unit_to_the_caller():
     junk = "#if X\nunsigned char pad[3] = {\n    0x00, 0x00, 0x00,\n};\n#endif\n"
     src = {"a": junk}
-    assert not modmap.holds_code(junk) and modmap.prepare(src, "drop", "a") == "" and src["a"] == junk
+    assert not modmap.holds_content(junk) and modmap.prepare(src, "drop", "a") == "" and src["a"] == junk
+
+
+def test_a_drop_reclass_keeps_a_string_unit_and_strips_only_the_zero_padding_beside_it():
+    keep = '#if !(defined(VERSION_US_REV1))\nconst char str_1[13] =\n    "[ %s : %d ]\\012\\000";\n#endif\n'
+    pad = "#if defined(VERSION_US)\nunsigned char rodata_unresolved_2[3] = {\n    0x00, 0x00, 0x00,\n};\n#endif\n"
+    src = {"a": keep + pad}
+    assert modmap.holds_content(keep + pad) and modmap.prepare(src, "drop", "a") == ""
+    assert src["a"] == keep
 
 
 def test_a_const_reclass_never_prefixes_a_function_definition():
