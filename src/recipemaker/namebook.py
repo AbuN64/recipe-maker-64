@@ -93,7 +93,7 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
         for seq in e.get("seqs", ()):
             if e.get("reason"):
                 why[seq] = str(e["reason"])
-    sent: dict[tuple[str, str], str] = {}
+    sent: dict[tuple[str, str, str], str] = {}
     for path in sorted((store() / "returned").glob("*.*")):
         for back in _lines(path):
             sent[
