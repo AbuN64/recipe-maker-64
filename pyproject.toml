@@ -13,7 +13,7 @@ requires-python = ">=3.13"
 dependencies = [
   "jsonschema==4.26.0",
   "pycparser==3.0",
-  "unbake @ git+https://github.com/AbuN64/cake-unbake-64@4b55167b9172e2e204abcabe0088b4533fb284af",
+  "unbake @ git+https://github.com/AbuN64/cake-unbake-64@46da92e6310a30016df197b8950b729566e5f10e",
 ]
 
 [project.optional-dependencies]
