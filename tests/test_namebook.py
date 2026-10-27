@@ -443,3 +443,13 @@ def test_the_ledger_lists_each_seq_with_its_state_and_reason(book):
     ]
     assert got["counts"] == {"returned": 1, "queued": 1}
     assert [r["seq"] for r in naming.run(book, {"host": None, "action": "status", "ledger": "L1"})["rows"]] == [1, 2]
+
+
+def test_keyless_rows_returned_by_the_applier_each_show_their_own_reason(book):
+    namebook.append("L1", [{"name": "Alpha", "doc": "d", "evidence": []}, {"name": "Beta", "doc": "d", "evidence": []}])
+    namebook.event({"event": "made", "batch": 1, "seqs": [1, 2]})
+    namebook.event({"event": "returned", "batch": 1, "seqs": [1, 2]})
+    namebook.send_back("L1", {"name": "Alpha"}, "proof", "token kept")
+    namebook.send_back("L1", {"name": "Beta"}, "build", "warn")
+    got = naming.run(book, {"host": None, "action": "status", "seqs": "1-2"})
+    assert [r["reason"] for r in got["rows"]] == ["proof: token kept", "build: warn"]

@@ -96,9 +96,9 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
     sent: dict[tuple[str, str], str] = {}
     for path in sorted((store() / "returned").glob("*.*")):
         for back in _lines(path):
-            sent[(path.stem, str(back["row"].get("_key") or back["row"].get("key") or ""))] = (
-                f"{back['rule']}: {back['reason']}"
-            )
+            sent[
+                (path.stem, str(back["row"].get("_key") or back["row"].get("key") or ""), str(back["row"].get("name")))
+            ] = f"{back['rule']}: {back['reason']}"
     out: list[Json] = []
     for r in ledger():
         if (first and r["seq"] < first) or (last and r["seq"] > last) or (lane and r["lane"] != lane):
@@ -106,7 +106,7 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
         state_ = now[r["seq"]]
         reason = why.get(r["seq"], "") if state_ in ("returned", "queued") else ""
         if state_ == "returned" and not reason:
-            reason = sent.get((r["lane"], r["key"] or ""), "")
+            reason = sent.get((r["lane"], r["key"] or "", r["name"]), "")
         out.append(
             {"seq": r["seq"], "lane": r["lane"], "key": r["key"], "name": r["name"], "state": state_, "reason": reason}
         )
