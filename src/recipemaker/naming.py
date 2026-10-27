@@ -1644,7 +1644,27 @@ def auto(config: Config, params: Json) -> Json:
     return autoname.run(config, ctx, kinds, where, judge, _moves)
 
 
+def status(config: Config, params: Json) -> Json:
+    """`recipe name status [--ledger LANE] [--seqs A-B]`: the disposition of each ledger row, seq by seq."""
+    first, _, last = str(params.get("seqs") or "").partition("-")
+    if not re.fullmatch(r"\d*", first) or not re.fullmatch(r"\d*", last or first):
+        raise state.stop("recipe.name", f"--seqs is FIRST-LAST or one seq, not {params['seqs']!r}")
+    rows = namebook.dispositions(int(first or 0), int(last or first or 0), str(params.get("ledger") or ""))
+    return {
+        "action": "status",
+        "rows": rows,
+        "counts": dict(Counter(r["state"] for r in rows)),
+        "next": "recipe name next",
+    }
+
+
 def run(config: Config, params: Json) -> Json:
-    return {"next": next_, "submit": submit, "banners": banners, "count": count, "slices": cut, "auto": auto}[
-        params["action"]
-    ](config, params)
+    return {
+        "next": next_,
+        "submit": submit,
+        "banners": banners,
+        "count": count,
+        "slices": cut,
+        "auto": auto,
+        "status": status,
+    }[params["action"]](config, params)

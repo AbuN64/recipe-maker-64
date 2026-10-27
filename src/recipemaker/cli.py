@@ -96,6 +96,12 @@ def _render_name(result: Json) -> list[str]:
             )
             for folder, got in result["folders"].items()
         ]
+    if result["action"] == "status":
+        counts = " ".join(f"{k} {v}" for k, v in sorted(result["counts"].items()))
+        return [
+            f"{r['seq']} {r['state']} {r['lane']} {r['key'] or r['name']}" + (f": {r['reason']}" if r["reason"] else "")
+            for r in result["rows"]
+        ] + [f"{len(result['rows'])} rows ({counts or 'none'})"]
     if result["action"] == "auto":
         refused = {k: sum(v.values()) for k, v in result["refused"].items()}
         kinds = ", ".join(f"{k} {n}" for k, n in result["by_kind"].items())
@@ -230,7 +236,7 @@ def _parser() -> argparse.ArgumentParser:
         "--rom", help="map: the base ROM per version for the zero-padding test (default roms/baserom.{v}.z64)"
     )
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
-    one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto"))
+    one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto", "status"))
     one.add_argument("file", nargs="?", help="the names file for submit")
     one.add_argument(
         "--step",
@@ -255,6 +261,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="LANE",
         help="submit: judge the rows against the tree and the queued rows, write no tree, queue the accepted ones",
     )
+    one.add_argument("--seqs", metavar="FIRST-LAST", help="status: the ledger seqs to list (one seq, or a range)")
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument(
         "--retry", action="store_true", help="step S: offer again the keys refused twice (GAPS.jsonl keys stay skipped)"
@@ -327,7 +334,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if host is None:
                 raise Refusal(Finding("config.missing", _NO_HOST))
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
-            ledger_tree = namebook.default_tree() if args.verb == "name" and getattr(args, "ledger", None) else None
+            ledger_tree = (
+                namebook.default_tree()
+                if args.verb == "name" and (getattr(args, "ledger", None) or args.action == "status")
+                else None
+            )
             loaded = api.load(args.project or ledger_tree or Path.cwd(), host)
             given = {k: v for k, v in vars(args).items() if k not in ("host", "project")}
             if args.verb == "style":

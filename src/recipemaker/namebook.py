@@ -84,6 +84,35 @@ def status() -> dict[int, str]:
     return out
 
 
+def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
+    """What became of each ledger row, seq by seq: its state (see `status`) and the reason the last event gave for it
+    (a requeue or return), else the rule and reason its lane was sent back. FIRST..LAST bound the seqs (0: none)."""
+    now = status()
+    why: dict[int, str] = {}
+    for e in events():
+        for seq in e.get("seqs", ()):
+            if e.get("reason"):
+                why[seq] = str(e["reason"])
+    sent: dict[tuple[str, str], str] = {}
+    for path in sorted((store() / "returned").glob("*.*")):
+        for back in _lines(path):
+            sent[(path.stem, str(back["row"].get("_key") or back["row"].get("key") or ""))] = (
+                f"{back['rule']}: {back['reason']}"
+            )
+    out: list[Json] = []
+    for r in ledger():
+        if (first and r["seq"] < first) or (last and r["seq"] > last) or (lane and r["lane"] != lane):
+            continue
+        state_ = now[r["seq"]]
+        reason = why.get(r["seq"], "") if state_ in ("returned", "queued") else ""
+        if state_ == "returned" and not reason:
+            reason = sent.get((r["lane"], r["key"] or ""), "")
+        out.append(
+            {"seq": r["seq"], "lane": r["lane"], "key": r["key"], "name": r["name"], "state": state_, "reason": reason}
+        )
+    return out
+
+
 def queued(inflight: bool = True) -> list[Json]:
     """The accepted rows not in main yet, oldest first; with `inflight` False only those no batch holds."""
     held = {"queued", "inflight"} if inflight else {"queued"}

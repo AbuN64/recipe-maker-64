@@ -163,7 +163,9 @@ class Fields:
 
     def judge_type(self, row: Json) -> tuple[str, str, list[Json]]:
         """A `type` row (key `type:TAG`): the record named TAG, by tag or typedef name, takes the name everywhere the
-        tree spells it. It is a pure type rename: no member, function or datum row carries it."""
+        tree spells it. It is a pure type rename: no member, function or datum row carries it. A row that names a
+        definition site (`path` and `line`) renames that definition and the uses that bind to it, nothing else: it is
+        refused when some use could bind to it and to another definition of the tag."""
         given = [row.get(k) for k in ("target", "name")]
         if not all(isinstance(x, str) and x for x in given) or not str(row.get("doc") or "").strip():
             return "shape", "a type row needs a key (type:TAG), name and doc", []
@@ -180,8 +182,17 @@ class Fields:
             self.words = {w for t in self.texts.values() for w in locals_.WORD.findall(access.mask(t))}
         if new in self.words or new in self.renamed:
             return "duplicate", f"{new} is already spelled in the tree (renameproof refuses it); pick another word", []
+        move: Json = {"op": "type", "subject": old, "target": new}
+        if (site := row.get("path")) is not None:
+            line = row.get("line") or 0
+            if not isinstance(site, str) or not isinstance(line, int) or isinstance(line, bool):
+                return "shape", "a type row's definition site is a path and a line number", []
+            owned, why = api.record_scope(self.texts, re.sub(r"^(?:struct|union|enum)\s+", "", old), site, line)
+            if not owned:
+                return "binding", why, []
+            move = {**move, "path": site, "line": line}
         self.renamed.add(new)
-        return "", "", [{"op": "type", "subject": old, "target": new}]
+        return "", "", [move]
 
     def judge(self, row: Json) -> tuple[str, str, list[Json]]:
         given = [row.get(k) for k in ("target", "name", "struct")]

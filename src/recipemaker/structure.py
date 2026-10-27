@@ -788,7 +788,7 @@ def build(
 
     - member: the function's C body or INCLUDE_* line leaves its owner file for the module's file, made if absent;
     - symbol: its `versions/*/symbol_addrs.txt` lines and, word-bounded, every identifier in src/ and include/;
-    - type: the identifier only;
+    - type: the identifier only, or with a definition `path` (and `line`) that definition and the uses that bind to it;
     - module, source, header: the file renames, with the includes that name the old header;
     - file: the includes of a header move to the header it goes to;
     - field: a member of the one record body that spells it, and its `.` and `->` accesses.
@@ -855,7 +855,19 @@ def build(
                     [*sorted(rows), *files.everything()],
                     LITERALS + subject,
                 )  # the needle keeps a rename from running the regex over every file of the tree
-            hits += files.identifiers(subject, target, files.everything(), comments=True)
+            reach = files.everything()
+            if op == "type" and "path" in move:  # one definition: its own file and the uses that bind to it
+                tag = re.sub(r"^(?:struct|union|enum)\s+", "", subject)
+                reach, why = api.record_scope(
+                    {p: files.get(p) or "" for p in reach if p.lower().endswith(_C)},
+                    tag,
+                    move["path"],
+                    int(move.get("line") or 0),
+                )
+                if not reach:
+                    skipped.append({**move, "why": why})
+                    continue
+            hits += files.identifiers(subject, target, reach, comments=True)
             if op == "symbol":
                 hits += files.replace(_word(subject), target, PROSE, subject)  # a rule's prose names the function too
                 hits += _asm_file(files, subject, target)

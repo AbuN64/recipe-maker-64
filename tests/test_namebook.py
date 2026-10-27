@@ -380,3 +380,66 @@ def test_a_type_row_patch_renames_the_type_in_every_file(book):
     assert (got["accepted"], got["refused"]) == (1, 0)
     patch = (root / got["path"]).read_text()
     assert "+} ALVoice;" in patch and "+void use(ALVoice *v) {" in patch
+
+
+BOXES = {
+    "src/a.h": "struct Box { int w; };\n",
+    "src/b.h": "struct Box { float w; float h; };\n",
+    "src/a.c": '#include "a.h"\nstruct Box one;\n',
+    "src/b.c": '#include "b.h"\nstruct Box two;\n',
+}
+
+
+def boxes(book, extra=None):
+    for name, text in {**BOXES, **(extra or {})}.items():
+        (book.project.root / name).write_text(text)
+
+
+def scoped(path, line=1, name="WideBox"):
+    return {
+        "key": "type:Box",
+        "name": name,
+        "doc": "One of the Box records.",
+        "evidence": [],
+        "path": path,
+        "line": line,
+    }
+
+
+def test_a_type_row_naming_a_definition_site_keeps_it_and_binds_one_record(book):
+    boxes(book)
+    got = submit(book, "L1", [scoped("src/a.h")])
+    assert (got["accepted"], got["refused"]) == (1, 0)
+    assert (namebook.ledger()[0]["row"]["path"], namebook.ledger()[0]["row"]["line"]) == ("src/a.h", 1)
+    path = book.tmp / "rows.jsonl"
+    path.write_text(json.dumps(scoped("src/a.h")) + "\n")
+    patch = naming.run(book, {"host": None, "action": "submit", "file": str(path), "no_apply": True})["path"]
+    text = (book.project.root / patch).read_text()
+    assert "+struct WideBox { int w; };" in text and "+struct WideBox one;" in text
+    assert "WideBox two" not in text and "b.h" not in text
+
+
+def test_a_type_row_whose_use_binds_to_two_definitions_is_refused_as_binding(book):
+    boxes(book, {"src/both.c": '#include "a.h"\n#include "b.h"\nstruct Box both;\n'})
+    got = submit(book, "L1", [scoped("src/a.h")])
+    assert (got["accepted"], got["by_rule"]) == (0, {"binding": 1}) and "binds to 2" in got["refusals"][0]
+    assert namebook.ledger() == []
+
+
+def test_a_type_row_naming_no_definition_there_is_refused_as_binding(book):
+    boxes(book)
+    assert submit(book, "L1", [scoped("src/a.h", line=9)])["by_rule"] == {"binding": 1}
+
+
+def test_the_ledger_lists_each_seq_with_its_state_and_reason(book):
+    submit(book, "L1", [fn("fn:us:80004010", "Actor_Spawn"), fn("fn:us:80004030", "Actor_Start")])
+    namebook.append("L2", [{"_key": "fn:us:80004040", "name": "Actor_Tick", "doc": "d", "evidence": []}])
+    namebook.event({"event": "made", "batch": 1, "seqs": [1, 2]})
+    namebook.event({"event": "returned", "batch": 1, "seqs": [2], "reason": "renameproof refused"})
+    got = naming.run(book, {"host": None, "action": "status", "seqs": "2-3"})
+    assert [(r["seq"], r["lane"], r["state"], r["reason"]) for r in got["rows"]] == [
+        (2, "L1", "returned", "renameproof refused"),
+        (3, "L2", "queued", ""),
+    ]
+    assert got["counts"] == {"returned": 1, "queued": 1}
+    assert [r["seq"] for r in naming.run(book, {"host": None, "action": "status", "ledger": "L1"})["rows"]] == [1, 2]
