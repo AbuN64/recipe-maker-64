@@ -1,0 +1,23 @@
+{
+  "confidence": "high",
+  "doc": "Reads the indexed bit field and fills upper bits with ones.",
+  "evidence": [
+    "body L252: Reads the indexed bit field and fills upper bits with ones."
+  ],
+  "key": "fn:de:80260E4C",
+  "lane": "PIVOT-L2",
+  "name": "Polytrak2_GetSignedArrayElement",
+  "row": {
+    "_key": "fn:de:80260E4C",
+    "doc": "Reads the indexed bit field and fills upper bits with ones.",
+    "evidence": [
+      "body L252: Reads the indexed bit field and fills upper bits with ones."
+    ],
+    "key": "fn:de:80260E4C",
+    "kind": "function",
+    "name": "Polytrak2_GetSignedArrayElement",
+    "target": "func_80260E4C_de"
+  },
+  "seq": 8911,
+  "ts": "2026-10-27T07:47:18-0700"
+}

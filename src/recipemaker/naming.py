@@ -1703,6 +1703,17 @@ def run(config: Config, params: Json) -> Json:
         return _run(config, params)
 
 
+def return_(config: Config, params: Json) -> Json:
+    """Return a reviewed immutable selection without applying or rewriting source names."""
+    if not params.get("file"):
+        raise state.stop("recipe.name", "return requires the exact selection JSON file and --reason")
+    try:
+        request = json.loads(Path(params["file"]).read_text())
+        return {**namebook.return_selection(request, params.get("reason")), "next": "recipe name status"}
+    except (OSError, ValueError) as error:
+        raise state.stop("recipe.name", str(error)) from error
+
+
 def _run(config: Config, params: Json) -> Json:
     return {
         "next": next_,
@@ -1712,4 +1723,5 @@ def _run(config: Config, params: Json) -> Json:
         "slices": cut,
         "auto": auto,
         "status": status,
+        "return": return_,
     }[params["action"]](config, params)

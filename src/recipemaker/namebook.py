@@ -81,9 +81,15 @@ def ledger() -> list[Json]:
 
 def event(doc: Json) -> None:
     """Record what became of rows: made (in batch K), landed, dropped (back in the queue, or returned to its lane)."""
+    with locked():
+        _event(doc)
+
+
+def _event(doc: Json) -> None:
+    """Append under the caller's ledger lock, including an atomic selection decision."""
     if "batch" in doc:
         batch_identity(doc["batch"])
-    with locked(), open(store() / "events.jsonl", "a", encoding="utf-8") as handle:
+    with open(store() / "events.jsonl", "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **doc}, sort_keys=True) + "\n")
 
 
@@ -129,12 +135,18 @@ def _identity(key: str, name: str, row: Json) -> tuple[str, str, str]:
 
 def select(request: Json) -> list[Json]:
     """Validate the entire reviewed selection before any batch side effect."""
+    return _select(request, ledger(), events(), {"queued"})
+
+
+def _select(request: Json, rows: list[Json], history: list[Json], states: set[str]) -> list[Json]:
+    """One immutable selection boundary for application and reviewed returns."""
+    if not isinstance(request, dict):
+        raise ValueError("selection requires an object")
     if set(request) != {"ledger", "rows"} or request["ledger"] != str(store().resolve()):
         raise ValueError("selection belongs to another ledger or has invalid fields")
     wanted = request["rows"]
     if not isinstance(wanted, list) or not wanted:
         raise ValueError("selection requires a nonempty rows array")
-    rows, history = ledger(), events()
     now = _status(rows, history)
     by_seq = {r["seq"]: r for r in rows}
     if len(by_seq) != len(rows):
@@ -154,12 +166,49 @@ def select(request: Json) -> list[Json]:
             raise ValueError(f"unknown selection seq {seq}")
         if selector(row) != item:
             raise ValueError(f"stale or foreign selection seq {seq}")
-        if now[seq] != "queued":
+        if now[seq] not in states:
             raise ValueError(f"selection seq {seq} is {now[seq]}")
-        if counts[_identity(row["key"], row["name"], row["row"])] != 1:
+        if now[seq] == "queued" and counts[_identity(row["key"], row["name"], row["row"])] != 1:
             raise ValueError(f"ambiguous selection seq {seq}")
         out.append(row)
     return out
+
+
+def return_selection(request: Json, reason: str | None) -> Json:
+    """Return an exact reviewed queued selection, preserving its rows and existing event history.
+
+    The batch lock excludes make/rebuild/settle; the ledger lock covers validation and the one append.
+    A repeat succeeds only for the same reviewed return still owning every selected disposition.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("a reviewed return requires a reason")
+    store().mkdir(parents=True, exist_ok=True)
+    with open(store() / "batch.lock", "a") as batch:
+        try:
+            fcntl.flock(batch, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError("a naming batch is active; return no rows until it completes") from error
+        with locked():
+            rows, history = ledger(), events()
+            selected = _select(request, rows, history, {"queued", "returned"})
+            seqs = sorted(row["seq"] for row in selected)
+            entry = {
+                "event": "returned",
+                "seqs": seqs,
+                "rule": "review",
+                "reason": reason,
+                "selection": selection(sorted(selected, key=lambda row: row["seq"])),
+            }
+            now = _status(rows, history)
+            repeated = any(now[seq] == "returned" for seq in seqs)
+            if repeated:
+                wanted = set(seqs)
+                latest = {seq: event for event in history for seq in event.get("seqs", ()) if seq in wanted}
+                if any(any(latest.get(seq, {}).get(key) != value for key, value in entry.items()) for seq in seqs):
+                    raise ValueError("selection has a different return disposition or review reason")
+            else:
+                _event(entry)
+    return {"action": "return", "rows": selected, "returned": len(selected), "repeated": repeated, "reason": reason}
 
 
 def status() -> dict[int, str]:

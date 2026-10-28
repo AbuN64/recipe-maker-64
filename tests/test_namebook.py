@@ -1,6 +1,7 @@
 """The name ledger: rows named by stable keys, judged against the tree plus the queued rows; no tree is written."""
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -509,6 +510,91 @@ def test_queued_reads_ledger_and_events_once(tmp_path, monkeypatch):
         monkeypatch.setattr(namebook, "_lines", lambda path: calls.append(path.name) or original(path))
         assert len(namebook.queued()) == 1
         assert calls == ["ledger.jsonl", "events.jsonl"]
+
+
+@pytest.fixture
+def reviewed_selection(tmp_path):
+    original = json.loads((Path(__file__).parent / "fixtures/queued-review.json").read_text())
+    with namebook.namespace(tmp_path / "review-ledger"):
+        namebook.store().mkdir()
+        unrelated = {**original, "seq": 8912, "key": "fn:de:80260ECC", "name": "Other_Name"}
+        (namebook.store() / "ledger.jsonl").write_text("".join(json.dumps(row) + "\n" for row in (original, unrelated)))
+        namebook.event({"event": "landed", "batch": "historical", "seqs": [1], "sha": "a" * 40})
+        yield namebook.selection([original])
+
+
+def test_reviewed_return_preserves_real_owner_and_history_and_repeats_once(reviewed_selection, monkeypatch):
+    ledger = (namebook.store() / "ledger.jsonl").read_bytes()
+    events = (namebook.store() / "events.jsonl").read_bytes()
+    calls = []
+    original = namebook._lines
+    monkeypatch.setattr(namebook, "_lines", lambda path: calls.append(path.name) or original(path))
+    result = namebook.return_selection(reviewed_selection, "Unconditional high-bit fill is not sign extension.")
+    assert calls == ["ledger.jsonl", "events.jsonl"]
+    assert result["rows"] == reviewed_selection["rows"] and not result["repeated"]
+    assert (namebook.store() / "ledger.jsonl").read_bytes() == ledger
+    after = (namebook.store() / "events.jsonl").read_bytes()
+    assert after.startswith(events) and len(after[len(events) :].splitlines()) == 1
+    assert namebook.status() == {8911: "returned", 8912: "queued"}
+    assert namebook.return_selection(reviewed_selection, result["reason"])["repeated"]
+    assert (namebook.store() / "events.jsonl").read_bytes() == after
+    assert namebook.dispositions(8911)[0]["reason"] == result["reason"]
+    with pytest.raises(ValueError, match="different return"):
+        namebook.return_selection(reviewed_selection, "Another review")
+    namebook.event({"event": "made", "batch": 83, "seqs": [8911]})
+    with pytest.raises(ValueError, match="inflight"):
+        namebook.return_selection(reviewed_selection, result["reason"])
+
+
+@pytest.mark.parametrize(
+    "defect", ["unknown", "duplicate", "foreign", "stale", "empty", "ambiguous", "inflight", "landed", "returned"]
+)
+def test_reviewed_return_refuses_whole_selection_without_writes(reviewed_selection, defect):
+    request = deepcopy(reviewed_selection)
+    if defect == "unknown":
+        request["rows"][0]["seq"] = 42
+    elif defect == "duplicate":
+        request["rows"] *= 2
+    elif defect == "foreign":
+        request["ledger"] += "-foreign"
+    elif defect == "stale":
+        request["rows"][0]["row"]["evidence"] = ["changed"]
+    elif defect == "empty":
+        request["rows"] = []
+    elif defect == "ambiguous":
+        namebook.append("other", [request["rows"][0]["row"]])
+    else:
+        namebook.event({"event": "made" if defect == "inflight" else defect, "batch": 82, "seqs": [8911]})
+    before = {p.name: p.read_bytes() for p in namebook.store().glob("*.jsonl")}
+    with pytest.raises(ValueError):
+        namebook.return_selection(request, "Reviewed")
+    assert {p.name: p.read_bytes() for p in namebook.store().glob("*.jsonl")} == before
+
+
+def test_reviewed_return_refuses_active_batch_and_missing_reason(reviewed_selection):
+    import fcntl
+
+    for reason in (None, "", " \n"):
+        with pytest.raises(ValueError, match="requires a reason"):
+            namebook.return_selection(reviewed_selection, reason)
+    with open(namebook.store() / "batch.lock", "a") as active:
+        fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ValueError, match="batch is active"):
+            namebook.return_selection(reviewed_selection, "Reviewed")
+    assert namebook.status()[8911] == "queued"
+
+
+def test_return_public_dispatch_allows_corrected_admission(book):
+    got = submit(book, "original", [fn("fn:us:80004010", "Actor_Wrong")])
+    selection = book.tmp / "selection.json"
+    selection.write_text(json.dumps(got["selection"]))
+    result = naming.run(book, {"action": "return", "file": str(selection), "reason": "Incorrect meaning"})
+    assert result["returned"] == 1
+    assert result["next"] == "recipe name status"
+    corrected = submit(book, "reviewer", [fn("fn:us:80004010", "Actor_Right")])
+    assert corrected["accepted"] == 1
+    assert namebook.ledger()[0] == got["selection"]["rows"][0]
+    assert namebook.status() == {1: "returned", 2: "queued"}
 
 
 def test_submit_judges_one_ledger_snapshot_and_keeps_complete_existing_registration(book, monkeypatch):

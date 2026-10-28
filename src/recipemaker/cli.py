@@ -134,6 +134,8 @@ def _render_name(result: Json) -> list[str]:
         if "outside" in result:
             out += [f"preview: {len(result['files'])} files, {len(result['outside'])} outside: {result['outside'][:8]}"]
         return out
+    if result["action"] == "return":
+        return [f"{result['returned']} reviewed rows returned: {result['reason']}"]
     if result["action"] == "submit" and "ledger" in result:
         rules = ", ".join(f"{k} {v}" for k, v in sorted(result["by_rule"].items()))
         return [
@@ -236,8 +238,9 @@ def _parser() -> argparse.ArgumentParser:
         "--rom", help="map: the base ROM per version for the zero-padding test (default roms/baserom.{v}.z64)"
     )
     one = verb("name", "name things from evidence: next (pack or tag-named subsystem moves), submit FILE, banners")
-    one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto", "status"))
-    one.add_argument("file", nargs="?", help="the names file for submit")
+    one.add_argument("action", choices=("next", "submit", "banners", "count", "slices", "auto", "status", "return"))
+    one.add_argument("file", nargs="?", help="the names file for submit, or exact selection JSON for return")
+    one.add_argument("--reason", help="return: required reviewed reason for returning this exact queued selection")
     one.add_argument(
         "--step",
         choices=("N1", "N2", "N3", "N4", "N5", "T", "L", "M", "S"),
@@ -339,7 +342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ["UNBAKE_HOST"] = str(host.resolve())  # every unbake command this one runs reads the same host
             ledger_tree = (
                 namebook.default_tree()
-                if args.verb == "name" and (getattr(args, "ledger", None) or args.action == "status")
+                if args.verb == "name" and (getattr(args, "ledger", None) or args.action in ("status", "return"))
                 else None
             )
             loaded = api.load(args.project or ledger_tree or Path.cwd(), host)

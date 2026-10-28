@@ -101,3 +101,14 @@ fixture uses `names_batch.py --ledger-dir DIR make --selection FILE --tree CLEAN
 TREE must be a dedicated clean batch workspace with its ordinary `github/main` remote.
 The production train still owns rebuild and receipt settlement. Repeated settlement of
 the same attempt is idempotent; conflicting outcomes refuse. No caller writes events.
+
+To retire a reviewed queued proposal, use `recipe name return SELECTION.json --reason TEXT
+--ledger-dir DIR --json`. The file uses the same complete immutable selection envelope
+as batch make. The command validates every owner and row before appending one ordinary
+`returned` event with the review reason and selection. Original ledger rows and events
+remain unchanged; unrelated rows stay queued. An active batch, foreign or stale selection,
+unknown or duplicate sequence, ambiguous owner, or inflight/landed row refuses the whole
+request. Repeating the same review returns the existing disposition without another event;
+a different review reason or subsequent disposition refuses. Corrected proposals are then
+admitted normally by `name submit`, with their own immutable rows. This operation never
+fabricates a batch or train receipt and never changes source files.

@@ -79,6 +79,43 @@ def test_main_json_prints_one_object_with_ok_true(wired, monkeypatch, capsys):
     assert body["ok"] is True and body["files"] == 12 and isinstance(body["wall_s"], int)
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_reviewed_return_uses_ledger_tree_unless_project_is_explicit(wired, monkeypatch, capsys, explicit):
+    roots = []
+    monkeypatch.setattr(cli.namebook, "default_tree", lambda: cli.Path("/ledger/tree"))
+    monkeypatch.setattr(api, "load", lambda root, host: roots.append(root) or wired.config)
+    monkeypatch.setitem(
+        cli._VERBS,
+        "name",
+        lambda config, params: {
+            "action": "return",
+            "returned": 1,
+            "reason": params["reason"],
+            "repeated": False,
+            "next": "recipe name status",
+        },
+    )
+    project = ["--project", "/explicit/tree"] if explicit else []
+    assert (
+        cli.main(
+            [
+                "--host",
+                "/work/host.toml",
+                *project,
+                "name",
+                "return",
+                "selection.json",
+                "--reason",
+                "Reviewed meaning",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert str(roots[0]) == ("/explicit/tree" if explicit else "/ledger/tree")
+    assert json.loads(capsys.readouterr().out)["returned"] == 1
+
+
 def test_a_refusal_exits_one_and_prints_its_reason_and_one_next_line(wired, monkeypatch, capsys):
     def refuse(config, params):
         raise Refusal(Finding("recipe.budget", "budget spent", action="recipe name next"))
