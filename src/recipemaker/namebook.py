@@ -122,6 +122,11 @@ def selection(rows: Sequence[Json]) -> Json:
     return {"ledger": str(store().resolve()), "rows": [selector(row) for row in rows]}
 
 
+def _identity(key: str, name: str, row: Json) -> tuple[str, str, str]:
+    """Keyed ownership or the exact unkeyed proposal; never equate different scopes by name."""
+    return key, name, "" if key else json.dumps(row, sort_keys=True, separators=(",", ":"))
+
+
 def select(request: Json) -> list[Json]:
     """Validate the entire reviewed selection before any batch side effect."""
     if set(request) != {"ledger", "rows"} or request["ledger"] != str(store().resolve()):
@@ -134,7 +139,7 @@ def select(request: Json) -> list[Json]:
     by_seq = {r["seq"]: r for r in rows}
     if len(by_seq) != len(rows):
         raise ValueError("ledger has ambiguous sequence identities")
-    counts = Counter((r["key"], r["name"]) for r in rows if now[r["seq"]] in {"queued", "inflight"})
+    counts = Counter(_identity(r["key"], r["name"], r["row"]) for r in rows if now[r["seq"]] in {"queued", "inflight"})
     seen: set[int] = set()
     out = []
     for item in wanted:
@@ -151,7 +156,7 @@ def select(request: Json) -> list[Json]:
             raise ValueError(f"stale or foreign selection seq {seq}")
         if now[seq] != "queued":
             raise ValueError(f"selection seq {seq} is {now[seq]}")
-        if counts[row["key"], row["name"]] != 1:
+        if counts[_identity(row["key"], row["name"], row["row"])] != 1:
             raise ValueError(f"ambiguous selection seq {seq}")
         out.append(row)
     return out
@@ -416,9 +421,10 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     snapshot = ledger()
     now = _status(snapshot, events())
     waiting = [r for r in snapshot if now[r["seq"]] in {"queued", "inflight"}]
-    waiting_by_identity: dict[tuple[str, str], list[Json]] = {}
+    waiting_by_identity: dict[tuple[str, str, str], list[Json]] = {}
     for existing in waiting:
-        waiting_by_identity.setdefault((existing["key"], existing["name"]), []).append(existing)
+        identity = _identity(existing["key"], existing["name"], existing["row"])
+        waiting_by_identity.setdefault(identity, []).append(existing)
     taken_keys = {r["key"] for r in waiting if r["key"]}
     owner = None
     seen: set[str] = set()
@@ -432,9 +438,13 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
             owner = owner_gate(lane)
         if key and (why := owner(key)):
             return "owner", why
+        same = waiting_by_identity.get(_identity(key, row.get("name", ""), row), [])
+        if len(same) > 1:
+            return "ambiguous", "multiple queued or inflight owners hold this proposal"
+        if same:
+            return "applied", "already queued"
         if key and key in taken_keys | seen:
-            same = waiting_by_identity.get((key, row.get("name", "")))
-            return ("applied", "already queued") if same else ("pending", f"{key} is already queued under another name")
+            return "pending", f"{key} is already queued under another name"
         seen.add(key)
         return None
 
@@ -447,7 +457,7 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     registrations: list[Json] = [{"state": "registered", **selector(r), "proposal": r["row"]} for r in written]
     for row in judged.already:
         key = row.get("_key") or row.get("key") or ""
-        matches = waiting_by_identity.get((key, row.get("name", "")), [])
+        matches = waiting_by_identity.get(_identity(key, row.get("name", ""), row), [])
         if len(matches) == 1:
             existing = matches[0]
             registrations.append({"state": now[existing["seq"]], **selector(existing), "proposal": row})

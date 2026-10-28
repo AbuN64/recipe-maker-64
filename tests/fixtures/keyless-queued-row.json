@@ -1,0 +1,21 @@
+{
+  "confidence": "high",
+  "doc": "48-byte switch jump table of 11 code addresses (stride 8) mapping level index 0-10 to its unlock bit in the level-selection availability check.",
+  "evidence": [
+    "caller Menu_UpdateLevelSelectionAvailability (switch over the 11 level numbers, each target loads one unlock bit then jumps to the common tail)"
+  ],
+  "key": "",
+  "lane": "PIVOT-SYMS",
+  "name": "g_levelUnlockBitJumpTable",
+  "row": {
+    "doc": "48-byte switch jump table of 11 code addresses (stride 8) mapping level index 0-10 to its unlock bit in the level-selection availability check.",
+    "evidence": [
+      "caller Menu_UpdateLevelSelectionAvailability (switch over the 11 level numbers, each target loads one unlock bit then jumps to the common tail)"
+    ],
+    "kind": "global",
+    "name": "g_levelUnlockBitJumpTable",
+    "target": "D_auto_rodata_func_8043C54C_de_800DE188"
+  },
+  "seq": 11107,
+  "ts": "2026-10-27T19:32:49-0700"
+}

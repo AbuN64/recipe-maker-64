@@ -1,6 +1,7 @@
 """The name ledger: rows named by stable keys, judged against the tree plus the queued rows; no tree is written."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -520,3 +521,57 @@ def test_submit_judges_one_ledger_snapshot_and_keeps_complete_existing_registrat
     assert again["selection"] == first["selection"]
     assert again["registrations"][0]["lane"] == "L1"
     assert calls.count("ledger.jsonl") == 1 and calls.count("events.jsonl") == 1
+
+
+def test_exact_keyless_registration_preserves_real_original_owner(book):
+    original = json.loads((Path(__file__).parent / "fixtures/keyless-queued-row.json").read_text())
+    with namebook.locked():
+        (namebook.store() / "ledger.jsonl").write_text(json.dumps(original) + "\n")
+    before = (namebook.store() / "ledger.jsonl").read_bytes()
+    for lane in (original["lane"], "another-reviewer"):
+        result = submit(book, lane, [original["row"]])
+        assert (result["accepted"], result["already"], result["refused"]) == (0, 1, 0)
+        assert result["selection"]["rows"] == [original]
+        assert result["registrations"][0]["seq"] == 11107
+        assert result["registrations"][0]["lane"] == "PIVOT-SYMS"
+        assert namebook.select(result["selection"]) == [original]
+    assert (namebook.store() / "ledger.jsonl").read_bytes() == before
+    assert namebook.events() == []
+    namebook.event({"event": "made", "batch": 82, "seqs": [11107]})
+    result = submit(book, "reviewer", [original["row"]])
+    assert result["registrations"][0]["state"] == "inflight"
+    assert result["selection"]["rows"] == []
+    with pytest.raises(ValueError, match="inflight"):
+        namebook.select(namebook.selection([original]))
+
+
+def test_keyless_registration_never_aliases_changed_envelopes_or_ambiguous_owners(book):
+    row = {"kind": "global", "target": "D_blob_owner", "name": "g_value", "doc": "d", "evidence": []}
+    original = namebook.append("original", [row])[0]
+    for change in ({"target": "D_blob_other"}, {"doc": "changed"}, {"evidence": ["different"]}):
+        result = submit(book, "reviewer", [{**row, **change}])
+        assert result["accepted"] == 0 and result["refused"] == 1
+        assert result["selection"]["rows"] == []
+        assert all("seq" not in registration for registration in result["registrations"])
+    namebook.append("duplicate-owner", [row])
+    result = submit(book, "reviewer", [row])
+    assert result["by_rule"] == {"ambiguous": 1}
+    assert result["selection"]["rows"] == []
+    with pytest.raises(ValueError, match="ambiguous"):
+        namebook.select(namebook.selection([original]))
+
+
+def test_keyless_selection_keeps_equal_names_in_distinct_scopes_separate(book):
+    rows = namebook.append(
+        "original",
+        [
+            {"kind": "local", "function": function, "target": "arg0", "name": "value"}
+            for function in ("First", "Second")
+        ],
+    )
+    selected = namebook.selection(list(reversed(rows)))
+    assert namebook.select(selected) == list(reversed(rows))
+    changed = json.loads(json.dumps(selected))
+    changed["rows"][0]["row"]["function"] = "First"
+    with pytest.raises(ValueError, match="stale"):
+        namebook.select(changed)

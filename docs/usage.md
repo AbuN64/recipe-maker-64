@@ -78,6 +78,11 @@ writing the shared ledger. `name status --ledger-dir DIR --json` reads the same 
 Relative ledger directories resolve from the invocation directory.
 
 `name status` includes each original `proposal` alongside its ledger disposition for reproducible reconciliation.
+Resubmitting an already queued proposal returns its original sequence and owner. For proposals without
+an address or member key, only the complete identical proposal envelope identifies that existing row;
+a shared requested name alone never does. Changed targets, scopes or evidence do not inherit its ownership.
+Duplicate matching owners refuse as ambiguous. Inflight registrations remain visible but cannot be selected
+for another batch. Neither registration nor selection rewrites the original row or ledger history.
 
 Ledger submission also returns complete `registrations` and a `selection` object. Each
 selector binds the absolute ledger directory and the immutable sequence, original lane,
