@@ -62,7 +62,10 @@ Member renames (`field` rows, step M) of a name several records spell: the types
 
 Data aliases support caller evidence only when their positive byte width fits one storage
 record with the same ROM/VRAM offset in every version shared by the reader and storage.
-A pool defined in only one version is joined only to that version’s assembly reads. Overlapping owners, unknown
+A pool defined in only one version is joined only to that version’s assembly reads.
+That join proves read evidence, not interchangeable C declarations. Naming a data storage owner or alias renames
+only that identity; other typed views retain their identities and byte offsets. Function entry-point spellings still
+follow the function across versions. Overlapping owners, unknown
 widths, missing versions and divergent offsets remain unproved. Symbol extents and direct MIPS memory
 operands supply byte widths; an untyped address is not a proved access. String evidence reads only
 terminated printable bytes inside the datum's own checked ROM extents, common to every

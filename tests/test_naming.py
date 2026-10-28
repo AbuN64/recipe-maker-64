@@ -1240,3 +1240,19 @@ def test_a_datum_declared_extern_under_a_version_twins_spelling_counts_as_extern
     ctx._externs = {"D_alias_de"}  # no word of any extern declaration is the member's own name
     monkeypatch.setattr(ctx, "canon", lambda n: "D_80005000" if n == "D_alias_de" else n)
     assert ctx.is_extern("D_80005000") and not ctx.is_extern("D_80002000")
+
+
+def test_data_storage_name_does_not_collapse_scalar_views_at_the_same_address(project, monkeypatch):
+    # Production SEQUENCER_5 holds raw const u32 arrays and extern f32 views of the same bytes.
+    # Turning both into one C identifier makes valid source fail with conflicting types.
+    doc = _aliased(monkeypatch)
+    member = next(m for m in doc["members"] if m["name"] == "D_blob_1")
+    member["name"] = "D_blob_818b493a54f22a804367"
+    ctx = naming.Map(project, doc, dict(GRAPH))
+    assert ctx.canon("D_80005000") == "D_blob_818b493a54f22a804367"
+    assert naming._moves(ctx, {"kind": "global", "target": member["name"], "name": "g_trackNormalizedVolumeScale"}) == [
+        {"op": "symbol", "subject": member["name"], "target": "g_trackNormalizedVolumeScale"}
+    ]
+    assert naming._moves(ctx, {"kind": "global", "target": "D_80005000", "name": "g_volumeScaleView"}) == [
+        {"op": "symbol", "subject": "D_80005000", "target": "g_volumeScaleView"}
+    ]

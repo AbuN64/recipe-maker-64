@@ -368,10 +368,15 @@ class Map:
         return name
 
     def spellings(self, target: str) -> list[str]:
-        """The target and every other neutral spelling a version's symbol table gives the same address, so a rename
-        reaches the table (and the assembly extracted from it) of every version, not only the one the name came from."""
+        """The target and neutral function spellings of its entry point in other versions.
+
+        A data alias is a separately typed view of storage, even at offset zero. Evidence may join that view to
+        its storage owner, but naming either one must not collapse their C declarations or array/scalar shapes.
+        """
         member = self.members.get(self.canon(target))
-        places = {(p["version"], p["vram"]) for p in member["placements"]} if member else set()
+        if not member or member["kind"] != "function":
+            return [target]
+        places = {(p["version"], p["vram"]) for p in member["placements"]}
         found = [t for v, table in self.tables.items() for t, row in table.items() if (v, row[0]) in places]
         return [target, *dict.fromkeys(t for t in found if t != target and style.neutral(t))]
 
