@@ -20,6 +20,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -80,18 +81,90 @@ def ledger() -> list[Json]:
 
 def event(doc: Json) -> None:
     """Record what became of rows: made (in batch K), landed, dropped (back in the queue, or returned to its lane)."""
+    if "batch" in doc:
+        batch_identity(doc["batch"])
     with locked(), open(store() / "events.jsonl", "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **doc}, sort_keys=True) + "\n")
 
 
 def events() -> list[Json]:
-    return _lines(store() / "events.jsonl")
+    rows = _lines(store() / "events.jsonl")
+    for row in rows:
+        if "batch" in row:
+            batch_identity(row["batch"])
+    return rows
+
+
+def batch_identity(value: Any) -> tuple[int, Any]:
+    """Order distinct integer and named batch identities without coercion or aliases."""
+    if type(value) is int and value >= 0:
+        return (0, value)
+    if type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
+        return (1, value)
+    raise ValueError(f"invalid batch identity: {value!r}")
+
+
+def next_batch(rows: Sequence[Json]) -> int:
+    identities = [batch_identity(r["batch"]) for r in rows if "batch" in r]
+    candidate = 1 + max((v for kind, v in identities if kind == 0), default=0)
+    named = {v for kind, v in identities if kind == 1}
+    while str(candidate) in named:
+        candidate += 1
+    return int(candidate)
+
+
+def selector(row: Json) -> Json:
+    """Immutable ledger ownership and content, suitable for an exact make request."""
+    return deepcopy(row)
+
+
+def selection(rows: Sequence[Json]) -> Json:
+    return {"ledger": str(store().resolve()), "rows": [selector(row) for row in rows]}
+
+
+def select(request: Json) -> list[Json]:
+    """Validate the entire reviewed selection before any batch side effect."""
+    if set(request) != {"ledger", "rows"} or request["ledger"] != str(store().resolve()):
+        raise ValueError("selection belongs to another ledger or has invalid fields")
+    wanted = request["rows"]
+    if not isinstance(wanted, list) or not wanted:
+        raise ValueError("selection requires a nonempty rows array")
+    rows, history = ledger(), events()
+    now = _status(rows, history)
+    by_seq = {r["seq"]: r for r in rows}
+    if len(by_seq) != len(rows):
+        raise ValueError("ledger has ambiguous sequence identities")
+    counts = Counter((r["key"], r["name"]) for r in rows if now[r["seq"]] in {"queued", "inflight"})
+    seen: set[int] = set()
+    out = []
+    for item in wanted:
+        if not isinstance(item, dict) or type(item.get("seq")) is not int:
+            raise ValueError("selection row requires an integer seq")
+        seq = item["seq"]
+        if seq in seen:
+            raise ValueError(f"duplicate selection seq {seq}")
+        seen.add(seq)
+        row = by_seq.get(seq)
+        if row is None:
+            raise ValueError(f"unknown selection seq {seq}")
+        if selector(row) != item:
+            raise ValueError(f"stale or foreign selection seq {seq}")
+        if now[seq] != "queued":
+            raise ValueError(f"selection seq {seq} is {now[seq]}")
+        if counts[row["key"], row["name"]] != 1:
+            raise ValueError(f"ambiguous selection seq {seq}")
+        out.append(row)
+    return out
 
 
 def status() -> dict[int, str]:
     """seq -> queued | inflight | landed | returned, by replaying the events over the ledger."""
-    out = {r["seq"]: "queued" for r in ledger()}
-    for e in events():
+    return _status(ledger(), events())
+
+
+def _status(rows: Sequence[Json], history: Sequence[Json]) -> dict[int, str]:
+    out = {r["seq"]: "queued" for r in rows}
+    for e in history:
         for seq in e.get("seqs", ()):
             if seq in out:
                 out[seq] = {"made": "inflight", "landed": "landed", "returned": "returned", "requeued": "queued"}.get(
@@ -125,10 +198,7 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
             reason = sent.get((r["lane"], r["key"] or "", r["name"]), "")
         out.append(
             {
-                "seq": r["seq"],
-                "lane": r["lane"],
-                "key": r["key"],
-                "name": r["name"],
+                **selector(r),
                 "state": state_,
                 "reason": reason,
                 "proposal": r["row"],
@@ -140,12 +210,15 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
 def queued(inflight: bool = True) -> list[Json]:
     """The accepted rows not in main yet, oldest first; with `inflight` False only those no batch holds."""
     held = {"queued", "inflight"} if inflight else {"queued"}
-    now = status()
-    return [r for r in ledger() if now.get(r["seq"]) in held]
+    rows = ledger()
+    now = _status(rows, events())
+    return [r for r in rows if now.get(r["seq"]) in held]
 
 
 def append(lane: str, rows: Sequence[Json]) -> list[Json]:
     """Add accepted rows to the ledger under the lock; returns the ledger lines written."""
+    if not rows:
+        return []
     out: list[Json] = []
     with locked():
         have = ledger()
@@ -340,7 +413,12 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
     unfilled = [r for r in rows if isinstance(r, dict) and r.get("key") and r.get("name") == ""]
     rows = [r for r in rows if not (isinstance(r, dict) and r.get("key") and r.get("name") == "")]  # pack skeleton rows
     sent_back = take_returns(lane)
-    waiting = queued()
+    snapshot = ledger()
+    now = _status(snapshot, events())
+    waiting = [r for r in snapshot if now[r["seq"]] in {"queued", "inflight"}]
+    waiting_by_identity: dict[tuple[str, str], list[Json]] = {}
+    for existing in waiting:
+        waiting_by_identity.setdefault((existing["key"], existing["name"]), []).append(existing)
     taken_keys = {r["key"] for r in waiting if r["key"]}
     owner = None
     seen: set[str] = set()
@@ -355,17 +433,30 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
         if key and (why := owner(key)):
             return "owner", why
         if key and key in taken_keys | seen:
-            same = next((r for r in waiting if r["key"] == key and r["name"] == row.get("name")), None)
+            same = waiting_by_identity.get((key, row.get("name", "")))
             return ("applied", "already queued") if same else ("pending", f"{key} is already queued under another name")
         seen.add(key)
         return None
 
-    now = status()
-    landed = {r["key"]: r["name"] for r in ledger() if r["lane"] == lane and r["key"] and now.get(r["seq"]) == "landed"}
+    landed = {r["key"]: r["name"] for r in snapshot if r["lane"] == lane and r["key"] and now[r["seq"]] == "landed"}
     judged = naming.judge_rows(config, params, rows, [r["row"] for r in waiting], gate, landed)
     stored = [r for r, _ in judged.accepted if not r.get("suggest")]
     advice = [r for r, _ in judged.accepted if r.get("suggest")]
     written = append(lane, stored)
+    registered = list(written)
+    registrations: list[Json] = [{"state": "registered", **selector(r), "proposal": r["row"]} for r in written]
+    for row in judged.already:
+        key = row.get("_key") or row.get("key") or ""
+        matches = waiting_by_identity.get((key, row.get("name", "")), [])
+        if len(matches) == 1:
+            existing = matches[0]
+            registrations.append({"state": now[existing["seq"]], **selector(existing), "proposal": row})
+            if now[existing["seq"]] == "queued":
+                registered.append(existing)
+        else:
+            registrations.append({"state": "ambiguous" if matches else "already", "proposal": row})
+    registrations.extend({"state": "refused", **item} for item in judged.refused)
+    registrations.extend({"state": "suggested", "proposal": row} for row in advice)
     suggest(lane, advice, lambda r: "")
     refused(lane, judged.refused)
     by_rule = Counter(r["rule"] for r in judged.refused)
@@ -388,6 +479,8 @@ def submit(config: Config, params: Json, rows: list[Json]) -> Json:
         "unfilled": len(unfilled),
         "queued": len(waiting) + len(written),
         "seqs": [w["seq"] for w in written],
+        "selection": selection(registered),
+        "registrations": registrations,
         "by_rule": dict(by_rule),
         "returned": [
             f"returned {r['rule']} {_where(r['row'])} -> {r['row'].get('name')}: {r['reason']}" for r in sent_back

@@ -453,3 +453,70 @@ def test_keyless_rows_returned_by_the_applier_each_show_their_own_reason(book):
     namebook.send_back("L1", {"name": "Beta"}, "build", "warn")
     got = naming.run(book, {"host": None, "action": "status", "seqs": "1-2"})
     assert [r["reason"] for r in got["rows"]] == ["proof: token kept", "build: warn"]
+
+
+def test_batch_identity_keeps_named_history_distinct_and_avoids_filename_aliases():
+    assert namebook.batch_identity(1) != namebook.batch_identity("1")
+    history = [{"batch": 0}, {"batch": 78}, {"batch": "pass19"}, {"batch": "pivot-names-apply-pass20"}, {"batch": "79"}]
+    assert namebook.next_batch(history) == 80
+    assert sorted(namebook.batch_identity(e["batch"]) for e in history) == [
+        (0, 0),
+        (0, 78),
+        (1, "79"),
+        (1, "pass19"),
+        (1, "pivot-names-apply-pass20"),
+    ]
+    for bad in (True, None, -1, 1.0, "", "../other", [], {}):
+        with pytest.raises(ValueError, match="batch identity"):
+            namebook.batch_identity(bad)
+
+
+def test_exact_selection_validates_every_identity_and_does_not_change_store(tmp_path):
+    from copy import deepcopy
+
+    with namebook.namespace(tmp_path / "ledger"):
+        rows = namebook.append("original", [{"_key": f"fn:us:{i:08X}", "name": f"Thing_{i}"} for i in range(4)])
+        request = namebook.selection([rows[3], rows[1]])
+        before = (namebook.store() / "ledger.jsonl").read_bytes()
+        assert namebook.select(request) == [rows[3], rows[1]]
+        bad = []
+        for key, value in (("seq", 99), ("seq", True), ("lane", "foreign"), ("key", "stale"), ("sha256", "0")):
+            candidate = deepcopy(request)
+            candidate["rows"][1][key] = value
+            bad.append(candidate)
+        bad += [{**request, "ledger": "/foreign"}, {**request, "rows": request["rows"] * 2}]
+        for candidate in bad:
+            with pytest.raises(ValueError):
+                namebook.select(candidate)
+        assert (namebook.store() / "ledger.jsonl").read_bytes() == before
+        namebook.event({"event": "made", "batch": "pass19", "seqs": [rows[1]["seq"]]})
+        with pytest.raises(ValueError, match="inflight"):
+            namebook.select(request)
+        namebook.event({"event": "returned", "batch": "pass19", "seqs": [rows[1]["seq"]]})
+        with pytest.raises(ValueError, match="returned"):
+            namebook.select(request)
+        namebook.append("another", [{"_key": rows[3]["key"], "name": rows[3]["name"]}])
+        with pytest.raises(ValueError, match="ambiguous"):
+            namebook.select(namebook.selection([rows[3]]))
+
+
+def test_queued_reads_ledger_and_events_once(tmp_path, monkeypatch):
+    with namebook.namespace(tmp_path):
+        namebook.append("owner", [{"name": "Thing_Name"}])
+        calls = []
+        original = namebook._lines
+        monkeypatch.setattr(namebook, "_lines", lambda path: calls.append(path.name) or original(path))
+        assert len(namebook.queued()) == 1
+        assert calls == ["ledger.jsonl", "events.jsonl"]
+
+
+def test_submit_judges_one_ledger_snapshot_and_keeps_complete_existing_registration(book, monkeypatch):
+    submitted = fn("fn:us:80004030", "Actor_Start")
+    first = submit(book, "L1", [submitted])
+    calls = []
+    original = namebook._lines
+    monkeypatch.setattr(namebook, "_lines", lambda path: calls.append(path.name) or original(path))
+    again = submit(book, "L1", [submitted])
+    assert again["selection"] == first["selection"]
+    assert again["registrations"][0]["lane"] == "L1"
+    assert calls.count("ledger.jsonl") == 1 and calls.count("events.jsonl") == 1

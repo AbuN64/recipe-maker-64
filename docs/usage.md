@@ -75,3 +75,21 @@ writing the shared ledger. `name status --ledger-dir DIR --json` reads the same 
 Relative ledger directories resolve from the invocation directory.
 
 `name status` includes each original `proposal` alongside its ledger disposition for reproducible reconciliation.
+
+Ledger submission also returns complete `registrations` and a `selection` object. Each
+selector binds the absolute ledger directory and the immutable sequence, original lane,
+key, name and complete stored envelope. Already queued rows retain their original
+owner; newly accepted rows receive ordinary ledger sequences. Refused, ambiguous,
+inflight, already applied and suggested proposals remain explicit dispositions. The
+selection contains only uniquely registered queued rows; check every registration before
+using it as the reviewed set. Lists are not truncated.
+
+The existing train batch applier accepts `names_batch.py make --selection FILE`. Save the
+returned selection object as FILE, without editing row identities. It validates the entire
+set, then uses the existing batch cap. Its complete dispositions identify selected rows
+left queued by the cap. After the first batch lands, pass those deferred selectors in the
+same ledger envelope to the next make. Never substitute a sequence range. A private
+fixture uses `names_batch.py --ledger-dir DIR make --selection FILE --tree CLEAN_TREE`;
+TREE must be a dedicated clean batch workspace with its ordinary `github/main` remote.
+The production train still owns rebuild and receipt settlement. Repeated settlement of
+the same attempt is idempotent; conflicting outcomes refuse. No caller writes events.
