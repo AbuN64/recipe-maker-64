@@ -421,6 +421,8 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
         if spelled and spelled not in ctx.members:
             if spelled == name:
                 return {**rest, "_key": parsed.text()}, "applied", ""
+            if row.get("_fix") and row.get("target") != spelled:
+                return row, "stale", "reviewed correction target no longer names this identity"
             kind = "static" if name.startswith("s_") else "global"
             return {**rest, "kind": kind, "target": spelled, "_key": parsed.text()}, "", ""
     if member is None or (member["kind"] == "function") != (want == "function"):
@@ -448,6 +450,8 @@ def resolve(ctx: Any, fields: Any, repairs: Any, row: Json) -> tuple[Json, str, 
         )
     if function == name:
         return {**rest, "_key": parsed.text()}, "applied", ""
+    if row.get("_fix") and row.get("target") != function:
+        return row, "stale", "reviewed correction target no longer names this identity"
     kind = ("static" if name.startswith("s_") else "global") if parsed.kind == "datum" else "function"
     return {**rest, "kind": kind, "target": function, "_key": parsed.text()}, "", ""
 

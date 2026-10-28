@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from unbake import api
+
 from recipemaker import access, cparse, table
 
 WORD = re.compile(r"[A-Za-z_]\w*")
@@ -128,24 +130,33 @@ class Slot:
     kind: str  # param | local
     type: str
     line: int
+    offset: int
+    scope: tuple[int, ...]
 
 
 def slots(text: str, fn: Function) -> list[Slot]:
-    """The parameters and locals of FN that carry a decompiler name, once each, with their declared type."""
-    masked = access.mask(text)
-    body = masked[fn.start : fn.end]
-    open_ = body.index("{")
-    decl = re.compile(
-        r"\b([A-Za-z_][\w \t]*?)(?:[ \t]+|[ \t]*\*+[ \t]*)(" + _placeholder().pattern + r")\s*(?=[=;,)\[])"
-    )
-    found: dict[str, Slot] = {}
-    for m in decl.finditer(body):
-        kind_word = m[1].split()[-1] if m[1].split() else ""
-        if kind_word in ("return", "goto", "case", "else") or m[2] in found:
-            continue
-        line = masked.count("\n", 0, fn.start + m.start(2)) + 1
-        found[m[2]] = Slot(m[2], "param" if m.start() < open_ else "local", " ".join(m[1].split()), line)
-    return list(found.values())
+    """Every parameter/local declaration of FN, including meaningful and shadowed names."""
+    return [
+        Slot(
+            b.name,
+            "param" if b.kind == "parameter" else "local",
+            b.type,
+            text.count("\n", 0, b.start) + 1,
+            b.start,
+            b.scope,
+        )
+        for b in api.name_bindings(text)
+        if fn.start <= b.start < fn.end and b.kind in {"parameter", "local"} and b.owner == fn.name
+    ]
+
+
+def candidates(text: str, fn: Function) -> list[Slot]:
+    """The name-only proposal contract cannot address shadowed bindings; keep them as census debt."""
+    from collections import Counter
+
+    every = slots(text, fn)
+    counts = Counter(s.name for s in every)
+    return [s for s in every if placeholder(s.name) and counts[s.name] == 1]
 
 
 def suggestions(body: str, name: str, protos: Mapping[str, list[list[str]]], debug: Sequence[str] = ()) -> list[str]:

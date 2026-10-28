@@ -381,7 +381,7 @@ def _fn_card(
         card["body_cut"] = len(shown) > BODY_LIMIT
         if card["body_cut"]:  # the rest is in the source: where to read it
             card["body_lines"] = f"{card.get('file', '')}:{card['line']}-{card['line'] + shown.count(chr(10))}"
-        fn_slots = locals_.slots(text, fn)
+        fn_slots = locals_.candidates(text, fn)
         for s in fn_slots:
             hints = locals_.suggestions(
                 body, s.name, extra["protos"].get(locals_.calls(body)), extra["variables"].get(name, ())

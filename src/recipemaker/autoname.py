@@ -105,7 +105,7 @@ def local_rows(ctx: Any, config: Any) -> list[tuple[str, Json | None, Json]]:
         text, masked, fn = got
         body = masked[fn.start : fn.end]
         spelled, chosen = set(locals_.WORD.findall(body)), set[str]()
-        for slot in locals_.slots(text, fn):
+        for slot in locals_.candidates(text, fn):
             hints = [
                 h
                 for h in locals_.suggestions(body, slot.name, index.get(locals_.calls(body)))

@@ -88,6 +88,13 @@ def _applied(result: Json) -> list[str]:
 
 def _render_name(result: Json) -> list[str]:
     if result["action"] == "count":
+        if "census" in result:
+            census = result["census"]
+            return [
+                f"{len(census['paths'])} tracked source/header paths at {census['revision']}",
+                " ".join(f"{k}={v}" for k, v in census["counts"].items()),
+                *census["limits"],
+            ]
         return [
             f"{folder}: "
             + " ".join(
@@ -273,7 +280,12 @@ def _parser() -> argparse.ArgumentParser:
         "--retry", action="store_true", help="step S: offer again the keys refused twice (GAPS.jsonl keys stay skipped)"
     )
     one.add_argument("--target", help="pack this one function, datum or folder only (the one already chosen)")
-    one.add_argument("--steps", help="count: the steps read, a comma list of L, N1, N3, N4, N5 (default L,N4,N5)")
+    one.add_argument(
+        "--steps",
+        help=(
+            "count: C alone reads tracked declaration/guard/path identities; otherwise L,N1,N3,N4,N5 (default L,N4,N5)"
+        ),
+    )
     one.add_argument("--targets", nargs="+", metavar="FOLDER", help="count: the folders counted, in one evidence build")
     one.add_argument("--lanes", type=int, help="slices: the lane count (GLOBALS and STRUCT slices scale with it)")
     one.add_argument("--map", help="slices: a module map (unit<TAB>module lines, e.g. MODULES.tsv)")

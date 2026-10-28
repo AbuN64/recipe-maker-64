@@ -139,6 +139,13 @@ class Repairs:
             declared = [m for m in declaration.finditer(scope) if m[1] not in ("return", "goto", "case")]
             if not declared or re.search(r"\b(?:struct|union)\s+\w*\s*\{", scope):
                 return "scope", "local scope needs a declaration and no nested record definition", []
+            bindings = [
+                d
+                for d in api.name_bindings(text)
+                if a <= d.start < b and d.name == old and d.kind in {"local", "parameter"}
+            ]
+            if len(bindings) != 1:
+                return "scope", "local spelling does not identify one declaration; shadowed bindings need review", []
             if self.original is None:
                 self.original = self._original() if self._original else {}
             known = self.original.get(str(function), ())

@@ -661,3 +661,19 @@ def test_keyless_selection_keeps_equal_names_in_distinct_scopes_separate(book):
     changed["rows"][0]["row"]["function"] = "First"
     with pytest.raises(ValueError, match="stale"):
         namebook.select(changed)
+
+
+def test_reviewed_correction_is_bound_to_current_target_and_repeat_is_applied():
+    current = "Polytrak2_InitializeQuantizedStream"
+    ctx = SimpleNamespace(doc={"names_from": "de"}, canon=lambda _: current, members={current: {"kind": "function"}})
+    row = {
+        "key": "fn:de:80260ECC",
+        "target": current,
+        "name": "Polytrak2_StoreWordAndTriple",
+        "_fix": True,
+        "doc": "Writes the scalar and three-word record.",
+    }
+    got, rule, _ = namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), row)
+    assert rule == "" and got["_fix"] and got["target"] == current
+    assert namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), {**row, "target": "stale"})[1] == "stale"
+    assert namebook.resolve(ctx, SimpleNamespace(), SimpleNamespace(), {**row, "name": current})[1] == "applied"

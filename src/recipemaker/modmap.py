@@ -26,6 +26,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from unbake import api
 from unbake.contracts import Finding, Json, Refusal
 
 from recipemaker import cparse, modcheck
@@ -314,7 +315,7 @@ def fold(files: Any, path: str) -> str:
 
 
 def guard_of(header: str) -> str:
-    return re.sub(r"\W", "_", header.removeprefix("include/")).upper()
+    return api.guard_name(header)
 
 
 def merge_headers(files: Any, target: str, olds: Sequence[str]) -> str | None:

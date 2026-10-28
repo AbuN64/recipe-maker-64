@@ -1156,7 +1156,7 @@ def _local_cards(
                 continue
             body = masked[fn.start : fn.end]
             rows = []
-            for slot in locals_.slots(text, fn):
+            for slot in locals_.candidates(text, fn):
                 found = locals_.suggestions(body, slot.name, index.get(locals_.calls(body)), original.get(fn.name, ()))
                 if found:
                     rows.append(
@@ -1577,7 +1577,7 @@ def banners(config: Config, params: Json) -> Json:
     }
 
 
-COUNTED = ("L", "N1", "N3", "N4", "N5")  # the steps `count` reads: a pack of targets with evidence per folder
+COUNTED = ("C", "L", "N1", "N3", "N4", "N5")  # the steps `count` reads: a pack of targets with evidence per folder
 
 
 def count(config: Config, params: Json) -> Json:
@@ -1588,6 +1588,16 @@ def count(config: Config, params: Json) -> Json:
     steps = [x for x in str(params.get("steps") or "L,N4,N5").split(",") if x]
     if bad := [x for x in steps if x not in COUNTED]:
         raise state.stop("recipe.name", f"count takes steps {', '.join(COUNTED)}, not {', '.join(bad)}")
+    if "C" in steps:
+        if steps != ["C"] or params.get("targets"):
+            raise state.stop("recipe.name", "the whole tracked census uses --steps C alone, without --targets")
+        return {
+            "action": "count",
+            "steps": steps,
+            "folders": {},
+            "census": api.naming_census(config),
+            "next": "Review qualified declarations and unresolved semantic evidence before proposing names",
+        }
     targets = list(params.get("targets") or [])
     if not targets:
         raise state.stop("recipe.name", "count needs --targets FOLDER...", action="recipe name count --targets src/X")

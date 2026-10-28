@@ -205,3 +205,36 @@ def test_a_body_line_is_evidence_for_a_slot_when_it_lies_in_the_function_and_hol
     assert "needs evidence" in locals_.verify(*args[:2], [], *args[3:5])
     mixed = ["body L4: x", "param nothing here"]
     assert "not in the function" in locals_.verify(body, "sp1C", mixed, {}, (), (1, 5), source)
+
+
+def test_canonical_slots_keep_named_and_shadowed_bindings_but_name_only_proposals_refuse(tmp_path):
+    text = "int F(int arg0, int count) { int var_s0; { int var_s0; } return arg0; }\n"
+    function = locals_.functions(text)[0]
+    slots = locals_.slots(text, function)
+    assert [s.name for s in slots] == ["arg0", "count", "var_s0", "var_s0"]
+    assert [s.name for s in locals_.candidates(text, function)] == ["arg0"]
+    assert len({(s.scope, s.offset) for s in slots}) == 4
+    config = project(tmp_path, {"src/AI/NAV/a.CPP": text})
+    got = submit(
+        config,
+        tmp_path,
+        target="var_s0",
+        name="index",
+        function="F",
+        line=1,
+        evidence=["body L1: two different bindings"],
+    )
+    assert got["refused"] == 1
+
+
+def test_whole_tracked_census_uses_the_canonical_api(monkeypatch, tmp_path):
+    from unbake import api
+
+    config = project(tmp_path)
+    seen = []
+    result = {"counts": {"macro": 2}, "paths": [], "semantic_acceptance": False}
+    monkeypatch.setattr(api, "naming_census", lambda c: seen.append(c) or result)
+    got = naming.count(config, {"steps": "C"})
+    assert got["census"] == result and seen == [config]
+    with pytest.raises(Exception, match="whole tracked census"):
+        naming.count(config, {"steps": "C", "targets": ["src"]})

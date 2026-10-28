@@ -112,3 +112,21 @@ request. Repeating the same review returns the existing disposition without anot
 a different review reason or subsequent disposition refuses. Corrected proposals are then
 admitted normally by `name submit`, with their own immutable rows. This operation never
 fabricates a batch or train receipt and never changes source files.
+
+
+### Complete tracked declaration inventory
+
+`recipe name count --steps C --json` reads all tracked source/header paths once through the existing
+Unbake fact API. Its nine declaration domains are function, global, static, type, member, parameter,
+local, macro and enumerator. Each identity includes the path, kind, enclosing scope offsets and
+exact declaration offset; names alone never merge shadowed bindings. Generated include guards are
+macro identities with the current path-derived spelling. Source and header directory views derive
+from that same path universe, so numbered header folders cannot disappear into source-folder totals.
+The result pins HEAD and each input hash, reports parser limits and never claims semantic acceptance.
+C is a whole-tree census step; it refuses target filters or mixing with evidence-pack steps.
+
+Local naming packs continue to select only placeholder names. Their facts now include all declarations;
+name-only proposals with shadowed declarations refuse and remain explicit census debt. A ledger batch
+replays the admitted envelope, including reviewed correction intent and target; a correction whose
+canonical identity now has a different target refuses as stale. Successful repeated corrections remain
+already-applied, and ledger ownership/history are unchanged.
