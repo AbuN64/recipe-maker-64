@@ -6,6 +6,7 @@ macro expansion)."""
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from unbake.contracts import Config, Json
 
@@ -103,9 +104,7 @@ def fix_errors(
                 if source.strip() != shown:
                     continue
                 while todo > 0:
-                    new = re.sub(
-                        _ACCESS.format(re.escape(member)), lambda m, other=other: m.group(1) + other, text[j], count=1
-                    )
+                    new = re.sub(_ACCESS.format(re.escape(member)), r"\g<1>" + other, text[j], count=1)
                     if new == text[j]:
                         break
                     text[j], todo, fixed = new, todo - 1, fixed + 1
@@ -152,7 +151,7 @@ def settle(
     candidates = doubtful(root, rename, ours)
     headers = sorted(p for p in candidates if not _sources(p))
     objs = objects_for(root, candidates, version) if version else []
-    out: Json = {"settled": not objs, "compiled": len(objs), "fixed": 0, "unfixed": []}
+    out: dict[str, Any] = {"settled": not objs, "compiled": len(objs), "fixed": 0, "unfixed": []}
     for _ in range(rounds):
         errors: list[tuple[str, str, str]] = []
         for i in range(0, len(objs), BATCH):

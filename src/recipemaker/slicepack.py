@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from unbake import api
 from unbake.contracts import Config, Json, Refusal
 
 from recipemaker import access, debug, host, locals_, slices, state, structure, style, table, world
@@ -76,26 +77,34 @@ class Source:
         return (text, masked, fns[name]) if name in fns else None
 
 
-def asm_index(ctx: Any) -> dict[str, Path]:
-    """File stem -> extracted data assembly (`asm/<version>/data/<segment>/<name>.s`), the names_from version first.
-    One directory listing per command: `api.asm_path` parsed the symbol tables again for every spelling."""
-    if getattr(ctx, "_asm_data", None) is None:
-        found: dict[str, Path] = {}
-        for version in sorted(ctx.doc["versions"], key=lambda v: v != ctx.doc["names_from"]):
-            for file in sorted((Path(ctx.root) / "asm" / version / "data").glob("*/*.s")):
-                found.setdefault(file.stem, file)
-        ctx._asm_data = found
-    return ctx._asm_data  # type: ignore[no-any-return]
-
-
 def asm_text(config: Config, ctx: Any, name: str) -> str:
-    """The extracted assembly of a datum, "" when the project has none for it."""
+    """Common string bytes inside this datum's checked extent in every holding version.
+
+    Extracted assembly may contain adjacent labels or come from another version. Read bounded ROM
+    ranges through the public snapshot instead; no caller or nearest file grants ownership.
+    """
     member = ctx.members.get(ctx.canon(name))
-    index = asm_index(ctx)
-    for spelled in dict.fromkeys([name, *(ctx.spellings(name) if member else ())]):
-        if spelled in index:
-            return index[spelled].read_text(encoding="utf-8", errors="replace")
-    return ""
+    if not member or member["kind"] != "data" or not member["placements"]:
+        return ""
+    if getattr(ctx, "_string_versions", None) is None:
+        ctx._string_versions = api.snapshot(config).versions
+    common: list[str] | None = None
+    for place in member["placements"]:
+        version, start, end = place["version"], place["rom_start"], place["rom_end"]
+        size = end - start
+        row = (place["vram"], start, size, "data")
+        if size <= 0 or ctx.storage.at(version, row) != (member["name"], 0):
+            return ""
+        with ctx._string_versions[version].rom.open("rb") as stream:
+            stream.seek(start)
+            raw = stream.read(size)
+        if len(raw) != size:
+            return ""
+        # Only terminated runs inside the datum count; never borrow the next record's terminator.
+        texts = [part.decode("ascii") for part in raw.split(b"\0")[:-1] if PRINTABLE.fullmatch(part.decode("latin-1"))]
+        common = texts if common is None else [t for t in common if t in texts]
+    raw = b"\0".join(t.encode("ascii") for t in (common or [])) + b"\0"
+    return ".byte " + ", ".join(str(b) for b in raw)
 
 
 def prototypes(config: Config, root: Path) -> locals_.Prototypes:
@@ -127,7 +136,7 @@ class Strings:
         if datum not in self.held:
             try:
                 self.held[datum] = decode(self.read(self.config, self.ctx, datum))
-            except Exception:
+            except (OSError, KeyError, ValueError, Refusal):
                 self.held[datum] = []
         return self.held[datum]
 

@@ -30,11 +30,27 @@ from recipemaker import keys, state
 DEFAULT_TREE = "~/code/wt/POOL-SRC"  # the shared warm tree at main that a ledger submit reads (it writes nothing)
 
 
+@contextmanager
+def namespace(directory: str | Path | None) -> Iterator[None]:
+    """Bind the explicit CLI directory to the existing store boundary for this command only."""
+    previous = os.environ.get("NAMES_STATE")
+    if directory:
+        os.environ["NAMES_STATE"] = str(Path(directory).expanduser().resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("NAMES_STATE", None)
+        else:
+            os.environ["NAMES_STATE"] = previous
+
+
 def store() -> Path:
     return Path(os.environ.get("NAMES_STATE") or "~/rig-state/names").expanduser()
 
 
 def default_tree() -> Path:
+    """The warm read-only input tree when the caller supplies no project."""
     return Path(os.environ.get("NAMES_TREE") or DEFAULT_TREE).expanduser()
 
 
@@ -108,7 +124,15 @@ def dispositions(first: int = 0, last: int = 0, lane: str = "") -> list[Json]:
         if state_ == "returned" and not reason:
             reason = sent.get((r["lane"], r["key"] or "", r["name"]), "")
         out.append(
-            {"seq": r["seq"], "lane": r["lane"], "key": r["key"], "name": r["name"], "state": state_, "reason": reason}
+            {
+                "seq": r["seq"],
+                "lane": r["lane"],
+                "key": r["key"],
+                "name": r["name"],
+                "state": state_,
+                "reason": reason,
+                "proposal": r["row"],
+            }
         )
     return out
 

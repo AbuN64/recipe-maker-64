@@ -591,7 +591,7 @@ def _aliased(monkeypatch):
     for m in doc["members"]:
         if m["name"] == "D_80005000":
             m["name"] = "D_blob_1"
-            m["placements"] = [{**m["placements"][0], "vram": 0x80005000, "rom_start": 0x5000}]
+            m["placements"] = [{**m["placements"][0], "vram": 0x80005000, "rom_start": 0x5000, "rom_end": 0x5004}]
         if m["name"] == "func_80004020":
             m["name"] = "Actor_Free"
             m["placements"] = [{**m["placements"][0], "vram": 0x80004020, "rom_start": 0x4020}]
@@ -776,11 +776,6 @@ def test_unowned_global_patch_updates_source_and_all_version_tables(project, mon
     assert target not in (root / "src/c.c").read_text()
     for version in ("us", "eu"):
         assert (root / "versions" / version / "symbol_addrs.txt").read_text().startswith("g_actorCount =")
-
-
-def test_a_symbol_inside_a_datums_rom_span_spells_that_datum():
-    spans = [(0x100, 0x110, "D"), (0x120, 0x124, "E")]
-    assert [naming._within(spans, r) for r in (0x102, 0x10F, 0x110, 0x120, None)] == ["D", "D", "", "E", ""]
 
 
 def test_a_rename_reaches_every_neutral_spelling_the_tables_give_the_address(project, monkeypatch):

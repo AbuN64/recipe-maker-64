@@ -8,8 +8,6 @@ catalog-name or header-graph facts, so there is no catalog step (N0), no string 
 
 import json
 import re
-import sys
-from bisect import bisect_right
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -23,6 +21,7 @@ from recipemaker import (
     access,
     autoname,
     cparse,
+    dataevidence,
     debug,
     host,
     locals_,
@@ -65,6 +64,37 @@ _SHIP = "decomp ship --patch LANE={}:MESSAGE"  # a naming patch lands as any cha
 Graph = dict[str, tuple[list[str], list[str]]]
 
 
+class ReadGraph(dict[str, tuple[list[str], list[str]]]):
+    """Assembly edges and their measured direct-memory widths, scoped to this read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.widths: dict[str, dict[str, int]] = {}
+        self.versioned: dict[tuple[str, str], list[str]] = {}
+
+
+_ACCESS = re.compile(
+    r"\*/\s+(lb|lbu|sb|lh|lhu|sh|lw|lwu|sw|lwc1|swc1|ld|sd|ldc1|sdc1)\s+[^,]+,\s*%lo\(([A-Za-z_]\w*)\)"
+)
+_WIDTHS = {
+    "lb": 1,
+    "lbu": 1,
+    "sb": 1,
+    "lh": 2,
+    "lhu": 2,
+    "sh": 2,
+    "lw": 4,
+    "lwu": 4,
+    "sw": 4,
+    "lwc1": 4,
+    "swc1": 4,
+    "ld": 8,
+    "sd": 8,
+    "ldc1": 8,
+    "sdc1": 8,
+}
+
+
 def _root(config: Config) -> Path:
     return config.project.root / ".unbake/recipe/name"
 
@@ -88,14 +118,6 @@ def _tables(config: Config, versions: Sequence[str]) -> dict[str, Any]:
     return {v: api.symbols(config, v) for v in versions}
 
 
-def _within(spans: Sequence[tuple[int, int, str]], rom: int | None) -> str:
-    """The data member whose ROM span holds `rom`: a symbol inside a datum (a halfword of a table) spells that datum."""
-    if not rom:
-        return ""
-    i = bisect_right(spans, (rom, sys.maxsize, "")) - 1
-    return spans[i][2] if i >= 0 and rom < spans[i][1] else ""
-
-
 def _stems(member: Json, version: str) -> list[str]:
     """The file stems a function's extracted assembly can have: its name, and the neutral name extraction gave it
     (func_<VRAM>_<version>, func_<VRAM>) when it was renamed after the assembly was extracted."""
@@ -115,7 +137,8 @@ def reads(config: Config, doc: Json) -> Graph:
     for m in doc["members"]:
         for version in dict.fromkeys(p["version"] for p in m["placements"]) if m["kind"] == "function" else ():
             by_segment.setdefault((version, m["segment"]), []).append(m["name"])
-    graph: Graph = {}
+    graph = ReadGraph()
+    widths = graph.widths
     for (version, _), names in by_segment.items():
         folder = _directory(config, version, names)
         for name in names if folder else ():
@@ -125,9 +148,13 @@ def reads(config: Config, doc: Json) -> Graph:
             if file is None:
                 continue
             text = file.read_text(encoding="utf-8", errors="replace")
+            for opcode, symbol in _ACCESS.findall(text):
+                held_widths = widths.setdefault(version, {})
+                held_widths[symbol] = max(held_widths.get(symbol, 0), _WIDTHS[opcode])
             # a callee no member is named as (stale assembly of a renamed function) is resolved by `Map.canon`
             calls = [x for x in dict.fromkeys(_CALL.findall(text)) if not x.startswith(".")]  # a recursive call stays
             loads = [x for x in dict.fromkeys(_LOAD.findall(text)) if x != name]  # data no module holds is still read
+            graph.versioned[(version, name)] = loads
             held = graph.get(name, ([], []))
             graph[name] = (list(dict.fromkeys([*held[0], *calls])), list(dict.fromkeys([*held[1], *loads])))
     if not graph and by_segment:
@@ -149,6 +176,7 @@ class Map:
         self.config = config
         self.prefixes = prefixes.table(config)
         self.tables = _tables(config, doc["versions"])
+        self.storage = dataevidence.Storage(self.members, self.tables, getattr(graph, "widths", {}))
         self.catalog = debug.load(config)  # the original debug records, None when the config names no catalog
         self._spelled: dict[str, str] | None = None  # a spelling to its member, built at the first miss (`canon`)
         self._by_vram: dict[tuple[str, int, str], set[str]] | None = None  # (version, vram, kind) to table spellings
@@ -170,6 +198,8 @@ class Map:
             for n, (c, _) in graph.items()
         }
         self.loads = {n: list(dict.fromkeys(map(self.canon, ld))) for n, (_, ld) in graph.items()}
+        for reader, targets in self.storage.loaded(getattr(graph, "versioned", {})).items():
+            self.loads[reader] = list(dict.fromkeys([*self.loads.get(reader, ()), *targets]))
         # a function that calls itself: its own name is evidence (callee/caller) though no edge of the graph
         self.recursive = {n for n, (c, _) in graph.items() if any(self.canon(x) == n for x in c)}
         self.callers: dict[str, list[str]] = {}
@@ -306,26 +336,29 @@ class Map:
         if self._spelled is None:
             at: dict[tuple[str, int, int], str] = {}
             vram: dict[tuple[str, int], set[str]] = {}
-            inside: dict[str, list[tuple[int, int, str]]] = {}  # per version a data member's ROM span, by start
             for m in self.members.values():
+                if m["kind"] != "function":
+                    continue
                 for p in m["placements"]:
                     at[(p["version"], p["rom_start"], p["vram"])] = m["name"]
+            for m in self.members.values():
+                for p in m["placements"]:
                     vram.setdefault((p["version"], p["vram"]), set()).add(m["name"])
-                    if m["kind"] == "data" and p["rom_end"] > p["rom_start"]:
-                        inside.setdefault(p["version"], []).append((p["rom_start"], p["rom_end"], m["name"]))
-            spans = {v: sorted(s) for v, s in inside.items()}
-            # names_from first: a datum split into one member per version group resolves as names_from places it
-            versions = sorted(self.doc["versions"], key=lambda v: v != self.doc["names_from"])
-            found = {
-                spelling: member
-                for version, table in reversed([(v, self.tables[v]) for v in versions])
-                for spelling, row in table.items()
-                if spelling not in self.members
-                and (member := at.get((version, row[1] or 0, row[0])) or _within(spans.get(version, ()), row[1]))
-            }
+            found: dict[str, str] = {}
+            spellings = {n for table in self.tables.values() for n in table if n not in self.members}
+            for spelling in sorted(spellings):
+                rows = [(v, t[spelling]) for v, t in self.tables.items() if spelling in t]
+                if all(row[3] == "func" for _, row in rows):
+                    owners = {at.get((v, row[1], row[0])) for v, row in rows}
+                    if len(owners) == 1 and (owner := next(iter(owners))) is not None:
+                        found[spelling] = owner
+                elif owner := self.storage.alias(spelling):
+                    found[spelling] = owner
             self._vram, self._spelled = vram, found
         if name in self._spelled:
             return self._spelled[name]
+        if any(name in t for t in self.tables.values()):
+            return name  # an invalid table relation must not fall back to an address-only guess
         if neutral := re.fullmatch(r"(?:func|D)_([0-9A-F]{8})(?:_(\w+))?", name):  # a neutral name: its version's VRAM
             version = (neutral[2] or "").replace("_", "-")
             version = version if version in self.doc["versions"] else self.doc["names_from"]
@@ -347,14 +380,10 @@ class Map:
         a version that places it, or "" when no table names it."""
         if self._sdk is None:
             self._sdk = structure.sdk_names(self.root, self.doc["versions"])
-        return next(
-            (
-                n
-                for p in self.members.get(member, {}).get("placements", ())
-                if (n := self._sdk.get((p["version"], p["vram"])))
-            ),
-            "",
-        )
+        names = {
+            self._sdk.get((p["version"], p["vram"]), "") for p in self.members.get(member, {}).get("placements", ())
+        }
+        return next(iter(names)) if len(names) == 1 and "" not in names else ""
 
     def module_of(self, target: str) -> str:
         """The module a module row names: its key (the source path), or the one module whose source has that stem or
@@ -388,8 +417,12 @@ class Map:
             if self._strings is None:
                 self._strings, self._source = slicepack.Strings(self.config, self), slicepack.Source(self.root)
             assert self._source is not None
-            # a datum has no body: the functions that load it speak for it (the functions `caller` evidence names)
-            names = list(dict.fromkeys(x for n in names for x in ([n] if n in self.calls else self.callers.get(n, ()))))
+            # Only body evidence borrows a datum's readers. String evidence belongs to its own bytes;
+            # unrelated strings loaded by the same reader do not describe this datum.
+            if item.strip().startswith("body "):
+                names = list(
+                    dict.fromkeys(x for n in names for x in ([n] if n in self.calls else self.callers.get(n, ())))
+                )
             return slicepack.verifies(self, item, names, self._strings, self._source)
         found = _EVIDENCE.match(item)
         if not found:
@@ -589,8 +622,8 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     # the SDK's own reserved names (`__osDisableInt`) pass, as they do in source admission (unbake symbol_names,
     # implementation), and so does a function's original name the project's SDK table gives its address (evidenced)
     evidenced = kind == "function" and ctx.sdk_name(ctx.canon(target)) == name
-    if why := api.name_issues(name, name_kind, implementation=True, evidenced=evidenced):
-        return "portable", why[0] + reserved_hint(name)
+    if name_issues := api.name_issues(name, name_kind, implementation=True, evidenced=evidenced):
+        return "portable", name_issues[0] + reserved_hint(name)
     if (
         kind in ("function", "global", "static")
         and name in BUILTINS
@@ -600,15 +633,17 @@ def judge(ctx: Map, row: Json) -> tuple[str, str]:
     # Original/debug and SDK evidence never override target portability.
     merge = ctx.merge_folder(target, name) if kind == "subsystem" else ""
     folded = [n for n in ctx.taken if n != target and n != name and n != merge]
-    if why := api.name_issues(name, name_kind, taken=folded, implementation=True, evidenced=evidenced):  # as above
-        return "duplicate", why[0]
+    if name_issues := api.name_issues(
+        name, name_kind, taken=folded, implementation=True, evidenced=evidenced
+    ):  # as above
+        return "duplicate", name_issues[0]
     if kind == "subsystem":
         carried = ctx.carried(target, name)
         for new in carried.values():
-            if why := api.name_issues(new):
-                return "portable", why[0]
-            if why := api.name_issues(new, taken=sorted(ctx.taken - set(carried) - {merge})):
-                return "duplicate", why[0]
+            if name_issues := api.name_issues(new):
+                return "portable", name_issues[0]
+            if name_issues := api.name_issues(new, taken=sorted(ctx.taken - set(carried) - {merge})):
+                return "duplicate", name_issues[0]
     original = _original(ctx, row)
     if kind == "module":
         unnamed = style.neutral_module(PurePosixPath(ctx.modules[target]["source"]).stem)
@@ -841,7 +876,7 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
         return [("function", n) for fan, n in sorted(rows, key=lambda r: (-r[0], r[1])) if fan]
     if step == "N5":  # internal-only: no caller outside its own folder, so N3 never packs it; the evidence is local
         # (callers and callees inside the folder, the tags its calls carry)
-        rows = []
+        internal: list[tuple[bool, int, str]] = []
         for n, m in neutral.items():
             if m["kind"] != "function" or not ctx.function_word(n):
                 continue
@@ -852,8 +887,8 @@ def _targets(ctx: Map, step: str) -> list[tuple[str, str]]:
             if n not in ctx.calls or not (callers or ctx.calls[n] or ctx.tags([n])):
                 continue  # nothing a reader could check
             placed = _bytes(m, ctx.doc["names_from"]) > 0  # the version the names are read from first
-            rows.append((placed, len(callers) + len(ctx.calls[n]), n))
-        return [("function", n) for _, _, n in sorted(rows, key=lambda r: (not r[0], -r[1], r[2]))]
+            internal.append((placed, len(callers) + len(ctx.calls[n]), n))
+        return [("function", n) for _, _, n in sorted(internal, key=lambda r: (not r[0], -r[1], r[2]))]
     # N4: a datum is static when one file reads it (C's file scope: the data may sit in a data file of its own, the
     # code file it came from is the one that reads it), global when two files do; a folder is no scope of C
     data = {n: ctx.callers.get(n, []) for n, m in neutral.items() if m["kind"] != "function"}
@@ -995,7 +1030,7 @@ def _preview(config: Config, params: Json, built: Json) -> Json:
     if outside and not params.get("allow_outside"):
         why = f"{len(outside)} files outside {', '.join(sorted(own))} would change; add --allow-outside to apply"
         return {**info, "apply_refused": why}
-    landed = _land(config, {**params, "no_apply": False}, built)
+    landed = dict(_land(config, {**params, "no_apply": False}, built))
     if landed.get("applied") and outside:  # edits beyond the target are judged by the compiler, not by the evidence
         check = settle.compile_check(config, outside, run=_make(config, config.project.root))
         landed["compile"] = check
@@ -1659,6 +1694,11 @@ def status(config: Config, params: Json) -> Json:
 
 
 def run(config: Config, params: Json) -> Json:
+    with namebook.namespace(params.get("ledger_dir")):
+        return _run(config, params)
+
+
+def _run(config: Config, params: Json) -> Json:
     return {
         "next": next_,
         "submit": submit,

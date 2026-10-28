@@ -261,6 +261,9 @@ def _parser() -> argparse.ArgumentParser:
         metavar="LANE",
         help="submit: judge the rows against the tree and the queued rows, write no tree, queue the accepted ones",
     )
+    one.add_argument(
+        "--ledger-dir", help="absolute or invocation-relative ledger directory; isolates submit/status state"
+    )
     one.add_argument("--seqs", metavar="FIRST-LAST", help="status: the ledger seqs to list (one seq, or a range)")
     one.add_argument("--count", type=int, default=40, help="targets per pack")
     one.add_argument(

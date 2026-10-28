@@ -1479,8 +1479,8 @@ def _atomic(config: Config, root: Path, patch: Path, host: Any) -> Iterator[Call
     try:
         yield lambda: state_.__setitem__("edited", True)
     except _Stopped as stopped:
-        for sig in old:
-            signal.signal(sig, signal.SIG_IGN)  # the rollback finishes whatever else arrives
+        for number in old:
+            signal.signal(number, signal.SIG_IGN)  # the rollback finishes whatever else arrives
         if state_["edited"]:
             sys.stderr.write("recipe apply: interrupted, putting the tree back (git apply -R, sync)\n")
             with contextlib.suppress(Exception):
@@ -1491,8 +1491,8 @@ def _atomic(config: Config, root: Path, patch: Path, host: Any) -> Iterator[Call
                 _unbake(config, host, "sync")
         raise SystemExit(128 + int(stopped.args[0])) from None
     finally:
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
+        for number, handler in old.items():
+            signal.signal(number, handler)
 
 
 def _restored(patch: Path) -> Path:

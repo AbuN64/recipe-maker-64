@@ -57,3 +57,21 @@ and unused in scope. Original SDK names must be left out of repair submissions. 
 Renames preserve comments and string bytes. `recipe name next` and `submit` apply the patch to the tree at once (only the renamed tokens change) and name one next link; `--no-apply` keeps it saved for `recipe apply PATH`.
 
 Member renames (`field` rows, step M) of a name several records spell: the types rename the accesses they can place; the rest is settled by the compiler. After the apply, `submit` compiles the objects that read an access the types could not place, fixes each `structure has no member named M` from its source line, and reports a use no source line spells (a macro expansion) as a blocking finding. `--no-settle` (or `--no-apply`) keeps the old stop at an access of no known type.
+
+## Bounded data evidence and private ledgers
+
+Data aliases support caller evidence only when their positive byte width fits one storage
+record with the same ROM/VRAM offset in every version shared by the reader and storage.
+A pool defined in only one version is joined only to that version’s assembly reads. Overlapping owners, unknown
+widths, missing versions and divergent offsets remain unproved. Symbol extents and direct MIPS memory
+operands supply byte widths; an untyped address is not a proved access. String evidence reads only
+terminated printable bytes inside the datum's own checked ROM extents, common to every
+holding version. A datum needs no reader to cite its own string, and cannot cite another
+datum's string merely because a function loads both.
+
+Use `recipe --project TREE name submit ROWS --ledger LANE --ledger-dir DIR --json` to
+validate and queue proposals into a private directory without applying source names or
+writing the shared ledger. `name status --ledger-dir DIR --json` reads the same namespace.
+Relative ledger directories resolve from the invocation directory.
+
+`name status` includes each original `proposal` alongside its ledger disposition for reproducible reconciliation.
