@@ -381,3 +381,11 @@ def test_a_module_map_the_config_names_but_the_tree_lacks_is_refused(tmp_path):
     config.project.module_map = "docs/MODULES.tsv"
     with pytest.raises(Exception, match="module_map"):
         run(config)
+
+
+def test_the_exempt_library_folders_are_the_layouts(tmp_path):
+    assert style.exempt(tmp_path) == ("src/fuzzy/", "src/sdk/", "include/sdk/", "include/types.h")
+    (tmp_path / "config.toml").write_text(
+        '[layout]\nlibrary_source = "sdk/{library}"\nlibrary_header = "sdk/include/{library}.h"\n'
+    )
+    assert style.exempt(tmp_path) == ("src/fuzzy/", "sdk/", "sdk/include/", "include/types.h")

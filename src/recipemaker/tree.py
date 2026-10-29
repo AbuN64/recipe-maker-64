@@ -9,7 +9,7 @@ import re
 import statistics
 from collections import Counter
 from collections.abc import Collection, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,10 @@ class Naming:
     evidence: str = "lower"
     subsystem_source: str = "src/game/{subsystem}"
     subsystem_header: str = "include/game/{subsystem}.h"
+    # the rest of the project's layout (unbake repo.toml [layout], replaced key by key by its config.toml [layout])
+    library_source: str = "src/sdk/{library}"
+    source_roots: tuple[str, ...] = ("src",)
+    header_roots: tuple[str, ...] = ("include",)
 
     def cased(self, text: str, case: str | None = None) -> str:
         how = case or self.case
@@ -69,28 +73,41 @@ _SOURCE = re.compile(r"\.(c|cc|cpp|cxx)$", re.I)
 
 
 def style(root: Path | None) -> Naming:
-    """The project's Naming, read from its `src/` files by majority: the case of the stems, the source extension, and
-    the stem length limit when every stem of the majority extension fits 8 characters. PLAIN where there are none."""
-    found = sorted(p for p in (root / "src").rglob("*") if p.is_file() and _SOURCE.search(p.name)) if root else []
-    if not found:
+    """The project's Naming, read from the files under its source roots by majority: the case of the stems, the
+    source extension, and the stem length limit when every stem of the majority extension fits 8 characters, with the
+    roots and library folder of its layout (`api.layout`: src/ and include/ unless its config.toml says). PLAIN where
+    there are none."""
+    if root is None:
         return PLAIN
+    layout = api.layout(root)
+    sources, heads = tuple(layout["source_roots"]), tuple(layout["header_roots"])
+    laid = {"library_source": layout["library_source"], "source_roots": sources, "header_roots": heads}
+    found = sorted(p for top in sources for p in (root / top).rglob("*") if p.is_file() and _SOURCE.search(p.name))
+    if not found:
+        return replace(
+            PLAIN, subsystem_source=layout["subsystem_source"], subsystem_header=layout["subsystem_header"], **laid
+        )
     ext = Counter(p.suffix for p in found).most_common(1)[0][0]
     stems = [p.stem for p in found if p.suffix == ext]
     kinds = Counter("upper" if s.isupper() else "lower" if s.islower() else "as-is" for s in stems if s != s.swapcase())
     case = kinds.most_common(1)[0][0] if kinds else "as-is"
-    # subsystems sit where the project keeps them: under src/game/ when it has one, else right under src/ (RW: src/AI)
-    nested = root is not None and (root / "src" / "game").is_dir()
-    headers = (
-        [p.suffix for p in (root / "include").rglob("*") if p.is_file() and p.suffix.lower() == ".h"] if root else []
-    )
+    # subsystems sit where the layout's subsystem_source keeps them when the project has that folder (src/game/), else
+    # right under the first source root (RW: src/AI)
+    nested = (root / layout["subsystem_source"].partition("/{")[0]).is_dir()
+    headers = [p.suffix for top in heads for p in (root / top).rglob("*") if p.is_file() and p.suffix.lower() == ".h"]
     hext = Counter(headers).most_common(1)[0][0] if headers else ".h"
     return Naming(
         case=case,
         stem_max=8 if max(map(len, stems)) <= 8 else 0,
         source_ext=ext,
         evidence="keep" if case == "as-is" else case,
-        subsystem_source="src/game/{subsystem}" if nested else "src/{subsystem}",
-        subsystem_header=f"include/{'game/' * nested}{{subsystem}}{hext}",
+        subsystem_source=layout["subsystem_source"] if nested else f"{sources[0]}/{{subsystem}}",
+        subsystem_header=(
+            f"{posixpath.splitext(layout['subsystem_header'])[0]}{hext}"
+            if nested
+            else f"{heads[0]}/{{subsystem}}{hext}"
+        ),
+        **laid,
     )
 
 

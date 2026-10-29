@@ -341,9 +341,9 @@ def propose(
     for m in modules:  # a library object found in a game folder: the vendor's archive member, never game code
         named = [n for a in m["atoms"] if (n := _sdk_name(by_atom[a], sdk or {}))]
         if named and not _inside(m["origin"], library):
-            folder = _library_folder(named, [x["source"] for x in doc["modules"]], library)
+            folder = _library_folder(named, [x["source"] for x in doc["modules"]], library, naming)
             m |= {"folder": folder, "source": naming.file(folder, m), "sdk": named}
-            m["header"] = _sdk_header(m["source"], m["header"]) if m["header"] else ""
+            m["header"] = _sdk_header(m["source"], m["header"], naming) if m["header"] else ""
             m["batch"] = folder
             if folder not in order:
                 order.append(folder)
@@ -437,13 +437,15 @@ def _sdk_name(atom: Json, sdk: Mapping[tuple[str, int], str]) -> str:
     return next((n for v, p in sorted(atom["text"].items()) if (n := sdk.get((v, int(p["vram"]))))), "")
 
 
-def _library_folder(named: Sequence[str], sources: Sequence[str], library: Sequence[str]) -> str:
+def _library_folder(
+    named: Sequence[str], sources: Sequence[str], library: Sequence[str], naming: tree.Naming = tree.PLAIN
+) -> str:
     """Where a library object goes: the compiler runtime's names (libgcc) or the SDK's (libultra), into the folder
     of that library the project already has under a library root (src/sdk/libgultra, src/libgcc), else
-    `<first library root>/libgcc` or `/libultra`."""
+    `<first library root>/libgcc` or `/libultra`. With no library row the root is the layout's library_source folder."""
     gcc = all(_LIBGCC.fullmatch(n) for n in named)
     words = ("libgcc",) if gcc else ("libgultra", "libultra")
-    roots = [r.rstrip("/") for r in library] or ["src/sdk"]
+    roots = [r.rstrip("/") for r in library] or [naming.library_source.partition("/{")[0]]
     have = sorted(
         {d for s in sources for d in [posixpath.dirname(s)] if _inside(s, roots) and posixpath.basename(d) in words},
         key=lambda d: (words.index(posixpath.basename(d)), d),
@@ -451,11 +453,17 @@ def _library_folder(named: Sequence[str], sources: Sequence[str], library: Seque
     return have[0] if have else f"{roots[0]}/{words[-1]}"
 
 
-def _sdk_header(source: str, header: str) -> str:
-    """The header of a module moved into a library folder: include/ beside the source's folder, the same stem."""
-    folder = posixpath.dirname(source).removeprefix("src/")
+def _sdk_header(source: str, header: str, naming: tree.Naming = tree.PLAIN) -> str:
+    """The header of a module moved into a library folder: the source's folder below its source root, under the header
+    root inside that source root (sdk/include) else the first header root (include/), the same stem."""
+    folder = posixpath.dirname(source)
+    top = next((r for r in naming.source_roots if folder == r or folder.startswith(r + "/")), "")
+    inside = [h for h in naming.header_roots if top and h.startswith(top + "/")]
+    below = folder.removeprefix(top).lstrip("/") if top else folder
     stem = posixpath.splitext(posixpath.basename(source))[0]
-    return f"include/{folder}/{stem}{posixpath.splitext(header)[1]}"
+    return posixpath.join(
+        inside[0] if inside else naming.header_roots[0], below, f"{stem}{posixpath.splitext(header)[1]}"
+    )
 
 
 def _module_moves(entry: Json, existing: Json, current: Json) -> list[dict[str, Any]]:

@@ -112,3 +112,36 @@ def test_evidence_paths_follow_the_projects_own_source_root(tmp_path):
     assert flat.header("AI/ENEMIES") == "include/AI/ENEMIES.H"
     nested = _tree(tmp_path / "bt", ["game/sys_80076000/code_80079A5C.c"])
     assert nested.evidenced("GAME/ACTORS/PLAYER.CPP")[1].startswith("src/game/GAME/ACTORS/")  # BT: under src/game
+
+
+MOVED = (
+    '[layout]\nsource_roots = ["src", "sdk"]\nheader_roots = ["include", "sdk/include"]\n'
+    'library_source = "sdk/{library}"\nlibrary_header = "sdk/include/{library}.h"\n'
+    'subsystem_source = "src/{subsystem}"\nsubsystem_header = "src/{subsystem}.h"\n'
+)
+
+
+def test_the_default_layout_is_the_packaged_one(tmp_path):
+    got = _tree(tmp_path, ["game/AI/ENEMY.CPP", "IO/80200500.CPP"])
+    assert (got.library_source, got.source_roots, got.header_roots) == ("src/sdk/{library}", ("src",), ("include",))
+    assert (got.subsystem_source, got.subsystem_header) == ("src/game/{subsystem}", "include/game/{subsystem}.h")
+
+
+def test_config_toml_layout_rows_move_the_roots_and_the_library_folder(tmp_path):
+    (tmp_path / "config.toml").write_text(MOVED)
+    (tmp_path / "sdk" / "libultra").mkdir(parents=True)
+    (tmp_path / "sdk" / "libultra" / "OS.C").write_text("int x;\n")
+    got = _tree(tmp_path, ["AI/ENEMY.C", "IO/80200500.C"])
+    assert (got.library_source, got.source_roots, got.header_roots) == (
+        "sdk/{library}",
+        ("src", "sdk"),
+        ("include", "sdk/include"),
+    )
+    assert (got.subsystem_source, got.subsystem_header) == ("src/{subsystem}", "src/{subsystem}.h")
+
+
+def test_a_project_with_no_sources_gets_its_layout_in_the_default(tmp_path):
+    (tmp_path / "config.toml").write_text(MOVED)
+    assert tree.style(tmp_path).library_source == "sdk/{library}"
+    assert tree.style(tmp_path).subsystem_source == "src/{subsystem}"
+    assert tree.style(tmp_path / "missing") == tree.PLAIN

@@ -30,6 +30,14 @@ def _rules() -> Json:
     return table("knowledge/style.toml")
 
 
+def exempt(root: Path) -> tuple[str, ...]:
+    """The paths the name rules leave alone: style.toml `exempt`, its {library_source} and {library_header} the
+    folders the project's layout keeps libraries in (api.layout: src/sdk/ and include/sdk/ unless config.toml says)."""
+    layout = api.layout(root)
+    folders = {k: layout[k].partition("{")[0] for k in ("library_source", "library_header")}
+    return tuple(x.format(**folders) for x in _rules()["paths"]["exempt"])
+
+
 def neutral(name: str) -> bool:
     return any(re.fullmatch(p, name) for p in _rules()["names"]["neutral"])
 
@@ -297,11 +305,11 @@ def _names(facts: Json, words: Sequence[str], context: Context, source: bool = F
     yield from (("macro-name", n) for n in facts["macros"] if not legal("macro", n))
 
 
-def check(path: str, facts: Json, context: Context) -> list[tuple[str, str, str]]:
-    """The findings (rule, path, detail) of one file from its facts."""
+def check(path: str, facts: Json, context: Context, exempted: Sequence[str]) -> list[tuple[str, str, str]]:
+    """The findings (rule, path, detail) of one file from its facts (`exempted`: `exempt` of the project)."""
     rules, out = _rules(), []
     where = PurePosixPath(path)
-    if not kind(where) or any(path.startswith(x) for x in rules["paths"]["exempt"]):
+    if not kind(where) or any(path.startswith(x) for x in exempted):
         return []
     folder_words = _words(path)
     words = _words(path, context.prefixes)
@@ -385,7 +393,7 @@ def _read(config: Config, texts: dict[str, str]) -> tuple[dict[str, Json], int]:
 Found = list[tuple[str, str, str]]
 
 
-def _across(listing: Sequence[str]) -> Found:
+def _across(listing: Sequence[str], exempted: Sequence[str]) -> Found:
     """The findings that hold of a set of paths as a whole: crowded folders, tool-named paths, repeated basenames."""
     rules, out = _rules(), []
     folders: Counter[str] = Counter(str(PurePosixPath(f).parent) for f in listing)
@@ -397,7 +405,7 @@ def _across(listing: Sequence[str]) -> Found:
     ]
     stems: defaultdict[str, list[str]] = defaultdict(list)
     for f in listing:
-        if kind(f) == "c" and not any(f.startswith(x) for x in rules["paths"]["exempt"]) and _words(f):
+        if kind(f) == "c" and not any(f.startswith(x) for x in exempted) and _words(f):
             stems[PurePosixPath(f).name].append(f)
     out += [("file-name", f, "basename is not unique") for same in stems.values() if len(same) > 1 for f in same]
     return out
@@ -414,14 +422,14 @@ def findings(config: Config, paths: Sequence[str] = (), base: str = "") -> tuple
     introduces is new: an untouched file has the findings it had, a touched one is read at the base."""
     listing = _listing(config, paths)
     facts, parsed = gather(config, listing)
-    context = Context(config)
+    context, exempted = Context(config), exempt(config.project.root)
     for path, found in facts.items():
         if kind(path) == "c" and (word := (context.prefixes.get(path) or prefix_word(PurePosixPath(path).parent.name))):
             for name, static, defined in found["fns"]:
                 if defined and not static and word not in context.homes.setdefault(name, []):
                     context.homes[name].append(word)
-    mine = {path: check(path, found, context) for path, found in sorted(facts.items())}
-    now = [f for found in mine.values() for f in found] + _across(listing)
+    mine = {path: check(path, found, context, exempted) for path, found in sorted(facts.items())}
+    now = [f for found in mine.values() for f in found] + _across(listing, exempted)
     if not base:
         return now, [], len(listing), parsed, len(facts)
     touched = _listed(config, "diff", "--name-only", "-z", base) | _listed(
@@ -434,8 +442,8 @@ def findings(config: Config, paths: Sequence[str] = (), base: str = "") -> tuple
         texts[path] = bytes(shown.stdout).decode(errors="replace") if shown.exit == 0 else ""
     held, _ = _read(config, texts)
     before = Counter(f for path, found in mine.items() if path not in touched for f in found)
-    before.update(f for path, found in held.items() for f in check(path, found, context))
-    before.update(_across([f for f in listing if f in old]))
+    before.update(f for path, found in held.items() for f in check(path, found, context, exempted))
+    before.update(_across([f for f in listing if f in old], exempted))
     new: Found = []
     debt: Found = []
     for f in now:

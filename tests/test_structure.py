@@ -982,3 +982,29 @@ def test_a_symbol_rename_also_renames_the_sweep_rule_prose_that_names_it(tmp_pat
     _check(root, got["patch"])
     want = 'why = "A pointer with no parameters: osYield reads its argument; func_80001 too"\n'
     assert (root / "docs/sweep.toml").read_text() == want
+
+
+MOVED_NAMING = tree.Naming(
+    case="upper",
+    source_ext=".CPP",
+    evidence="upper",
+    library_source="sdk/{library}",
+    source_roots=("src", "sdk"),
+    header_roots=("include", "sdk/include"),
+)
+
+
+def test_a_moved_library_root_is_where_a_library_object_goes_and_its_header_sits_beside(doc):
+    name = next(m["name"] for m in doc["members"] if m["kind"] == "function" and m["module"].startswith(W))
+    sdk, _ = _sdk_at(doc, name)
+    moved = holding(structure.propose(doc, SETTINGS, naming=MOVED_NAMING, sdk=sdk), name)  # no library row
+    assert moved["folder"] == "sdk/libultra" and moved["source"].startswith("sdk/libultra/")
+    assert not moved["header"] or moved["header"].startswith("sdk/include/libultra/")
+
+
+def test_with_no_layout_the_library_root_and_header_are_the_packaged_ones(doc):
+    name = next(m["name"] for m in doc["members"] if m["kind"] == "function" and m["module"].startswith(W))
+    sdk, _ = _sdk_at(doc, name)
+    moved = holding(structure.propose(doc, SETTINGS, naming=RW, sdk=sdk), name)
+    assert moved["folder"] == "src/sdk/libultra"
+    assert not moved["header"] or moved["header"].startswith("include/sdk/libultra/")
