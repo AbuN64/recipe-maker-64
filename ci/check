@@ -13,4 +13,4 @@ export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
 "$PY" -m ruff check src tests
 "$PY" -m ruff format --check src tests
 "$PY" -m mypy --strict src
-"$PY" -m pytest -q -n auto --basetemp="${TMPDIR:-.}/.test-tmp-ci"
+"$PY" -m pytest -q -n auto
