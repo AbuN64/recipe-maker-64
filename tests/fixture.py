@@ -19,7 +19,7 @@ from unbake.contracts import Config, Json, Proof
 VRAM_BASE, ROM_BASE, PAGE = 0x80000400, 0x1000, 0x1000
 TOOLS = (
     *("git", "make", "cpp", "mips_as", "mips_ld", "mips_objcopy", "mips_objdump"),
-    *("n64link", "splat", "armips"),
+    *("abumas", "splat", "armips"),
 )
 Placed = Mapping[str, Mapping[str, tuple[int, bytes]]]  # member name -> version id -> (rom offset, bytes)
 
