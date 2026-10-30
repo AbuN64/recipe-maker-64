@@ -984,6 +984,21 @@ def test_a_symbol_rename_also_renames_the_sweep_rule_prose_that_names_it(tmp_pat
     assert (root / "docs/sweep.toml").read_text() == want
 
 
+def test_the_prose_files_are_the_ones_config_toml_paths_names(tmp_path):
+    root = _repo(
+        tmp_path,
+        {
+            "config.toml": '[paths]\nprose = ["config/sweep.toml"]\n',
+            "versions/us/symbol_addrs.txt": "func_8000 = 0x8000; // type:func\n",
+            "src/a.c": "void g(void) { func_8000(); }\n",
+            "config/sweep.toml": 'why = "func_8000 reads its argument"\n',
+            "docs/sweep.toml": 'why = "func_8000 is not renamed here"\n',
+        },
+    )
+    got = structure.build(root, [{"op": "symbol", "subject": "func_8000", "target": "osYield"}], {}.get, {})
+    assert "config/sweep.toml" in got["files"] and "docs/sweep.toml" not in got["files"]
+
+
 MOVED_NAMING = tree.Naming(
     case="upper",
     source_ext=".CPP",

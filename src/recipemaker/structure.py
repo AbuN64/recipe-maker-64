@@ -30,7 +30,6 @@ from recipemaker import access, clash, cparse, debug, repair, state, tree, world
 from recipemaker import host as recipe_host
 
 Segments = str | Collection[str] | None
-PROSE = ("docs/sweep.toml",)  # text outside src/ and include/ that names symbols in sentences: renamed with them
 LITERALS = "literals_"  # compiler-emitted read-only data a fact gives the file of its function: it moves with that file
 
 
@@ -803,6 +802,8 @@ def build(
 
     `note` hears a progress line at most every `BEAT` seconds."""
     files, applied, beat = Files(root), 0, time.monotonic()
+    # text outside src/ and include/ that names symbols in sentences (config.toml [paths] prose): renamed with them
+    prose = api.paths(root)["prose"]
     for move in moves:
         kind = "symbol" if move["op"] in ("symbol", "type", "field", "merge") else "file"
         name = (
@@ -877,7 +878,7 @@ def build(
                     continue
             hits += files.identifiers(subject, target, reach, comments=True)
             if op == "symbol":
-                hits += files.replace(_word(subject), target, PROSE, subject)  # a rule's prose names the function too
+                hits += files.replace(_word(subject), target, prose, subject)  # a rule's prose names the function too
                 hits += _asm_file(files, subject, target)
                 hits += _derived(files, subject, target)
             applied += bool(hits)
