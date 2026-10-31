@@ -36,7 +36,7 @@ Command `recipe`, package `recipemaker`.
 | R2 | Verdicts: `try` calls `compare.run(config, params)` with the exact CLI params dict. Exploration rungs call `compare.bind`, `compare.measure`, `compare.measure_many`, then `land.submit` and `land.drain`, exactly as the moved `crack.run` does today. | Only `ladder.py` and `work.py` import `compare` and `land`. |
 | R3 | Writes go only under `<project>/.unbake/` and only through `store.write`, `store.append`, `store.put`. Tracked files (`src/`, `include/`, `layout.toml`, `symbols.toml`, `types.toml`, splits, configs) are never written. `.unbake/` is ignored by the generated `.gitignore` (`repo.toml:3`) and CONTRACTS invariant 6 already names it as the runtime area. | `test_boundary.py` greps for `open(..., "w")`, `write_text`, `write_bytes` outside the moved modules' existing calls under `.unbake/`. |
 | R4 | Processes start only through `process.run`, workers only through `pool.map`/`pool.gather`. | Same import grep as unbake invariant 7. |
-| R5 | Dependency pin: `unbake @ git+https://github.com/AbuN64/cake-unbake-64@<sha>` in `pyproject.toml`. A version bump reruns `test_boundary.py`. | CI. |
+| R5 | Dependency: the bare name `unbake` in `pyproject.toml`, no commit pin; the toolkit has one installed unbake, set by its own land. A new unbake reruns `test_boundary.py`. | CI. |
 
 ### Where things live (decision on input 2)
 
