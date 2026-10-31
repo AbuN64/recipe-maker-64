@@ -2,6 +2,7 @@
 # The CI gates: lint, format, strict typing and the test suite (run bin/dev-setup or pip install '.[dev]' first).
 set -eu
 cd "$(dirname "$0")/.."
+ci/abucache-audit
 PY="${PYTHON:-python3}"
 [ -x .venv/bin/python ] && PY=.venv/bin/python
 # A python without the dev tools (ruff, mypy, pytest, types-jsonschema) falls back to the seat venv ($ABU_VENV, default
